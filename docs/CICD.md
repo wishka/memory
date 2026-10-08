@@ -28,6 +28,7 @@ hotfix/*   ─PR─▶  main (срочное исправление), затем
 | **Dev build** (`dev-build.yml`) | слияние в `develop` | CI → APK, подписанный общим ключом разработки → пре-релиз **dev** |
 | **Demo build** (`demo.yml`) | кнопка Run workflow, любая ветка | CI → APK → пре-релиз **demo** (`memory-demo.apk`) |
 | **Release** (`release.yml`) | тег `vX.Y.Z` на `main` | CI → ваше подтверждение → подписанные APK и AAB → GitHub Release |
+| **iOS** (`ios.yml`) | PR и push в `main` / `develop`, если менялась `ios/` | сборка и юнит-тесты на симуляторе iPhone (macOS), проверочная сборка под iPhone без подписи |
 
 **Dev-сборка** всегда лежит по одной ссылке:
 

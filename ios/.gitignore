@@ -1,0 +1,10 @@
+# Xcode: личные настройки, сборки, результаты тестов
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.xcresult
+# Подпись — только на вашем Mac, не в репозитории
+*.mobileprovision
+*.p12
+*.cer
