@@ -39,7 +39,14 @@ import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.groups.GroupScreen
 import ru.wishka.memory.ui.groups.GroupsScreen
 import ru.wishka.memory.ui.person.PersonScreen
-import ru.wishka.memory.ui.reels.ReelsScreen
+import ru.wishka.memory.ui.prism.PrismScreen
+import ru.wishka.memory.ui.components.CommentsSheet
+import ru.wishka.memory.ui.components.MediaViewer
+import ru.wishka.memory.data.StateStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withContext
 import ru.wishka.memory.ui.auth.AuthScreen
 import ru.wishka.memory.ui.auth.AuthViewModel
 import ru.wishka.memory.ui.stories.StoriesScreen
@@ -77,10 +84,32 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
     // не показывается заново — только при холодном запуске
     var splashDone by rememberSaveable { mutableStateOf(false) }
 
-    // Вошедший человек — в профиль и в свои записи
+    // Вошедший человек — в профиль и в свои записи; его записи, переписка
+    // и закладки — из файла на телефоне
     val account = auth.account
+    val context = LocalContext.current
+    val store = remember(context) { StateStore(context.applicationContext) }
+    var loadedFor by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(account) {
-        if (account != null) vm.setAccount(account.username, account.displayName, account.info) else vm.reset()
+        loadedFor = null
+        if (account != null) {
+            vm.setAccount(account.username, account.displayName, account.info)
+            val me = vm.state.value.me
+            withContext(Dispatchers.IO) { store.load(account.username, me) }?.let(vm::restore)
+            loadedFor = account.username
+        } else {
+            vm.reset()
+        }
+    }
+    // Любое изменение — в файл, через полсекунды тишины: при наборе
+    // комментария не пишем на диск после каждой буквы
+    LaunchedEffect(loadedFor) {
+        val login = loadedFor ?: return@LaunchedEffect
+        vm.state.collectLatest { s ->
+            delay(500)
+            val snapshot = vm.snapshot()
+            withContext(Dispatchers.IO) { runCatching { store.save(login, snapshot, s.me) } }
+        }
     }
 
     // Заставка держится, пока проверяется сохранённая сессия: иначе на
@@ -108,8 +137,10 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             .getOrNull() ?: ""
     }
 
-    // «Назад»: переписка → страница человека → группа → лента → выход
-    val canGoBack = state.openChatId != null || state.openPersonId != null ||
+    // «Назад»: просмотр фото → обсуждение → переписка → страница человека
+    // → группа → лента → выход
+    val canGoBack = state.viewing != null || state.commentsPostId != null || state.commentsPrismId != null ||
+        state.openChatId != null || state.openPersonId != null ||
         state.openGroupId != null || state.tab != Tab.Feed
     BackHandler(enabled = canGoBack) { vm.back() }
 
@@ -140,7 +171,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                 when (tab) {
                     Tab.Feed -> FeedScreen(vm, state, padding)
                     Tab.Stories -> StoriesScreen(vm, state, padding)
-                    Tab.Reels -> ReelsScreen(vm, state, padding)
+                    Tab.Prism -> PrismScreen(vm, state, padding)
                     Tab.Chats -> ChatsScreen(vm, state, padding)
                     Tab.Groups -> GroupsScreen(vm, state, padding)
                     Tab.Profile -> ProfileScreen(vm, state, padding, version, onSaveProfile, onLogout)
@@ -158,5 +189,34 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                 .padding(bottom = 12.dp),
         )
         }
+
+        // Обсуждение — шторкой поверх любого экрана
+        state.commentsPostId?.let { id ->
+            state.findPost(id)?.let { post ->
+                CommentsSheet(
+                    total = post.comments,
+                    comments = post.commentList,
+                    myId = state.me.id,
+                    onSend = { vm.addComment(id, it) },
+                    onDelete = { vm.deleteComment(id, it) },
+                    onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
+                    onDismiss = vm::closeComments,
+                )
+            }
+        }
+        state.commentsPrismId?.let { id ->
+            state.findPrism(id)?.let { prism ->
+                CommentsSheet(
+                    total = prism.comments,
+                    comments = prism.commentList,
+                    myId = state.me.id,
+                    onSend = { vm.addPrismComment(id, it) },
+                    onDelete = { vm.deletePrismComment(id, it) },
+                    onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
+                    onDismiss = vm::closeComments,
+                )
+            }
+        }
+        state.viewing?.let { MediaViewer(it, onClose = vm::closeMedia) }
     }
 }

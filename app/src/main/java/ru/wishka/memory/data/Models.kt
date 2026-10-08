@@ -27,9 +27,42 @@ data class User(
             .joinToString("") { it.first().uppercase() }.ifEmpty { "?" }
 }
 
+/** Что приложено к записи или сообщению. */
+enum class MediaKind { Photo, Video, Document }
+
 /**
- * Запись в ленте. artSeed != null — к записи приложена «картинка»;
- * пока сервера нет, она рисуется процедурно (туманность), см. Nebula.
+ * Вложение: фото, видео или документ. Пока сервера нет, файл копируется
+ * в память приложения (см. MediaFiles), path — путь к копии. Так вложение
+ * переживает перезапуск и не пропадает, если человек удалит оригинал из
+ * галереи.
+ */
+data class Attachment(
+    val id: String,
+    val kind: MediaKind,
+    val path: String,
+    /** Имя для документов: «Договор.pdf». */
+    val name: String = "",
+    val size: Long = 0,
+    val mime: String = "",
+)
+
+/** Комментарий к записи или PRISM. createdAt — мс; 0 — у демо-комментариев, тогда время из minutesAgo. */
+data class Comment(
+    val id: Long,
+    val author: User,
+    val text: String,
+    val minutesAgo: Int = 0,
+    val createdAt: Long = 0,
+)
+
+/**
+ * Запись в ленте. artSeed != null — к записи приложена процедурная
+ * «картинка» (туманность, см. Nebula) — так выглядят демо-записи.
+ * media — настоящие фото и видео, которые приложил человек.
+ *
+ * comments — сколько всего комментариев (у демо-записей их больше, чем
+ * загружено), commentList — те, что видны в обсуждении.
+ * createdAt — мс, у своих записей; у демо — 0, время из minutesAgo.
  */
 data class Post(
     val id: Long,
@@ -40,13 +73,22 @@ data class Post(
     val likes: Int = 0,
     val liked: Boolean = false,
     val comments: Int = 0,
+    val media: List<Attachment> = emptyList(),
+    val commentList: List<Comment> = emptyList(),
+    val createdAt: Long = 0,
 )
 
+/** Минуты с момента createdAt, а для демо-данных — заданные заранее. */
+fun minutesSince(createdAt: Long, minutesAgo: Int, now: Long = System.currentTimeMillis()): Int =
+    if (createdAt > 0) ((now - createdAt) / 60_000).toInt().coerceAtLeast(0) else minutesAgo
+
+/** Сообщение; text может быть пустым, если отправлены только вложения. */
 data class Message(
     val id: Long,
     val fromMe: Boolean,
     val text: String,
     val time: String,
+    val attachments: List<Attachment> = emptyList(),
 )
 
 data class Chat(
@@ -97,11 +139,13 @@ data class Group(
 val GROUP_TOPICS = listOf("Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт")
 
 /**
- * Короткое вертикальное видео. Пока сервера и загрузки видео нет, «кадр»
- * рисуется анимацией (см. ReelArt) по seed — один и тот же Reels всегда
- * выглядит одинаково.
+ * PRISM — короткое вертикальное видео. Пока сервера и загрузки видео нет,
+ * «кадр» рисуется анимацией (см. PrismArt) по seed — один и тот же ролик
+ * всегда выглядит одинаково.
+ *
+ * saved — в закладках («Сохранённое» в профиле).
  */
-data class Reel(
+data class Prism(
     val id: Long,
     val author: User,
     val caption: String,
@@ -111,6 +155,8 @@ data class Reel(
     val comments: Int,
     val liked: Boolean = false,
     val durationMs: Int = 9_000,
+    val saved: Boolean = false,
+    val commentList: List<Comment> = emptyList(),
 )
 
 /** То, что человек рассказывает о себе в профиле. Сохраняется вместе с аккаунтом. */

@@ -57,6 +57,7 @@ import ru.wishka.memory.ui.components.Stat
 import ru.wishka.memory.ui.components.UserInfo
 import ru.wishka.memory.ui.components.glass
 import ru.wishka.memory.ui.feed.PostCard
+import ru.wishka.memory.ui.prism.PrismArt
 import ru.wishka.memory.ui.theme.Palette
 
 /** Интересы на выбор в профиле: темы групп и ещё несколько. */
@@ -187,6 +188,31 @@ fun ProfileScreen(
             }
         }
 
+        if (state.savedPrisms.isNotEmpty()) {
+            item { SectionTitle("Сохранённое · ${state.savedPrisms.size}") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(state.savedPrisms, key = { it.id }) { p ->
+                        Column(
+                            modifier = Modifier
+                                .width(96.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { vm.openPrism(p.id) },
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                PrismArt(p.seed, 1_500L, Modifier.width(96.dp).height(150.dp).clip(RoundedCornerShape(16.dp)))
+                                Glyph(LineIcon.Play, Palette.Ink, size = 26.dp)
+                            }
+                            Text(
+                                p.caption, style = MaterialTheme.typography.labelLarge, color = Palette.Ink,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         if (state.followedPeople.isNotEmpty()) {
             item { SectionTitle("Подписки · ${state.followedPeople.size}") }
             item {
@@ -236,7 +262,12 @@ fun ProfileScreen(
             }
         }
         items(state.myPosts, key = { it.id }) { post ->
-            PostCard(post, onLike = { vm.toggleLike(post.id) })
+            PostCard(
+                post,
+                onLike = { vm.toggleLike(post.id) },
+                onComments = { vm.openComments(post.id) },
+                onOpenMedia = vm::openMedia,
+            )
         }
     }
 }

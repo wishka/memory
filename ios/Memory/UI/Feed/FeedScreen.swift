@@ -20,7 +20,7 @@ struct FeedScreen: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
-                Composer(onPublish: model.publish)
+                Composer { text, media in model.publish(text, media: media) }
 
                 ForEach(state.posts) { post in
                     PostCard(
@@ -28,7 +28,9 @@ struct FeedScreen: View {
                         onLike: { model.toggleLike(post.id) },
                         following: post.author.id == state.me.id ? nil : state.following.contains(post.author.id),
                         onFollow: { model.toggleFollow(post.author.id) },
-                        onAuthor: { model.openPerson(post.author.id) }
+                        onAuthor: { model.openPerson(post.author.id) },
+                        onComments: { model.openComments(post.id) },
+                        onOpenMedia: model.openMedia
                     )
                 }
             }
@@ -39,26 +41,44 @@ struct FeedScreen: View {
     }
 }
 
-/// Поле новой записи.
+/// Новая запись: текст, фото и видео из галереи или с камеры. Вложения
+/// видны плитками под полем, крестик убирает лишнее.
 private struct Composer: View {
-    let onPublish: (String) -> Void
+    let onPublish: (String, [Attachment]) -> Void
     @State private var text = ""
+    @State private var media: [Attachment] = []
+
+    private var canPublish: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty
+    }
+
+    private var hint: String {
+        if !media.isEmpty { return plural(media.count, "вложение", "вложения", "вложений") }
+        return text.isEmpty ? "Видят ваши подписчики" : "\(text.count) / 2000"
+    }
 
     var body: some View {
         GlassCard {
             VStack(spacing: 0) {
                 GlassField(placeholder: "Чем хочется поделиться?", text: $text, limit: 2000)
-                HStack {
-                    Text(text.isEmpty ? "Видят ваши подписчики" : "\(text.count) / 2000")
-                        .textStyle(.bodySmall, Palette.mist)
+                PendingAttachments(items: media) { item in
+                    media.removeAll { $0.id == item.id }
+                    MediaFiles.delete(item)
+                }
+                .padding(.bottom, media.isEmpty ? 0 : 10)
+                HStack(spacing: 10) {
+                    AttachButton(documents: false, size: 40) { picked in
+                        media = Array((media + picked).prefix(AppModel.maxMedia))
+                    }
+                    Text(hint).textStyle(.bodySmall, Palette.mist).lineLimit(1)
                     Spacer()
-                    GlowButton(title: "Поделиться", enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                        onPublish(text)
+                    GlowButton(title: "Поделиться", enabled: canPublish) {
+                        onPublish(text, media)
                         text = ""
+                        media = []
                     }
                 }
-                .padding(.leading, 16)
-                .padding(.trailing, 12)
+                .padding(.horizontal, 12)
                 .padding(.bottom, 12)
             }
         }
@@ -75,6 +95,10 @@ struct PostCard: View {
     var onFollow: () -> Void = {}
     /// Нажатие на аватар или имя — страница автора; nil — не нажимается.
     var onAuthor: (() -> Void)? = nil
+    /// Открыть обсуждение; nil — значок комментариев не нажимается.
+    var onComments: (() -> Void)? = nil
+    /// Фото или видео записи на весь экран.
+    var onOpenMedia: (Attachment) -> Void = { _ in }
 
     var body: some View {
         GlassCard {
@@ -90,9 +114,12 @@ struct PostCard: View {
                         }
                     }
                 }
-                Text(post.text)
-                    .textStyle(.body)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !post.text.isEmpty {
+                    Text(post.text)
+                        .textStyle(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                PostMediaView(media: post.media, onOpen: onOpenMedia)
                 if let seed = post.artSeed {
                     Nebula(seed: seed)
                         .frame(height: 200)
@@ -111,10 +138,17 @@ struct PostCard: View {
                     }
                     .buttonStyle(.plain)
                     .sensoryFeedback(.selection, trigger: post.liked)
-                    HStack(spacing: 6) {
-                        Glyph(kind: .comment, color: Palette.mist, size: 22)
-                        Text("\(post.comments)").textStyle(.labelLarge, Palette.mist)
+                    Button { onComments?() } label: {
+                        HStack(spacing: 6) {
+                            Glyph(kind: .comment, color: Palette.mist, size: 22)
+                            Text("\(post.comments)").textStyle(.labelLarge, Palette.mist)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .contentShape(Capsule())
                     }
+                    .buttonStyle(.plain)
+                    .disabled(onComments == nil)
                 }
             }
             .padding(16)
@@ -128,7 +162,7 @@ struct PostCard: View {
             Avatar(user: post.author, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(post.author.name).textStyle(.title).lineLimit(1)
-                Text("@\(post.author.handle) · \(agoTitle(post.minutesAgo))")
+                Text("@\(post.author.handle) · \(agoTitle(minutesSince(post.createdAt, post.minutesAgo)))")
                     .textStyle(.bodySmall, Palette.mist)
                     .lineLimit(1)
             }

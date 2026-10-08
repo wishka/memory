@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Вкладка Reels: короткие вертикальные ролики во весь экран, листаются
-/// вверх-вниз. Нажатие — пауза, двойное нажатие — «нравится». Играет только
+/// Вкладка PRISM: короткие вертикальные ролики во весь экран, листаются
+/// вверх-вниз. Нажатие — пауза, двойное нажатие — «нравится». Справа —
+/// «нравится», обсуждение, «поделиться» и «сохранить». Играет только
 /// ролик на экране: соседние стоят, чтобы не тратить батарею.
-struct ReelsScreen: View {
+struct PrismScreen: View {
     let model: AppModel
     @State private var current: Int64?
 
@@ -12,19 +13,21 @@ struct ReelsScreen: View {
         GeometryReader { geo in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
-                    ForEach(state.reels) { reel in
-                        ReelPage(
-                            reel: reel,
-                            active: (current ?? state.reels.first?.id) == reel.id,
-                            following: reel.author.id == state.me.id ? nil : state.following.contains(reel.author.id),
+                    ForEach(state.prisms) { prism in
+                        PrismPage(
+                            prism: prism,
+                            active: (current ?? state.prisms.first?.id) == prism.id,
+                            following: prism.author.id == state.me.id ? nil : state.following.contains(prism.author.id),
                             safeTop: geo.safeAreaInsets.top,
-                            onLike: { model.toggleReelLike(reel.id) },
-                            onAuthor: { model.openPerson(reel.author.id) },
-                            onFollow: { model.toggleFollow(reel.author.id) }
+                            onLike: { model.togglePrismLike(prism.id) },
+                            onAuthor: { model.openPerson(prism.author.id) },
+                            onFollow: { model.toggleFollow(prism.author.id) },
+                            onComments: { model.openPrismComments(prism.id) },
+                            onSave: { model.togglePrismSave(prism.id) }
                         )
                         // Ролик — ровно во весь экран: так листание «страницами» встаёт точно
                         .containerRelativeFrame([.horizontal, .vertical])
-                        .id(reel.id)
+                        .id(prism.id)
                     }
                 }
                 .scrollTargetLayout()
@@ -32,18 +35,34 @@ struct ReelsScreen: View {
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $current)
             .ignoresSafeArea()
+            // Открыли из «Сохранённого» — сразу на нужный ролик
+            .onAppear { jumpToStart() }
+            .onChange(of: state.prismStartId) { _, _ in jumpToStart() }
         }
+    }
+
+    private func jumpToStart() {
+        guard let id = model.state.prismStartId else { return }
+        current = id
+        model.consumePrismStart()
     }
 }
 
-private struct ReelPage: View {
-    let reel: Reel
+/// Текст для «Поделиться»: подпись, автор и где это смотреть.
+func shareText(_ prism: Prism) -> String {
+    "\(prism.caption)\n— \(prism.author.name) (@\(prism.author.handle)) в Memory · PRISM"
+}
+
+private struct PrismPage: View {
+    let prism: Prism
     let active: Bool
     let following: Bool?
     let safeTop: CGFloat
     let onLike: () -> Void
     let onAuthor: () -> Void
     let onFollow: () -> Void
+    let onComments: () -> Void
+    let onSave: () -> Void
 
     @State private var paused = false
     /// Сколько ролик уже проиграл до текущего запуска, мс.
@@ -55,15 +74,15 @@ private struct ReelPage: View {
 
     private func timeMs(_ now: Date) -> Double {
         let running = startedAt.map { now.timeIntervalSince($0) * 1000 } ?? 0
-        return (elapsed + running).truncatingRemainder(dividingBy: reel.durationMs)
+        return (elapsed + running).truncatingRemainder(dividingBy: prism.durationMs)
     }
 
     var body: some View {
-        let spec = ReelSpec(seed: reel.seed)
+        let spec = PrismSpec(seed: prism.seed)
         TimelineView(.animation(minimumInterval: nil, paused: !playing)) { timeline in
             let t = timeMs(timeline.date)
             ZStack {
-                ReelArt(spec: spec, timeMs: t)
+                PrismArt(spec: spec, timeMs: t)
 
                 // Затемнение снизу, чтобы подпись читалась на любом кадре
                 LinearGradient(
@@ -76,7 +95,7 @@ private struct ReelPage: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     progress(t)
-                    Text("REELS").textStyle(.label)
+                    Text("PRISM").textStyle(.label)
                     Spacer()
                     HStack(alignment: .bottom, spacing: 12) {
                         details
@@ -89,7 +108,7 @@ private struct ReelPage: View {
                 .padding(.bottom, tabBarSpace + 24)
 
                 if paused {
-                    Glyph(kind: .reels, color: Palette.ink, size: 36)
+                    Glyph(kind: .play, color: Palette.ink, size: 36)
                         .frame(width: 72, height: 72)
                         .background(Circle().fill(Palette.voidRGB.opacity(0.5)))
                         .allowsHitTesting(false)
@@ -97,7 +116,7 @@ private struct ReelPage: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { if !reel.liked { onLike() } }
+        .onTapGesture(count: 2) { if !prism.liked { onLike() } }
         .onTapGesture { togglePause() }
         .onAppear { if active { play() } }
         .onChange(of: active) { _, isActive in
@@ -133,7 +152,7 @@ private struct ReelPage: View {
                 Capsule().fill(Palette.inkRGB.opacity(0.25))
                 Capsule()
                     .fill(LinearGradient(colors: [Palette.lilac, Palette.sky], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: bar.size.width * CGFloat(t / reel.durationMs))
+                    .frame(width: bar.size.width * CGFloat(t / prism.durationMs))
             }
         }
         .frame(height: 2)
@@ -144,8 +163,8 @@ private struct ReelPage: View {
             HStack(spacing: 10) {
                 Button(action: onAuthor) {
                     HStack(spacing: 10) {
-                        Avatar(user: reel.author, size: 36)
-                        Text(reel.author.name).textStyle(.title).lineLimit(1)
+                        Avatar(user: prism.author, size: 36)
+                        Text(prism.author.name).textStyle(.title).lineLimit(1)
                     }
                 }
                 .buttonStyle(.plain)
@@ -157,10 +176,10 @@ private struct ReelPage: View {
                     }
                 }
             }
-            Text(reel.caption).textStyle(.body).fixedSize(horizontal: false, vertical: true)
+            Text(prism.caption).textStyle(.body).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 Glyph(kind: .music, color: Palette.lilac, size: 16)
-                Text(reel.music).textStyle(.bodySmall, Palette.mist).lineLimit(1)
+                Text(prism.music).textStyle(.bodySmall, Palette.mist).lineLimit(1)
             }
         }
     }
@@ -168,19 +187,32 @@ private struct ReelPage: View {
     private var sideButtons: some View {
         VStack(spacing: 18) {
             Button(action: onLike) {
-                VStack(spacing: 2) {
-                    Glyph(kind: reel.liked ? .heartFilled : .heart, color: reel.liked ? Palette.pearlPink : Palette.ink, size: 30)
-                    Text(compact(reel.likes)).textStyle(.label)
-                }
-                .padding(4)
+                sideLabel(prism.liked ? .heartFilled : .heart, compact(prism.likes))
             }
             .buttonStyle(.plain)
-            .sensoryFeedback(.impact(weight: .light), trigger: reel.liked)
-            VStack(spacing: 2) {
-                Glyph(kind: .comment, color: Palette.ink, size: 30)
-                Text(compact(reel.comments)).textStyle(.label)
+            .sensoryFeedback(.impact(weight: .light), trigger: prism.liked)
+            Button(action: onComments) {
+                sideLabel(.comment, compact(prism.comments))
             }
-            .padding(4)
+            .buttonStyle(.plain)
+            ShareLink(item: shareText(prism)) {
+                sideLabel(.share, "Поделиться")
+            }
+            .buttonStyle(.plain)
+            Button(action: onSave) {
+                sideLabel(prism.saved ? .bookmarkFilled : .bookmark, prism.saved ? "В закладках" : "Сохранить")
+            }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.selection, trigger: prism.saved)
         }
+    }
+
+    private func sideLabel(_ icon: LineIcon, _ text: String) -> some View {
+        VStack(spacing: 2) {
+            Glyph(kind: icon, color: Palette.ink, size: 30)
+            Text(text).textStyle(.label).lineLimit(1).fixedSize()
+        }
+        .padding(4)
+        .contentShape(Rectangle())
     }
 }

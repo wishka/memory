@@ -5,7 +5,7 @@ import Observation
 enum AppTab: String, CaseIterable, Identifiable {
     case feed = "Лента"
     case stories = "Истории"
-    case reels = "Reels"
+    case prism = "PRISM"
     case chats = "Чаты"
     case groups = "Группы"
     case profile = "Профиль"
@@ -25,7 +25,15 @@ struct UiState: Equatable {
     var notifications: Bool = true
     /// На кого подписан человек: их записи — во вкладке «Истории».
     var following: Set<Int> = Demo.following
-    var reels: [Reel] = Demo.reels
+    var prisms: [Prism] = Demo.prisms
+    /// PRISM, с которого открыть вкладку (из «Сохранённого»); nil — с первого.
+    var prismStartId: Int64? = nil
+    /// Открытое обсуждение записи (в ленте, историях, группе); nil — закрыто.
+    var commentsPostId: Int64? = nil
+    /// Открытое обсуждение PRISM; nil — закрыто.
+    var commentsPrismId: Int64? = nil
+    /// Фото или видео на весь экран; nil — не открыто.
+    var viewing: Attachment? = nil
     var groups: [MemoryGroup] = Demo.groups
     /// Страница человека поверх текущей вкладки; nil — закрыта.
     var openPersonId: Int? = nil
@@ -42,6 +50,61 @@ struct UiState: Equatable {
     /// «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте.
     var stories: [Post] { posts.filter { following.contains($0.author.id) } }
     var followedPeople: [User] { Demo.people.filter { following.contains($0.id) } }
+    /// «Сохранённое» в профиле: PRISM в закладках.
+    var savedPrisms: [Prism] { prisms.filter { $0.saved } }
+    /// Запись по номеру — в ленте или в группе: для обсуждения.
+    func findPost(_ id: Int64) -> Post? {
+        if let post = posts.first(where: { $0.id == id }) { return post }
+        for g in groups {
+            if let post = g.posts.first(where: { $0.id == id }) { return post }
+        }
+        return nil
+    }
+    func findPrism(_ id: Int64) -> Prism? { prisms.first { $0.id == id } }
+
+    /// Новое имя и сведения — во всех своих записях и комментариях.
+    mutating func applyMe(_ me: User) {
+        self.me = me
+        func fixComments(_ list: [Comment]) -> [Comment] {
+            list.map { c in
+                var c = c
+                if c.author.id == me.id { c.author = me }
+                return c
+            }
+        }
+        func fix(_ post: Post) -> Post {
+            var p = post
+            if p.author.id == me.id { p.author = me }
+            p.commentList = fixComments(p.commentList)
+            return p
+        }
+        posts = posts.map(fix)
+        groups = groups.map { g in
+            var g = g
+            g.posts = g.posts.map(fix)
+            return g
+        }
+        prisms = prisms.map { p in
+            var p = p
+            p.commentList = fixComments(p.commentList)
+            return p
+        }
+    }
+}
+
+/// Сохраняемая часть состояния (см. StateStore).
+struct Snapshot: Codable, Equatable {
+    var version: Int = Snapshot.currentVersion
+    var posts: [Post]
+    var chats: [Chat]
+    var groups: [MemoryGroup]
+    var prisms: [Prism]
+    var following: Set<Int>
+    var notifications: Bool
+    var nextId: Int64
+
+    /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
+    static let currentVersion = 1
 }
 
 /// Состояние всего приложения.
@@ -55,8 +118,20 @@ final class AppModel {
     /// Задержки демо-ответа в чате; в тестах — нулевые.
     var replyDelays: (typing: Double, reply: Double) = (0.7, 1.5)
 
-    private var nextId: Int64 = 10_000
-    private var replyIndex = 0
+    /// Сколько фото и видео можно приложить к одной записи или сообщению.
+    static let maxMedia = 10
+
+    @ObservationIgnored private var nextId: Int64 = 10_000
+    @ObservationIgnored private var replyIndex = 0
+    /// Часы — для времени своих записей и комментариев; в тестах подменяются.
+    @ObservationIgnored private let clock: () -> Date
+    /// Демо-собеседник отвечает на сообщения; в тестах можно выключить.
+    @ObservationIgnored private let demoReplies: Bool
+
+    init(clock: @escaping () -> Date = { Date() }, demoReplies: Bool = true) {
+        self.clock = clock
+        self.demoReplies = demoReplies
+    }
 
     private func newId() -> Int64 {
         nextId += 1
@@ -89,6 +164,8 @@ final class AppModel {
     /// true — обработано внутри приложения.
     @discardableResult
     func back() -> Bool {
+        if state.viewing != nil { closeMedia(); return true }
+        if state.commentsPostId != nil || state.commentsPrismId != nil { closeComments(); return true }
         if state.openChatId != nil { closeChat(); return true }
         if state.openPersonId != nil { closePerson(); return true }
         if state.openGroupId != nil { closeGroup(); return true }
@@ -102,10 +179,77 @@ final class AppModel {
         state.posts = state.posts.map { Self.toggled($0, postId) }
     }
 
-    func publish(_ text: String) {
+    /// Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем.
+    func publish(_ text: String, media: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty && media.isEmpty { return }
+        let post = Post(
+            id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
+            media: Array(media.prefix(Self.maxMedia)), createdAt: clock()
+        )
+        state.posts.insert(post, at: 0)
+    }
+
+    /// Комментарий к записи в ленте или в группе.
+    func addComment(_ postId: Int64, _ text: String) {
+        let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
         if trimmed.isEmpty { return }
-        state.posts.insert(Post(id: newId(), author: state.me, text: trimmed, minutesAgo: 0), at: 0)
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock())
+        updatePosts(postId) { p in
+            p.comments += 1
+            p.commentList.append(comment)
+        }
+    }
+
+    /// Свой комментарий можно удалить.
+    func deleteComment(_ postId: Int64, _ commentId: Int64) {
+        let meId = state.me.id
+        updatePosts(postId) { p in
+            guard p.commentList.contains(where: { $0.id == commentId && $0.author.id == meId }) else { return }
+            p.commentList.removeAll { $0.id == commentId }
+            p.comments = max(0, p.comments - 1)
+        }
+    }
+
+    /// Изменить запись — где бы она ни была: в ленте или в группе.
+    private func updatePosts(_ postId: Int64, _ change: (inout Post) -> Void) {
+        state.posts = state.posts.map { post in
+            var p = post
+            if p.id == postId { change(&p) }
+            return p
+        }
+        state.groups = state.groups.map { group in
+            var g = group
+            g.posts = g.posts.map { post in
+                var p = post
+                if p.id == postId { change(&p) }
+                return p
+            }
+            return g
+        }
+    }
+
+    func openComments(_ postId: Int64) {
+        state.commentsPrismId = nil
+        state.commentsPostId = postId
+    }
+
+    func openPrismComments(_ prismId: Int64) {
+        state.commentsPostId = nil
+        state.commentsPrismId = prismId
+    }
+
+    func closeComments() {
+        state.commentsPostId = nil
+        state.commentsPrismId = nil
+    }
+
+    func openMedia(_ attachment: Attachment) {
+        state.viewing = attachment
+    }
+
+    func closeMedia() {
+        state.viewing = nil
     }
 
     /// Подписаться или отписаться: записи человека появятся в «Историях» или уйдут оттуда.
@@ -148,10 +292,14 @@ final class AppModel {
 
     /// Отправка. В демо собеседник «печатает» и через пару секунд отвечает —
     /// чтобы переписку можно было почувствовать без сервера.
-    func send(_ chatId: Int, _ text: String) {
+    func send(_ chatId: Int, _ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return }
-        append(chatId, Message(id: newId(), fromMe: true, text: trimmed, time: Self.now()))
+        if trimmed.isEmpty && attachments.isEmpty { return }
+        append(chatId, Message(
+            id: newId(), fromMe: true, text: trimmed, time: Self.now(),
+            attachments: Array(attachments.prefix(Self.maxMedia))
+        ))
+        guard demoReplies else { return }
         let delays = replyDelays
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delays.typing * 1_000_000_000))
@@ -164,6 +312,22 @@ final class AppModel {
             self.append(chatId, Message(id: self.newId(), fromMe: false, text: reply, time: Self.now()))
         }
     }
+
+    /// Удалить сообщение. forEveryone = false — только у себя: у собеседника
+    /// оно останется. true — у обоих. Пока сервера нет, собеседник — демо, и
+    /// на этом телефоне оба варианта убирают сообщение из переписки; с
+    /// сервером «у всех» уйдёт собеседнику командой удаления.
+    func deleteMessage(_ chatId: Int, _ messageId: Int64, forEveryone: Bool) {
+        state.chats = state.chats.map { chat in
+            var c = chat
+            if c.id == chatId { c.messages.removeAll { $0.id == messageId } }
+            return c
+        }
+        if forEveryone { deletedForEveryone.insert(messageId) }
+    }
+
+    /// Какие сообщения удалены «у всех» — для будущей отправки на сервер.
+    @ObservationIgnored private(set) var deletedForEveryone: Set<Int64> = []
 
     private func append(_ chatId: Int, _ message: Message) {
         guard var chat = state.chats.first(where: { $0.id == chatId }) else { return }
@@ -182,16 +346,54 @@ final class AppModel {
         }
     }
 
-    // MARK: - Reels
+    // MARK: - PRISM
 
-    func toggleReelLike(_ reelId: Int64) {
-        state.reels = state.reels.map { reel in
-            var r = reel
-            if r.id == reelId {
-                r.likes += r.liked ? -1 : 1
-                r.liked.toggle()
-            }
-            return r
+    func togglePrismLike(_ prismId: Int64) {
+        updatePrism(prismId) { p in
+            p.likes += p.liked ? -1 : 1
+            p.liked.toggle()
+        }
+    }
+
+    /// «Сохранить»: закладка, ролик появляется в «Сохранённом» в профиле.
+    func togglePrismSave(_ prismId: Int64) {
+        updatePrism(prismId) { $0.saved.toggle() }
+    }
+
+    func addPrismComment(_ prismId: Int64, _ text: String) {
+        let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
+        if trimmed.isEmpty { return }
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock())
+        updatePrism(prismId) { p in
+            p.comments += 1
+            p.commentList.append(comment)
+        }
+    }
+
+    func deletePrismComment(_ prismId: Int64, _ commentId: Int64) {
+        let meId = state.me.id
+        updatePrism(prismId) { p in
+            guard p.commentList.contains(where: { $0.id == commentId && $0.author.id == meId }) else { return }
+            p.commentList.removeAll { $0.id == commentId }
+            p.comments = max(0, p.comments - 1)
+        }
+    }
+
+    /// Открыть вкладку PRISM на нужном ролике — из «Сохранённого».
+    func openPrism(_ prismId: Int64) {
+        selectTab(.prism)
+        state.prismStartId = prismId
+    }
+
+    func consumePrismStart() {
+        state.prismStartId = nil
+    }
+
+    private func updatePrism(_ prismId: Int64, _ change: (inout Prism) -> Void) {
+        state.prisms = state.prisms.map { prism in
+            var p = prism
+            if p.id == prismId { change(&p) }
+            return p
         }
     }
 
@@ -254,7 +456,7 @@ final class AppModel {
         state.groups = state.groups.map { group in
             var g = group
             if g.id == groupId && g.joined {
-                g.posts.insert(Post(id: newId(), author: me, text: trimmed, minutesAgo: 0), at: 0)
+                g.posts.insert(Post(id: newId(), author: me, text: trimmed, minutesAgo: 0, createdAt: clock()), at: 0)
             }
             return g
         }
@@ -305,14 +507,38 @@ final class AppModel {
         state.notifications = enabled
     }
 
-    /// Свои записи в ленте показывают новое имя.
+    /// Свои записи и комментарии показывают новое имя.
     private func applyMe(_ me: User) {
-        state.me = me
-        state.posts = state.posts.map { post in
-            var p = post
-            if p.author.id == me.id { p.author = me }
-            return p
+        state.applyMe(me)
+    }
+
+    // MARK: - Сохранение
+
+    /// То, что сохраняется на телефоне между запусками (см. StateStore).
+    func snapshot() -> Snapshot {
+        Snapshot(
+            posts: state.posts, chats: state.chats, groups: state.groups, prisms: state.prisms,
+            following: state.following, notifications: state.notifications, nextId: nextId
+        )
+    }
+
+    /// Вернуть сохранённое состояние после входа. Свои записи и
+    /// комментарии получают текущее имя и сведения из профиля.
+    func restore(_ snapshot: Snapshot) {
+        nextId = max(nextId, snapshot.nextId)
+        var s = state
+        s.posts = snapshot.posts
+        s.chats = snapshot.chats.map { chat in
+            var c = chat
+            c.typing = false
+            return c
         }
+        s.groups = snapshot.groups
+        s.prisms = snapshot.prisms
+        s.following = snapshot.following.subtracting([s.me.id])
+        s.notifications = snapshot.notifications
+        s.applyMe(s.me)
+        state = s
     }
 
     private static func toggled(_ post: Post, _ postId: Int64) -> Post {

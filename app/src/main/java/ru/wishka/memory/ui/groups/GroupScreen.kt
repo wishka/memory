@@ -152,6 +152,8 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                 post,
                 onLike = { vm.toggleGroupPostLike(group.id, post.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
+                onComments = { vm.openComments(post.id) },
+                onOpenMedia = vm::openMedia,
             )
         }
         item { Spacer(Modifier.height(8.dp)) }

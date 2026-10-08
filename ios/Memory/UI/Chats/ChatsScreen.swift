@@ -53,7 +53,7 @@ private struct ChatRow: View {
     private var preview: String {
         if chat.typing { return "печатает…" }
         guard let last = chat.last else { return "Нет сообщений" }
-        return last.fromMe ? "Вы: \(last.text)" : last.text
+        return last.fromMe ? "Вы: \(previewOf(last))" : previewOf(last)
     }
 
     var body: some View {
@@ -87,4 +87,18 @@ private struct ChatRow: View {
         }
         .buttonStyle(.plain)
     }
+}
+
+/// Текст сообщения для списка чатов; без текста — что приложено.
+func previewOf(_ message: Message) -> String {
+    if !message.text.isEmpty { return message.text }
+    let a = message.attachments
+    if a.isEmpty { return "" }
+    if a.allSatisfy({ $0.kind == .photo }) { return a.count == 1 ? "Фото" : "\(a.count) фото" }
+    if a.allSatisfy({ $0.kind == .video }) { return a.count == 1 ? "Видео" : "\(a.count) видео" }
+    if a.allSatisfy({ $0.kind == .document }) {
+        if a.count == 1, !a[0].name.isEmpty { return a[0].name }
+        return plural(a.count, "файл", "файла", "файлов")
+    }
+    return plural(a.count, "вложение", "вложения", "вложений")
 }

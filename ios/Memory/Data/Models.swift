@@ -3,7 +3,7 @@ import Foundation
 /// Человек в Memory. hue — 0...1, оттенок его аватара-градиента.
 /// followers / followingCount — числа для карточки; у «себя» подписки
 /// считаются по настоящему списку.
-struct User: Identifiable, Equatable {
+struct User: Identifiable, Equatable, Codable {
     let id: Int
     var name: String
     var handle: String
@@ -30,9 +30,44 @@ struct User: Identifiable, Equatable {
     var firstName: String { name.split(separator: " ").first.map(String.init) ?? name }
 }
 
-/// Запись в ленте. artSeed != nil — к записи приложена «картинка»;
-/// пока сервера нет, она рисуется процедурно (туманность), см. Nebula.
-struct Post: Identifiable, Equatable {
+/// Что приложено к записи или сообщению.
+enum MediaKind: String, Codable {
+    case photo, video, document
+}
+
+/// Вложение: фото, видео или документ. Пока сервера нет, файл копируется
+/// в память приложения (см. MediaFiles), fileName — имя копии в папке
+/// вложений. Так вложение переживает перезапуск и не пропадает, если
+/// человек удалит оригинал из галереи.
+///
+/// Хранится имя файла, а не полный путь: путь к папке приложения на
+/// iPhone меняется после обновления.
+struct Attachment: Identifiable, Equatable, Codable, Hashable {
+    let id: String
+    let kind: MediaKind
+    let fileName: String
+    /// Имя для документов: «Договор.pdf».
+    var name: String = ""
+    var size: Int64 = 0
+}
+
+/// Комментарий к записи или PRISM. createdAt — момент написания; nil —
+/// у демо-комментариев, тогда время из minutesAgo.
+struct Comment: Identifiable, Equatable, Codable {
+    let id: Int64
+    var author: User
+    var text: String
+    var minutesAgo: Int = 0
+    var createdAt: Date? = nil
+}
+
+/// Запись в ленте. artSeed != nil — к записи приложена процедурная
+/// «картинка» (туманность, см. Nebula) — так выглядят демо-записи.
+/// media — настоящие фото и видео, которые приложил человек.
+///
+/// comments — сколько всего комментариев (у демо-записей их больше, чем
+/// загружено), commentList — те, что видны в обсуждении.
+struct Post: Identifiable, Equatable, Codable {
     let id: Int64
     var author: User
     var text: String
@@ -41,16 +76,28 @@ struct Post: Identifiable, Equatable {
     var likes: Int = 0
     var liked: Bool = false
     var comments: Int = 0
+    var media: [Attachment] = []
+    var commentList: [Comment] = []
+    /// Момент публикации у своих записей; у демо — nil, время из minutesAgo.
+    var createdAt: Date? = nil
 }
 
-struct Message: Identifiable, Equatable {
+/// Минуты с момента createdAt, а для демо-данных — заданные заранее.
+func minutesSince(_ createdAt: Date?, _ minutesAgo: Int, now: Date = Date()) -> Int {
+    guard let createdAt else { return minutesAgo }
+    return max(0, Int(now.timeIntervalSince(createdAt) / 60))
+}
+
+/// Сообщение; text может быть пустым, если отправлены только вложения.
+struct Message: Identifiable, Equatable, Codable {
     let id: Int64
     let fromMe: Bool
     let text: String
     let time: String
+    var attachments: [Attachment] = []
 }
 
-struct Chat: Identifiable, Equatable {
+struct Chat: Identifiable, Equatable, Codable {
     let id: Int
     var peer: User
     var messages: [Message]
@@ -85,7 +132,7 @@ func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
 }
 
 /// Группа по интересам. seed — обложка (процедурная туманность).
-struct MemoryGroup: Identifiable, Equatable {
+struct MemoryGroup: Identifiable, Equatable, Codable {
     let id: Int
     var name: String
     var description: String
@@ -100,10 +147,12 @@ struct MemoryGroup: Identifiable, Equatable {
 /// Темы групп — для создания и поиска.
 let groupTopics = ["Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт"]
 
-/// Короткое вертикальное видео. Пока сервера и загрузки видео нет, «кадр»
-/// рисуется анимацией (см. ReelArt) по seed — один и тот же Reels всегда
-/// выглядит одинаково.
-struct Reel: Identifiable, Equatable {
+/// PRISM — короткое вертикальное видео. Пока сервера и загрузки видео нет,
+/// «кадр» рисуется анимацией (см. PrismArt) по seed — один и тот же ролик
+/// всегда выглядит одинаково.
+///
+/// saved — в закладках («Сохранённое» в профиле).
+struct Prism: Identifiable, Equatable, Codable {
     let id: Int64
     var author: User
     var caption: String
@@ -113,6 +162,8 @@ struct Reel: Identifiable, Equatable {
     var comments: Int
     var liked: Bool = false
     var durationMs: Double = 9_000
+    var saved: Bool = false
+    var commentList: [Comment] = []
 }
 
 /// То, что человек рассказывает о себе в профиле. Сохраняется вместе с аккаунтом.

@@ -47,13 +47,22 @@ enum Demo {
 
     static let posts: [Post] = [
         Post(id: 101, author: vera, text: "Сегодня небо было как акварель: фиолетовый перетекал в синий " +
-            "прямо над крышами. Кажется, такие вечера и стоит запоминать.", minutesAgo: 12, artSeed: 3, likes: 48, comments: 6),
+            "прямо над крышами. Кажется, такие вечера и стоит запоминать.", minutesAgo: 12, artSeed: 3, likes: 48, comments: 6,
+             commentList: [
+                Comment(id: 1001, author: alina, text: "Какие цвета! Где снимала?", minutesAgo: 10),
+                Comment(id: 1002, author: sofia, text: "Это стоит распечатать и повесить на стену", minutesAgo: 8),
+             ]),
         Post(id: 102, author: mark, text: "Записал новый трек в три часа ночи. Назвал его «Memory». " +
             "Совпадение? Не думаю.", minutesAgo: 95, likes: 21, comments: 3),
         Post(id: 103, author: alina, text: "Призма на подоконнике поймала солнце — вся комната в радугах.", minutesAgo: 260,
-             artSeed: 11, likes: 87, liked: true, comments: 14),
+             artSeed: 11, likes: 87, liked: true, comments: 14,
+             commentList: [Comment(id: 1003, author: vera, text: "Обожаю такие утра ✨", minutesAgo: 200)]),
         Post(id: 104, author: sofia, text: "Нашла старую плёнку из поездки на Байкал. Лёд, звёзды и тишина.", minutesAgo: 1500,
-             artSeed: 27, likes: 132, comments: 19),
+             artSeed: 27, likes: 132, comments: 19,
+             commentList: [
+                Comment(id: 1004, author: timur, text: "Байкал зимой — мечта", minutesAgo: 1400),
+                Comment(id: 1005, author: mark, text: "Плёнка передаёт холод лучше любой цифры", minutesAgo: 1300),
+             ]),
         Post(id: 105, author: timur, text: "Кто идёт смотреть звездопад в субботу? Беру термос и плед.", minutesAgo: 2900,
              likes: 9, comments: 11),
         Post(id: 106, author: vera, text: "Луна сегодня почти касалась шпиля Петропавловки.", minutesAgo: 4300,
@@ -109,12 +118,17 @@ enum Demo {
         MemoryGroup(id: 6, name: "Тропы и вершины", description: "Походы выходного дня и большие маршруты.", topic: "Природа", members: 2150, seed: 66),
     ]
 
-    static let reels: [Reel] = [
-        Reel(id: 301, author: vera, caption: "Таймлапс: луна поднимается над Невой 🌙", music: "Ночной город — Lumen", seed: 81, likes: 1820, comments: 64),
-        Reel(id: 302, author: alina, caption: "Как призма раскладывает свет на радугу", music: "Prism Waves — Alina", seed: 82, likes: 3400, comments: 120, liked: true),
-        Reel(id: 303, author: mark, caption: "Собираю трек из шума дождя за 30 секунд", music: "Rain Synth — Mark North", seed: 83, likes: 950, comments: 41),
-        Reel(id: 304, author: sofia, caption: "Байкал: лёд звенит, если по нему постучать", music: "Ice Bells — Sofia Ri", seed: 84, likes: 5120, comments: 233),
-        Reel(id: 305, author: timur, caption: "Звездопад Персеиды, 20 минут в 15 секундах", music: "Meteor — Timur", seed: 85, likes: 760, comments: 28),
+    static let prisms: [Prism] = [
+        Prism(id: 301, author: vera, caption: "Таймлапс: луна поднимается над Невой 🌙", music: "Ночной город — Lumen", seed: 81, likes: 1820, comments: 64,
+              commentList: [Comment(id: 1101, author: sofia, text: "Залипла на минуту 🌙", minutesAgo: 30)]),
+        Prism(id: 302, author: alina, caption: "Как призма раскладывает свет на радугу", music: "Prism Waves — Alina", seed: 82, likes: 3400, comments: 120, liked: true,
+              commentList: [
+                Comment(id: 1102, author: vera, text: "Хочу такую же призму!", minutesAgo: 90),
+                Comment(id: 1103, author: mark, text: "Под этот трек идеально", minutesAgo: 60),
+              ]),
+        Prism(id: 303, author: mark, caption: "Собираю трек из шума дождя за 30 секунд", music: "Rain Synth — Mark North", seed: 83, likes: 950, comments: 41),
+        Prism(id: 304, author: sofia, caption: "Байкал: лёд звенит, если по нему постучать", music: "Ice Bells — Sofia Ri", seed: 84, likes: 5120, comments: 233),
+        Prism(id: 305, author: timur, caption: "Звездопад Персеиды, 20 минут в 15 секундах", music: "Meteor — Timur", seed: 85, likes: 760, comments: 28),
     ]
 
     /// Ответы собеседника в демо-переписке — по кругу.

@@ -110,6 +110,30 @@ struct ProfileScreen: View {
                     }
                 }
 
+                if !state.savedPrisms.isEmpty {
+                    SectionTitle(text: "Сохранённое · \(state.savedPrisms.count)")
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(state.savedPrisms) { p in
+                                Button { model.openPrism(p.id) } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ZStack {
+                                            PrismArt(spec: PrismSpec(seed: p.seed), timeMs: 1_500)
+                                            Glyph(kind: .play, color: Palette.ink, size: 26)
+                                        }
+                                        .frame(width: 96, height: 150)
+                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                        Text(p.caption).textStyle(.labelLarge).lineLimit(2)
+                                    }
+                                    .frame(width: 96)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+
                 if !state.followedPeople.isEmpty {
                     SectionTitle(text: "Подписки · \(state.followedPeople.count)")
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -139,7 +163,12 @@ struct ProfileScreen: View {
                         .padding(.horizontal, 24)
                 }
                 ForEach(state.myPosts) { post in
-                    PostCard(post: post, onLike: { model.toggleLike(post.id) })
+                    PostCard(
+                        post: post,
+                        onLike: { model.toggleLike(post.id) },
+                        onComments: { model.openComments(post.id) },
+                        onOpenMedia: model.openMedia
+                    )
                 }
             }
             .padding(.top, 12)

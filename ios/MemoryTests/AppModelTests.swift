@@ -135,11 +135,120 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(vm.state.groups.first { $0.id == other.id }?.posts, other.posts)
     }
 
-    func testReelLike() throws {
+    func testPrismLikeSaveAndComments() throws {
         let vm = AppModel()
-        let reel = try XCTUnwrap(vm.state.reels.first { !$0.liked })
-        vm.toggleReelLike(reel.id)
-        XCTAssertEqual(vm.state.reels.first { $0.id == reel.id }?.likes, reel.likes + 1)
+        let prism = try XCTUnwrap(vm.state.prisms.first { !$0.liked })
+        vm.togglePrismLike(prism.id)
+        XCTAssertEqual(vm.state.findPrism(prism.id)?.likes, prism.likes + 1)
+        // «Сохранить» — закладка в профиле, повторно — убрать
+        XCTAssertTrue(vm.state.savedPrisms.isEmpty)
+        vm.togglePrismSave(prism.id)
+        XCTAssertEqual(vm.state.savedPrisms.map(\.id), [prism.id])
+        vm.togglePrismSave(prism.id)
+        XCTAssertTrue(vm.state.savedPrisms.isEmpty)
+        // Комментарий: в обсуждении и в счётчике; свой можно удалить
+        vm.addPrismComment(prism.id, "  Красиво  ")
+        let withComment = try XCTUnwrap(vm.state.findPrism(prism.id))
+        XCTAssertEqual(withComment.comments, prism.comments + 1)
+        XCTAssertEqual(withComment.commentList.last?.text, "Красиво")
+        let myComment = try XCTUnwrap(withComment.commentList.last)
+        vm.deletePrismComment(prism.id, myComment.id)
+        XCTAssertEqual(vm.state.findPrism(prism.id)?.comments, prism.comments)
+        // Открыть из «Сохранённого» — вкладка PRISM на нужном ролике
+        vm.openPrism(prism.id)
+        XCTAssertEqual(vm.state.tab, .prism)
+        XCTAssertEqual(vm.state.prismStartId, prism.id)
+    }
+
+    func testCommentsOnFeedAndGroupPosts() throws {
+        let vm = AppModel()
+        let post = try XCTUnwrap(vm.state.posts.first)
+        vm.addComment(post.id, "Отличный кадр")
+        vm.addComment(post.id, "   ")
+        let updated = try XCTUnwrap(vm.state.findPost(post.id))
+        XCTAssertEqual(updated.comments, post.comments + 1)
+        XCTAssertEqual(updated.commentList.count, post.commentList.count + 1)
+        XCTAssertEqual(updated.commentList.last?.author.id, vm.state.me.id)
+        // Чужой комментарий удалить нельзя, свой — можно
+        if let foreign = post.commentList.first { vm.deleteComment(post.id, foreign.id) }
+        XCTAssertEqual(vm.state.findPost(post.id)?.commentList.count, post.commentList.count + 1)
+        let mine = try XCTUnwrap(updated.commentList.last)
+        vm.deleteComment(post.id, mine.id)
+        XCTAssertEqual(vm.state.findPost(post.id)?.commentList, post.commentList)
+        // Запись в группе обсуждается так же
+        let groupPost = try XCTUnwrap(vm.state.groups.first { !$0.posts.isEmpty }?.posts.first)
+        vm.addComment(groupPost.id, "И я там был")
+        XCTAssertEqual(vm.state.findPost(groupPost.id)?.commentList.last?.text, "И я там был")
+    }
+
+    func testPublishWithMediaOnly() throws {
+        let vm = AppModel()
+        let photo = Attachment(id: "a", kind: .photo, fileName: "a.jpg")
+        vm.publish("", media: [photo])
+        let top = try XCTUnwrap(vm.state.posts.first)
+        XCTAssertEqual(top.media, [photo])
+        XCTAssertEqual(top.text, "")
+        // Совсем пустую запись не публикуем
+        let count = vm.state.posts.count
+        vm.publish("  ", media: [])
+        XCTAssertEqual(vm.state.posts.count, count)
+    }
+
+    func testSendAttachmentsAndDeleteMessages() throws {
+        let vm = AppModel(demoReplies: false)
+        let chat = try XCTUnwrap(vm.state.chats.first)
+        let doc = Attachment(id: "d", kind: .document, fileName: "d.pdf", name: "Договор.pdf", size: 2048)
+        vm.send(chat.id, "", attachments: [doc])
+        let sent = try XCTUnwrap(vm.state.chats.first { $0.id == chat.id }?.messages.last)
+        XCTAssertEqual(sent.attachments, [doc])
+        XCTAssertEqual(previewOf(sent), "Договор.pdf")
+        // Удалить у себя
+        vm.deleteMessage(chat.id, sent.id, forEveryone: false)
+        XCTAssertFalse(vm.state.chats.first { $0.id == chat.id }?.messages.contains { $0.id == sent.id } ?? true)
+        XCTAssertFalse(vm.deletedForEveryone.contains(sent.id))
+        // Удалить у обоих — запоминается для отправки на сервер
+        let other = try XCTUnwrap(vm.state.chats.first { $0.id == chat.id }?.messages.first)
+        vm.deleteMessage(chat.id, other.id, forEveryone: true)
+        XCTAssertTrue(vm.deletedForEveryone.contains(other.id))
+    }
+
+    func testSnapshotSurvivesRestartAndKeepsCurrentName() throws {
+        let vm = AppModel()
+        vm.setAccount(username: "vera.moon", displayName: "Вера")
+        vm.publish("Мой момент", media: [Attachment(id: "p", kind: .photo, fileName: "p.jpg")])
+        let firstPrism = try XCTUnwrap(vm.state.prisms.first)
+        vm.togglePrismSave(firstPrism.id)
+
+        // Запись в файл и чтение — как после перезапуска
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = StateStore(directory: dir)
+        store.save("vera.moon", vm.snapshot())
+        let loaded = try XCTUnwrap(store.load("vera.moon"))
+        XCTAssertNil(store.load("someone.else"))
+
+        let next = AppModel()
+        next.setAccount(username: "vera.moon", displayName: "Вера Новая")
+        next.restore(loaded)
+        XCTAssertEqual(next.state.myPosts.first?.text, "Мой момент")
+        XCTAssertEqual(next.state.myPosts.first?.media.first?.fileName, "p.jpg")
+        XCTAssertEqual(next.state.myPosts.first?.author.name, "Вера Новая")
+        XCTAssertEqual(next.state.savedPrisms.count, 1)
+        // Новые номера не совпадают с сохранёнными
+        next.publish("Ещё")
+        XCTAssertEqual(Set(next.state.myPosts.map(\.id)).count, 2)
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    func testOverlaysCloseFirstOnBack() throws {
+        let vm = AppModel()
+        let post = try XCTUnwrap(vm.state.posts.first)
+        vm.openComments(post.id)
+        vm.openMedia(Attachment(id: "p", kind: .photo, fileName: "p.jpg"))
+        XCTAssertTrue(vm.back())
+        XCTAssertNil(vm.state.viewing)
+        XCTAssertEqual(vm.state.commentsPostId, post.id)
+        XCTAssertTrue(vm.back())
+        XCTAssertNil(vm.state.commentsPostId)
     }
 
     func testDemoReplyArrives() {
@@ -171,5 +280,11 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(plural(12, "запись", "записи", "записей"), "12 записей")
         XCTAssertEqual(compact(1284), "1,3 тыс.")
         XCTAssertEqual(compact(15_000), "15 тыс.")
+        XCTAssertEqual(sizeTitle(2 * 1024 * 1024), "2,0 МБ")
+        XCTAssertEqual(sizeTitle(12 * 1024), "12 КБ")
+        // Время своей записи считается от момента публикации
+        XCTAssertEqual(minutesSince(nil, 3), 3)
+        let start = Date(timeIntervalSince1970: 60)
+        XCTAssertEqual(minutesSince(start, 0, now: Date(timeIntervalSince1970: 360)), 5)
     }
 }

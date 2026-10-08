@@ -61,6 +61,6 @@ enum Palette {
     /// Ошибки в формах — мягкий розово-красный, читается на тёмном.
     static let error = RGB(0xFFB4AB).color
 
-    /// Розовый перламутр — «нравится» в Reels и тон кристалла.
+    /// Розовый перламутр — тон кристалла.
     static let pearlPink = RGB(0xFF9EDE).color
 }

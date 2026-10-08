@@ -1,10 +1,20 @@
+import QuickLook
 import SwiftUI
 
 /// Переписка: шапка с собеседником, сообщения и поле ввода над клавиатурой.
+/// Скрепка — фото, видео (из галереи или с камеры) и документы. Долгое
+/// нажатие на сообщение — удалить у себя или у обоих.
 struct ChatScreen: View {
     let model: AppModel
     let chat: Chat
     @State private var text = ""
+    @State private var pending: [Attachment] = []
+    /// Документ, открытый в просмотре (QuickLook).
+    @State private var preview: URL?
+
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pending.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,7 +24,17 @@ struct ChatScreen: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(chat.messages) { message in
-                            Bubble(message: message).id(message.id)
+                            Bubble(
+                                message: message,
+                                peerName: chat.peer.firstName,
+                                onOpen: open,
+                                onDelete: { forEveryone in
+                                    model.deleteMessage(chat.id, message.id, forEveryone: forEveryone)
+                                    // Копии вложений больше не нужны
+                                    message.attachments.forEach(MediaFiles.delete)
+                                }
+                            )
+                            .id(message.id)
                         }
                         if chat.typing {
                             TypingBubble().id("typing")
@@ -33,7 +53,21 @@ struct ChatScreen: View {
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
+            PendingAttachments(items: pending) { item in
+                pending.removeAll { $0.id == item.id }
+                MediaFiles.delete(item)
+            }
+            .padding(.top, pending.isEmpty ? 0 : 8)
             inputRow
+        }
+        .quickLookPreview($preview)
+    }
+
+    private func open(_ attachment: Attachment) {
+        if attachment.kind == .document {
+            preview = MediaFiles.url(attachment)
+        } else {
+            model.openMedia(attachment)
         }
     }
 
@@ -60,15 +94,17 @@ struct ChatScreen: View {
         .padding(.vertical, 8)
     }
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
     private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            AttachButton(documents: true, size: 50) { picked in
+                pending = Array((pending + picked).prefix(AppModel.maxMedia))
+            }
             GlassField(placeholder: "Сообщение", text: $text, limit: 2000, maxLines: 5)
                 .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
             Button {
-                model.send(chat.id, text)
+                model.send(chat.id, text, attachments: pending)
                 text = ""
+                pending = []
             } label: {
                 Glyph(kind: .send, color: canSend ? Palette.ink : Palette.mist)
                     .frame(width: 50, height: 50)
@@ -87,8 +123,13 @@ struct ChatScreen: View {
     }
 }
 
+/// Сообщение: текст и вложения. Долгое нажатие — меню удаления:
+/// «у себя» (у собеседника останется) или «у меня и у <имя>».
 private struct Bubble: View {
     let message: Message
+    let peerName: String
+    let onOpen: (Attachment) -> Void
+    let onDelete: (Bool) -> Void
 
     var body: some View {
         let mine = message.fromMe
@@ -99,25 +140,70 @@ private struct Bubble: View {
             topTrailingRadius: 20,
             style: .continuous
         )
+        let visual = message.attachments.filter { $0.kind != .document }
+        let documents = message.attachments.filter { $0.kind == .document }
         HStack(spacing: 0) {
             if mine { Spacer(minLength: 0) }
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(message.text)
-                    .textStyle(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(message.time).textStyle(.label, Palette.inkRGB.opacity(0.6))
+            VStack(alignment: .trailing, spacing: 6) {
+                if !visual.isEmpty {
+                    MediaGrid(items: visual, onOpen: onOpen)
+                }
+                ForEach(documents) { doc in
+                    DocumentRow(attachment: doc) { onOpen(doc) }
+                        .frame(maxWidth: 260)
+                }
+                VStack(alignment: .trailing, spacing: 2) {
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .textStyle(.body)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(message.time).textStyle(.label, Palette.inkRGB.opacity(0.6))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(6)
             .background {
                 if mine {
                     shape.fill(LinearGradient(colors: [Palette.violet, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing))
                 }
             }
             .modifier(GlassIf(enabled: !mine, shape: shape))
+            .contentShape(.contextMenuPreview, shape)
+            .contextMenu {
+                Button(role: .destructive) { onDelete(false) } label: {
+                    Label("Удалить у себя", systemImage: "trash")
+                }
+                Button(role: .destructive) { onDelete(true) } label: {
+                    Label("Удалить у меня и у \(peerName)", systemImage: "trash.fill")
+                }
+            }
             // Пузырь не шире 290: длинное сообщение переносится
             .frame(maxWidth: 290, alignment: mine ? .trailing : .leading)
             if !mine { Spacer(minLength: 0) }
+        }
+    }
+}
+
+/// Фото и видео в сообщении: одно — крупно, несколько — сеткой по два.
+private struct MediaGrid: View {
+    let items: [Attachment]
+    let onOpen: (Attachment) -> Void
+
+    var body: some View {
+        if items.count == 1 {
+            MediaTile(attachment: items[0]) { onOpen(items[0]) }
+                .frame(width: 260, height: 200)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        } else {
+            LazyVGrid(columns: [GridItem(.fixed(128), spacing: 4), GridItem(.fixed(128), spacing: 4)], spacing: 4) {
+                ForEach(items) { item in
+                    MediaTile(attachment: item, maxPixel: 384) { onOpen(item) }
+                        .frame(width: 128, height: 128)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
         }
     }
 }

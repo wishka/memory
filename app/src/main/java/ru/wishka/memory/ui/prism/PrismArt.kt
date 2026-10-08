@@ -1,4 +1,4 @@
-package ru.wishka.memory.ui.reels
+package ru.wishka.memory.ui.prism
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
@@ -16,13 +16,13 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * «Видео» Reels, пока нет настоящих роликов: живая туманность в цветах
+ * «Видео» PRISM, пока нет настоящих роликов: живая туманность в цветах
  * палитры, вращающийся кристалл и всплывающие искры. Всё — функция от
  * времени ролика (timeMs), поэтому пауза и перемотка работают честно.
  */
 @Composable
-fun ReelArt(seed: Int, timeMs: Long, modifier: Modifier = Modifier) {
-    val spec = remember(seed) { ReelSpec(seed) }
+fun PrismArt(seed: Int, timeMs: Long, modifier: Modifier = Modifier) {
+    val spec = remember(seed) { PrismSpec(seed) }
     Canvas(modifier = modifier) {
         val t = timeMs / 1000f
         val w = size.width
@@ -67,7 +67,7 @@ fun ReelArt(seed: Int, timeMs: Long, modifier: Modifier = Modifier) {
     }
 }
 
-private class ReelSpec(seed: Int) {
+private class PrismSpec(seed: Int) {
     class Blob(val x: Float, val y: Float, val r: Float, val color: Color, val alpha: Float, val speed: Float, val phase: Float)
     class Spark(val x: Float, val y: Float, val size: Float, val speed: Float, val phase: Float)
 

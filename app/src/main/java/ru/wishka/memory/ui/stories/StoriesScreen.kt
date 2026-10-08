@@ -115,6 +115,8 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                 following = true,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
+                onComments = { vm.openComments(post.id) },
+                onOpenMedia = vm::openMedia,
             )
         }
         item { Spacer(Modifier.height(8.dp)) }

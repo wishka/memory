@@ -34,7 +34,7 @@ import ru.wishka.memory.ui.theme.Palette
 
 /**
  * Нижняя панель: парящая «капсула» с шестью вкладками —
- * Лента · Истории · Reels · Чаты · Группы · Профиль.
+ * Лента · Истории · PRISM · Чаты · Группы · Профиль.
  *
  * Почти непрозрачная: под ней прокручивается лента, и сквозь слишком
  * прозрачное стекло текст записей мешал читать значки. Подпись видна
@@ -85,7 +85,7 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                         when (tab) {
                             Tab.Feed -> LineIcon.Feed
                             Tab.Stories -> LineIcon.Stories
-                            Tab.Reels -> LineIcon.Reels
+                            Tab.Prism -> LineIcon.Prism
                             Tab.Chats -> LineIcon.Chats
                             Tab.Groups -> LineIcon.Groups
                             Tab.Profile -> LineIcon.Profile

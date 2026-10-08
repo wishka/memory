@@ -129,7 +129,12 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
             )
         }
         items(posts, key = { it.id }) { post ->
-            PostCard(post, onLike = { vm.toggleLike(post.id) })
+            PostCard(
+                post,
+                onLike = { vm.toggleLike(post.id) },
+                onComments = { vm.openComments(post.id) },
+                onOpenMedia = vm::openMedia,
+            )
         }
     }
 }
