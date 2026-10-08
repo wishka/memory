@@ -1,0 +1,17 @@
+# Обновления зависимостей — пул-реквестами в develop. Каждый проходит те
+# же проверки, что и обычный PR. Крупные обновления (Gradle, Kotlin,
+# Compose BOM) вливайте по одному и только при зелёном CI.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    target-branch: develop
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule: { interval: monthly }
+    labels: [dependencies, ci]

@@ -1,0 +1,63 @@
+# Проверки: сборка отладочного APK, юнит-тесты, lint.
+#
+# Запускается на каждый pull request и push в main, а также вызывается
+# из dev-build.yml (push в develop) и release.yml (тег) — выпуск не начнётся, пока
+# не прошли проверки. Имя задания «build (debug)» — обязательная проверка
+# в защите веток (scripts/setup-github.sh): переименуете — поправьте и там.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (debug)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Сборка
+        run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
+
+      - name: Юнит-тесты
+        run: ./gradlew testDebugUnitTest
+
+      # Lint пока не блокирует: отчёт — в артефактах. Когда он станет
+      # чистым, уберите continue-on-error.
+      - name: Lint
+        continue-on-error: true
+        run: ./gradlew lintDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memory-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+          retention-days: 14
+          if-no-files-found: ignore

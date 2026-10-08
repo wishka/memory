@@ -9,13 +9,25 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * Физика заставки: слово, собранное из точек-«атомов», которое
- * рассыпается начиная с последней буквы.
+ * Как слово ведёт себя на заставке.
+ *
+ * Dissolve — слово стоит целиком и, начиная с последней буквы,
+ * рассыпается на атомы. Assemble — наоборот: атомы слетаются из
+ * пространства и, начиная с первой буквы, собирают слово.
+ */
+enum class SplashMode { Dissolve, Assemble }
+
+/**
+ * Физика заставки: слово из точек-«атомов».
  *
  * Чистый Kotlin без Android: положение каждого атома считается формулой
  * от времени, а не шагами симуляции. Поэтому кадр не зависит от частоты
  * экрана (60 или 120 Гц — картинка одна и та же), ничего не копится между
  * кадрами, а правила можно проверить обычным юнит-тестом.
+ *
+ * Сборка — это распад, пущенный назад во времени: атом летит по той же
+ * траектории, только к своей точке в букве, а не от неё. Поэтому оба
+ * режима выглядят как одно явление.
  *
  * xs, ys — точки букв в пикселях экрана. Время — в миллисекундах от
  * начала заставки.
@@ -23,22 +35,23 @@ import kotlin.random.Random
 class AtomField(
     private val xs: FloatArray,
     private val ys: FloatArray,
+    val mode: SplashMode = SplashMode.Dissolve,
     seed: Int = 7,
     val timing: Timing = Timing(),
 ) {
     /** Тайминги в миллисекундах. */
     data class Timing(
-        /** Слово проявляется. */
+        /** Dissolve: слово проявляется. */
         val appearMs: Long = 650,
-        /** Слово стоит целиком перед распадом. */
+        /** Dissolve: слово стоит целиком перед распадом. Assemble: собранное слово стоит до перехода. */
         val holdMs: Long = 350,
-        /** Волна распада проходит от последней буквы к первой. */
+        /** Волна проходит по слову: распад — с конца, сборка — с начала. */
         val sweepMs: Long = 1150,
-        /** Разброс момента отрыва соседних атомов — край волны «рваный». */
+        /** Разброс момента соседних атомов — край волны «рваный». */
         val jitterMs: Long = 220,
-        /** Жизнь атома после отрыва. */
+        /** Полёт атома. */
         val lifeMs: Long = 950,
-        /** Пустой экран после последнего атома перед переходом. */
+        /** Пауза в конце перед переходом в приложение. */
         val tailMs: Long = 120,
     )
 
@@ -48,13 +61,14 @@ class AtomField(
     private val maxX = xs.maxOrNull() ?: 1f
     private val span = max(1f, maxX - minX)
 
-    private val release = LongArray(size)
+    /** Dissolve: момент отрыва атома. Assemble: момент, когда он встал на место. */
+    private val pivot = LongArray(size)
     private val vx = FloatArray(size)
     private val vy = FloatArray(size)
     private val wobbleAmp = FloatArray(size)
     private val wobblePhase = FloatArray(size)
     private val radius = FloatArray(size)
-    /** 0..1 — оттенок атома после отрыва: сирень → синий. */
+    /** 0..1 — оттенок атома в полёте: сирень → синий. */
     val hue = FloatArray(size)
 
     init {
@@ -63,9 +77,14 @@ class AtomField(
         for (i in 0 until size) {
             // 0 — левый край слова (M), 1 — правый (Y)
             val xn = (xs[i] - minX) / span
-            // Волна идёт с конца: правые атомы отрываются первыми
-            release[i] = t.appearMs + t.holdMs +
-                ((1f - xn) * t.sweepMs).toLong() + (rnd.nextFloat() * t.jitterMs).toLong()
+            val jitter = (rnd.nextFloat() * t.jitterMs).toLong()
+            pivot[i] = when (mode) {
+                // Распад с конца: правые атомы отрываются первыми
+                SplashMode.Dissolve -> t.appearMs + t.holdMs + ((1f - xn) * t.sweepMs).toLong() + jitter
+                // Сборка с начала: левые атомы встают на место первыми;
+                // первые вылетают сразу, на полёт уходит lifeMs
+                SplashMode.Assemble -> t.lifeMs + (xn * t.sweepMs).toLong() + jitter
+            }
             // Разлёт вправо-вверх, как дым на ветру, с разбросом направлений
             val angle = (-PI / 2 + 0.95 + (rnd.nextFloat() - 0.5) * 1.9).toFloat()
             val speed = 0.08f + rnd.nextFloat() * 0.2f   // пикс./мс
@@ -78,43 +97,58 @@ class AtomField(
         }
     }
 
+    private val lastPivot = pivot.maxOrNull()
+
     /** Когда заставка полностью закончилась. */
-    val totalMs: Long =
-        (release.maxOrNull() ?: (timing.appearMs + timing.holdMs)) + timing.lifeMs + timing.tailMs
+    val totalMs: Long = when (mode) {
+        SplashMode.Dissolve -> (lastPivot ?: (timing.appearMs + timing.holdMs)) + timing.lifeMs + timing.tailMs
+        SplashMode.Assemble -> (lastPivot ?: timing.lifeMs) + timing.holdMs * 2 + timing.tailMs
+    }
 
-    /** Момент отрыва атома i. */
-    fun releaseAt(i: Int): Long = release[i]
+    /** Когда слово целиком собрано (Assemble) или когда начинается распад (Dissolve). */
+    val wordCompleteMs: Long = when (mode) {
+        SplashMode.Dissolve -> timing.appearMs
+        SplashMode.Assemble -> lastPivot ?: 0L
+    }
 
-    /** Возраст атома после отрыва; отрицательный — ещё в букве. */
-    fun age(i: Int, t: Long): Long = t - release[i]
+    /** Dissolve: момент отрыва атома i. Assemble: момент, когда он встал на место. */
+    fun pivotAt(i: Int): Long = pivot[i]
 
-    /** Атом ещё виден. */
-    fun alive(i: Int, t: Long): Boolean = age(i, t) < timing.lifeMs
+    /** Время полёта атома: 0 — атом в букве, больше нуля — в пути. */
+    private fun flight(i: Int, t: Long): Long = when (mode) {
+        SplashMode.Dissolve -> max(0L, t - pivot[i])
+        SplashMode.Assemble -> max(0L, pivot[i] - t)
+    }
 
-    /** Доля распада для атома: 0 — в букве, 1 — растворился. */
+    /** Атом ещё (или уже) виден. */
+    fun alive(i: Int, t: Long): Boolean = flight(i, t) < timing.lifeMs
+
+    /** Доля пути: 0 — в букве, 1 — растворён в пространстве. */
     fun decay(i: Int, t: Long): Float =
-        (age(i, t).toFloat() / timing.lifeMs).coerceIn(0f, 1f)
+        (flight(i, t).toFloat() / timing.lifeMs).coerceIn(0f, 1f)
 
     fun x(i: Int, t: Long): Float {
-        val a = max(0L, age(i, t)).toFloat()
+        val a = flight(i, t).toFloat()
         val wobble = if (a > 0) sin(a * 0.012f + wobblePhase[i]) * wobbleAmp[i] * (a / timing.lifeMs) else 0f
         return xs[i] + vx[i] * a + wobble
     }
 
     fun y(i: Int, t: Long): Float {
-        val a = max(0L, age(i, t)).toFloat()
-        // Лёгкое ускорение вверх: атомы «всплывают»
+        val a = flight(i, t).toFloat()
+        // Лёгкое ускорение вверх: атомы «всплывают» (при сборке — опускаются на место)
         return ys[i] + vy[i] * a - 0.00009f * a * a
     }
 
-    /** Прозрачность: проявление слова, затем угасание оторвавшегося атома. */
+    /** Прозрачность: атом проявляется по мере приближения к букве и тает при удалении. */
     fun alpha(i: Int, t: Long): Float {
-        val appear = smooth(min(1f, t.toFloat() / timing.appearMs))
-        val d = decay(i, t)
-        return appear * (1f - d.pow(1.4f))
+        val fade = 1f - decay(i, t).pow(1.4f)
+        return when (mode) {
+            SplashMode.Dissolve -> smooth(min(1f, t.toFloat() / timing.appearMs)) * fade
+            SplashMode.Assemble -> fade
+        }
     }
 
-    /** Множитель радиуса: при отрыве атом вспыхивает и затем тает. */
+    /** Множитель радиуса: у буквы атом вспыхивает, вдали — тает. */
     fun radiusScale(i: Int, t: Long): Float {
         val d = decay(i, t)
         if (d <= 0f) return radius[i]
