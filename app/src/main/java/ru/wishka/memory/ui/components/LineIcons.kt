@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Feed, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info }
+enum class LineIcon { Feed, Stories, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info }
 
 @Composable
 fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -37,6 +37,27 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                     val y = s * (0.5f + i * 0.16f)
                     drawLine(color, Offset(s * (0.5f - w / 2), y), Offset(s * (0.5f + w / 2), y), stroke.width, StrokeCap.Round)
                 }
+            }
+            LineIcon.Stories -> {
+                // Кольцо-история из дуг с разрывами и кристалл внутри
+                for (k in 0 until 4) {
+                    drawArc(
+                        color, startAngle = -80f + k * 90f, sweepAngle = 70f, useCenter = false,
+                        topLeft = Offset(s * 0.14f, s * 0.14f), size = Size(s * 0.72f, s * 0.72f), style = stroke,
+                    )
+                }
+                diamond(Offset(s * 0.5f, s * 0.5f), s * 0.12f, color, stroke)
+            }
+            LineIcon.Exit -> {
+                val door = Path().apply {
+                    moveTo(s * 0.5f, s * 0.2f); lineTo(s * 0.22f, s * 0.2f); lineTo(s * 0.22f, s * 0.8f); lineTo(s * 0.5f, s * 0.8f)
+                }
+                drawPath(door, color, style = stroke)
+                drawLine(color, Offset(s * 0.42f, s * 0.5f), Offset(s * 0.84f, s * 0.5f), stroke.width, StrokeCap.Round)
+                val arrow = Path().apply {
+                    moveTo(s * 0.7f, s * 0.36f); lineTo(s * 0.84f, s * 0.5f); lineTo(s * 0.7f, s * 0.64f)
+                }
+                drawPath(arrow, color, style = stroke)
             }
             LineIcon.Chats, LineIcon.Comment -> {
                 val p = Path().apply {

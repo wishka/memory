@@ -26,6 +26,7 @@ hotfix/*   ─PR─▶  main (срочное исправление), затем
 |---|---|---|
 | **CI** (`ci.yml`) | каждый PR, push в `main`, из других workflow | сборка debug, юнит-тесты, lint (пока не блокирует), APK и отчёты в артефактах |
 | **Dev build** (`dev-build.yml`) | слияние в `develop` | CI → APK, подписанный общим ключом разработки → пре-релиз **dev** |
+| **Demo build** (`demo.yml`) | кнопка Run workflow, любая ветка | CI → APK → пре-релиз **demo** (`memory-demo.apk`) |
 | **Release** (`release.yml`) | тег `vX.Y.Z` на `main` | CI → ваше подтверждение → подписанные APK и AAB → GitHub Release |
 
 **Dev-сборка** всегда лежит по одной ссылке:
@@ -36,6 +37,15 @@ https://github.com/<владелец>/memory/releases/download/dev/memory-dev.ap
 
 Она ставится как отдельное приложение `ru.wishka.memory.debug` и обновляется
 поверх себя, если задан общий ключ разработки (см. ниже).
+
+**Демо из любой ветки:** Actions → **Demo build** → Run workflow → выбрать
+ветку. Ссылка для телефона:
+
+```
+https://github.com/<владелец>/memory/releases/download/demo/memory-demo.apk
+```
+
+Вход без регистрации: логин `demo`, пароль `memory2026`.
 
 **Выпуск:**
 

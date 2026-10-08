@@ -2,7 +2,7 @@
 #
 # Однократная настройка репозитория Memory на GitHub под CI/CD:
 #   • ветка develop (от main, если её ещё нет);
-#   • окружение dev — для тестовых сборок из develop;
+#   • окружение dev — для тестовых сборок из develop и демо из feature/*;
 #   • окружение production — выпуски только из тегов v* и с вашим
 #     подтверждением;
 #   • защита main и develop: слияние только через pull request с зелёной
@@ -47,8 +47,9 @@ policy() {  # окружение, затем пары «тип:шаблон»
 gh api -X PUT "repos/$REPO/environments/dev" --input - >/dev/null <<JSON
 {"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
 JSON
-policy dev branch:develop
-echo "✓ окружение dev: только из develop"
+# feature/* — для демо-сборок по кнопке из любой ветки (demo.yml)
+policy dev branch:develop "branch:feature/*"
+echo "✓ окружение dev: develop и feature/* (тестовые и демо-сборки)"
 
 gh api -X PUT "repos/$REPO/environments/production" --input - >/dev/null <<JSON
 {

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,6 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.auth.AuthScreen
+import ru.wishka.memory.ui.auth.AuthViewModel
+import ru.wishka.memory.ui.stories.StoriesScreen
 import ru.wishka.memory.ui.Tab
 import ru.wishka.memory.ui.chats.ChatScreen
 import ru.wishka.memory.ui.chats.ChatsScreen
@@ -58,18 +62,40 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Что сейчас на экране: заставка, вход или само приложение. */
+private enum class Stage { Splash, Auth, Main }
+
 @Composable
-fun AppRoot(vm: AppViewModel = viewModel()) {
+fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel()) {
+    val auth by authVm.state.collectAsState()
     // rememberSaveable: при повороте или возврате в приложение заставка
     // не показывается заново — только при холодном запуске
     var splashDone by rememberSaveable { mutableStateOf(false) }
-    Crossfade(targetState = splashDone, animationSpec = tween(500), label = "splash") { done ->
-        if (done) MainScreen(vm) else AtomSplash(onFinished = { splashDone = true })
+
+    // Вошедший человек — в профиль и в свои записи
+    val account = auth.account
+    LaunchedEffect(account) {
+        if (account != null) vm.setAccount(account.username, account.displayName) else vm.reset()
+    }
+
+    // Заставка держится, пока проверяется сохранённая сессия: иначе на
+    // долю секунды мелькнул бы экран входа у уже вошедшего человека
+    val stage = when {
+        !splashDone || auth.checking -> Stage.Splash
+        account == null -> Stage.Auth
+        else -> Stage.Main
+    }
+    Crossfade(targetState = stage, animationSpec = tween(500), label = "stage") { s ->
+        when (s) {
+            Stage.Splash -> AtomSplash(onFinished = { splashDone = true })
+            Stage.Auth -> AuthScreen(authVm, auth)
+            Stage.Main -> MainScreen(vm, onRename = authVm::rename, onLogout = authVm::logout)
+        }
     }
 }
 
 @Composable
-private fun MainScreen(vm: AppViewModel) {
+private fun MainScreen(vm: AppViewModel, onRename: (String) -> Unit, onLogout: () -> Unit) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
     val version = remember(context) {
@@ -100,8 +126,9 @@ private fun MainScreen(vm: AppViewModel) {
         ) { tab ->
             when (tab) {
                 Tab.Feed -> FeedScreen(vm, state, padding)
+                Tab.Stories -> StoriesScreen(vm, state, padding)
                 Tab.Chats -> ChatsScreen(vm, state, padding)
-                Tab.Profile -> ProfileScreen(vm, state, padding, version)
+                Tab.Profile -> ProfileScreen(vm, state, padding, version, onRename, onLogout)
             }
         }
 

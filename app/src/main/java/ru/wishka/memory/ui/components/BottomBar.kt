@@ -33,8 +33,8 @@ import ru.wishka.memory.ui.Tab
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Нижняя панель: парящая стеклянная «капсула» с тремя вкладками —
- * Лента · Чаты · Профиль. Выбранная вкладка светится сиренью, под ней
+ * Нижняя панель: парящая стеклянная «капсула» с четырьмя вкладками —
+ * Лента · Истории · Чаты · Профиль. Выбранная вкладка светится сиренью, под ней
  * короткая светящаяся черта. На «Чатах» — счётчик непрочитанных.
  */
 @Composable
@@ -77,6 +77,7 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                     Glyph(
                         when (tab) {
                             Tab.Feed -> LineIcon.Feed
+                            Tab.Stories -> LineIcon.Stories
                             Tab.Chats -> LineIcon.Chats
                             Tab.Profile -> LineIcon.Profile
                         },
