@@ -19,6 +19,9 @@ object Demo {
 
     val people = listOf(vera, mark, alina, timur, sofia)
 
+    /** Изначальные подписки: Вера, Алина и София. */
+    val following = setOf(2, 4, 6)
+
     val posts = listOf(
         Post(101, vera, "Сегодня небо было как акварель: фиолетовый перетекал в синий " +
             "прямо над крышами. Кажется, такие вечера и стоит запоминать.", 12, artSeed = 3, likes = 48, comments = 6),

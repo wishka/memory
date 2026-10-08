@@ -49,7 +49,15 @@ import ru.wishka.memory.ui.theme.Palette
 
 /** Вкладка «Профиль»: карточка с аватаром, счётчики, свои записи, настройки. */
 @Composable
-fun ProfileScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues, version: String) {
+fun ProfileScreen(
+    vm: AppViewModel,
+    state: UiState,
+    contentPadding: PaddingValues,
+    version: String,
+    /** Новое имя — ещё и в сохранённый аккаунт, чтобы пережило перезапуск. */
+    onRename: (String) -> Unit,
+    onLogout: () -> Unit,
+) {
     var editing by rememberSaveable { mutableStateOf(false) }
     val me = state.me
 
@@ -95,6 +103,7 @@ fun ProfileScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                             bio = me.bio,
                             onSave = { name, bio ->
                                 vm.updateProfile(name, bio)
+                                if (name.isNotBlank()) onRename(name)
                                 editing = false
                             },
                             onCancel = { editing = false },
@@ -140,6 +149,10 @@ fun ProfileScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                     FadeLine(Modifier.padding(horizontal = 16.dp))
                     SettingRow(LineIcon.Info, "О приложении") {
                         Text("Memory $version", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                    }
+                    FadeLine(Modifier.padding(horizontal = 16.dp))
+                    Box(Modifier.clickable(onClick = onLogout)) {
+                        SettingRow(LineIcon.Exit, "Выйти") {}
                     }
                 }
             }

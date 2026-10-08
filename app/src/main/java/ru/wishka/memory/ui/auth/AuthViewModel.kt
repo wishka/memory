@@ -1,0 +1,81 @@
+package ru.wishka.memory.ui.auth
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import ru.wishka.memory.data.auth.Account
+import ru.wishka.memory.data.auth.AuthResult
+import ru.wishka.memory.data.auth.LocalAuth
+import ru.wishka.memory.data.auth.SecurePrefs
+
+data class AuthState(
+    /** Идёт проверка сохранённой сессии — пока заставка, решать рано. */
+    val checking: Boolean = true,
+    val account: Account? = null,
+    val busy: Boolean = false,
+    val error: String? = null,
+)
+
+/**
+ * Вход и регистрация. Хеширование пароля намеренно медленное
+ * (PBKDF2, 120 000 итераций), поэтому всё — не в главном потоке:
+ * иначе экран замирал бы на полсекунды при каждом нажатии «Войти».
+ */
+class AuthViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val auth = LocalAuth(SecurePrefs(application))
+
+    private val _state = MutableStateFlow(AuthState())
+    val state: StateFlow<AuthState> = _state.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val account = withContext(Dispatchers.Default) {
+                auth.ensureDemoAccount()
+                auth.current()
+            }
+            _state.update { it.copy(checking = false, account = account) }
+        }
+    }
+
+    fun login(username: String, password: String) = run { auth.login(username, password) }
+
+    fun register(username: String, displayName: String, password: String, repeat: String) =
+        run { auth.register(username, displayName, password, repeat) }
+
+    fun logout() {
+        auth.logout()
+        _state.update { it.copy(account = null, error = null) }
+    }
+
+    fun rename(displayName: String) {
+        val account = _state.value.account ?: return
+        auth.rename(account.username, displayName)
+        _state.update { it.copy(account = account.copy(displayName = displayName.trim())) }
+    }
+
+    fun clearError() {
+        _state.update { it.copy(error = null) }
+    }
+
+    private fun run(block: () -> AuthResult) {
+        if (_state.value.busy) return
+        _state.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) { block() }
+            _state.update {
+                when (result) {
+                    is AuthResult.Ok -> it.copy(busy = false, account = result.account)
+                    is AuthResult.Error -> it.copy(busy = false, error = result.message)
+                }
+            }
+        }
+    }
+}

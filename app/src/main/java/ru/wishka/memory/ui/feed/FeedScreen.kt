@@ -36,6 +36,7 @@ import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.GlassCard
 import ru.wishka.memory.ui.components.GlassField
+import ru.wishka.memory.ui.components.GhostButton
 import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.Glyph
 import ru.wishka.memory.ui.components.LineIcon
@@ -69,7 +70,12 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
         }
         item { Composer(onPublish = vm::publish) }
         items(state.posts, key = { it.id }) { post ->
-            PostCard(post, onLike = { vm.toggleLike(post.id) })
+            PostCard(
+                post,
+                onLike = { vm.toggleLike(post.id) },
+                following = if (post.author.id == state.me.id) null else post.author.id in state.following,
+                onFollow = { vm.toggleFollow(post.author.id) },
+            )
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
@@ -102,8 +108,12 @@ private fun Composer(onPublish: (String) -> Unit) {
     }
 }
 
+/**
+ * Карточка записи. following: null — это своя запись (кнопки подписки
+ * нет), true / false — подписан ли человек на автора.
+ */
 @Composable
-fun PostCard(post: Post, onLike: () -> Unit) {
+fun PostCard(post: Post, onLike: () -> Unit, following: Boolean? = null, onFollow: () -> Unit = {}) {
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -116,6 +126,10 @@ fun PostCard(post: Post, onLike: () -> Unit) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Mist,
                     )
+                }
+                if (following != null) {
+                    if (following) GhostButton("Вы подписаны", onClick = onFollow)
+                    else GlowButton("Подписаться", onClick = onFollow)
                 }
             }
             Text(post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
