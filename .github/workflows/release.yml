@@ -71,7 +71,7 @@ jobs:
       VERSION_CODE: ${{ needs.version.outputs.code }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
