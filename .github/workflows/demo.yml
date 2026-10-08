@@ -76,7 +76,7 @@ jobs:
             --title "Memory demo-${{ github.run_number }} (${GITHUB_REF_NAME})" \
             --notes "Демо из ветки ${GITHUB_REF_NAME}, коммит ${GITHUB_SHA::7}. Вход без регистрации: логин demo, пароль memory2026."
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: memory-demo-apk
           path: memory-demo.apk

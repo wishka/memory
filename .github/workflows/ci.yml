@@ -46,13 +46,13 @@ jobs:
         continue-on-error: true
         run: ./gradlew lintDebug
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: memory-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: reports
