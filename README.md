@@ -1,6 +1,7 @@
 # Memory
 
-Социальная сеть для Android на Kotlin и Jetpack Compose: лента, чаты, профиль.
+Социальная сеть для Android (Kotlin, Jetpack Compose) и iPhone (Swift,
+SwiftUI): лента, истории, Reels, чаты, группы, профиль.
 Тёмная «космическая» тема в фиолетово-синей гамме.
 
 ## Что уже есть
@@ -89,6 +90,15 @@ Run workflow → выбрать ветку. Через несколько мин
 Отладочная сборка ставится как `ru.wishka.memory.debug` — рядом с будущей
 рабочей.
 
+## iPhone
+
+Нативное приложение на SwiftUI лежит в [ios/](ios/README.md): всё то же,
+что на Android, — заставка, вход, шесть вкладок, страница человека,
+группы. Открыть `ios/Memory.xcodeproj` в Xcode 16+, выбрать свой iPhone
+и нажать Run — подробная инструкция для бесплатного Apple ID в
+[ios/README.md](ios/README.md). Сборку и тесты на симуляторе проверяет
+workflow **iOS** (`.github/workflows/ios.yml`).
+
 ## Устройство
 
 ```
@@ -103,6 +113,7 @@ app/src/main/java/ru/wishka/memory/
 app/src/test/              юнит-тесты (заставка, модель)
 .github/workflows/         CI, dev-сборка, выпуск
 scripts/                   настройка GitHub, ключи подписи
+ios/                       приложение для iPhone (SwiftUI), см. ios/README.md
 ```
 
 Навигация — как в angelsheart: своё состояние в модели, без библиотеки

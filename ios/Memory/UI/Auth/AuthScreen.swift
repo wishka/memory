@@ -1,0 +1,136 @@
+import SwiftUI
+
+/// Вход и регистрация на том же ночном небе, что и заставка: после
+/// анимации слова человек остаётся «в той же сцене».
+///
+/// После входа приложение запоминает человека — этот экран он увидит
+/// снова, только если выйдет из профиля.
+struct AuthScreen: View {
+    let auth: AuthModel
+
+    @State private var registering = false
+    @State private var login = ""
+    @State private var name = ""
+    @State private var password = ""
+    @State private var repeated = ""
+
+    private enum FieldId: Hashable { case login, name, password, repeated }
+    @FocusState private var focus: FieldId?
+
+    var body: some View {
+        ZStack {
+            SplashSkyView()
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 40)
+                    Text("MEMORY").textStyle(.display)
+                    Text("МОМЕНТЫ, КОТОРЫЕ ОСТАЮТСЯ").textStyle(.label, Palette.mist)
+                    Spacer().frame(height: 28)
+
+                    GlassCard {
+                        VStack(spacing: 12) {
+                            modeSwitch
+                            GlassField(placeholder: "Логин", text: $login, limit: 24, singleLine: true, keyboard: .asciiCapable, plain: true)
+                                .glass(radius: 16)
+                                .focused($focus, equals: .login)
+                                .submitLabel(.next)
+                                .onSubmit { focus = registering ? .name : .password }
+                                .textContentType(.username)
+                            if registering {
+                                GlassField(placeholder: "Имя — как вас видят другие", text: $name, limit: 40, singleLine: true)
+                                    .glass(radius: 16)
+                                    .focused($focus, equals: .name)
+                                    .submitLabel(.next)
+                                    .onSubmit { focus = .password }
+                                    .textContentType(.name)
+                            }
+                            GlassField(placeholder: "Пароль", text: $password, limit: 64, secure: true, plain: true)
+                                .glass(radius: 16)
+                                .focused($focus, equals: .password)
+                                .submitLabel(registering ? .next : .go)
+                                .onSubmit { if registering { focus = .repeated } else { submit() } }
+                                .textContentType(registering ? .newPassword : .password)
+                            if registering {
+                                GlassField(placeholder: "Пароль ещё раз", text: $repeated, limit: 64, secure: true, plain: true)
+                                    .glass(radius: 16)
+                                    .focused($focus, equals: .repeated)
+                                    .submitLabel(.go)
+                                    .onSubmit(submit)
+                                    .textContentType(.newPassword)
+                            }
+
+                            if let error = auth.error {
+                                Text(error)
+                                    .textStyle(.bodySmall, Palette.error)
+                                    .multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity)
+                            }
+
+                            GlowButton(
+                                title: auth.busy ? "Подождите…" : registering ? "Создать аккаунт" : "Войти",
+                                enabled: !auth.busy && !login.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty,
+                                fullWidth: true,
+                                action: submit
+                            )
+
+                            Text(registering
+                                 ? "Логин — латиница, цифры, точка и «_», от 3 символов. Пароль — от 8 символов, с буквами и цифрами."
+                                 : "Попробовать без регистрации: логин \(LocalAuth.demoLogin), пароль \(LocalAuth.demoPassword)")
+                                .textStyle(.bodySmall, Palette.mist)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .padding(18)
+                    }
+
+                    Text("Аккаунты пока хранятся только на этом iPhone.")
+                        .textStyle(.bodySmall, Palette.mist)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 16)
+                    Spacer(minLength: 24)
+                }
+                .padding(.horizontal, 20)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+    }
+
+    /// Переключатель «Вход | Регистрация».
+    private var modeSwitch: some View {
+        HStack(spacing: 0) {
+            ForEach([false, true], id: \.self) { mode in
+                let active = registering == mode
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) { registering = mode }
+                    auth.clearError()
+                } label: {
+                    Text((mode ? "Регистрация" : "Вход").uppercased())
+                        .textStyle(.label, active ? Palette.lilac : Palette.mist)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background {
+                            if active {
+                                Capsule().fill(Palette.plumRGB.opacity(0.7))
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .glass(Capsule())
+    }
+
+    private func submit() {
+        guard !auth.busy, !login.isEmpty, !password.isEmpty else { return }
+        focus = nil
+        if registering {
+            auth.register(login, name, password, repeated)
+        } else {
+            auth.login(login, password)
+        }
+    }
+}
