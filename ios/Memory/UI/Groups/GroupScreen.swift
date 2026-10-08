@@ -19,7 +19,9 @@ struct GroupScreen: View {
                         PostCard(
                             post: post,
                             onLike: { model.toggleGroupPostLike(group.id, post.id) },
-                            onAuthor: { model.openPerson(post.author.id) }
+                            onAuthor: { model.openPerson(post.author.id) },
+                            onComments: { model.openComments(post.id) },
+                            onOpenMedia: model.openMedia
                         )
                     }
                 }

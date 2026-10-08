@@ -1,0 +1,174 @@
+package ru.wishka.memory.data
+
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
+import java.io.File
+import java.util.UUID
+
+/**
+ * Фото, видео и документы на телефоне.
+ *
+ * Пока у Memory нет сервера, вложение копируется в память приложения
+ * (files/media): так оно переживает перезапуск и не пропадает, если
+ * человек удалит оригинал из галереи. Другие приложения эту папку не
+ * видят; наружу файл отдаётся только через FileProvider — например, чтобы
+ * открыть документ.
+ */
+object MediaFiles {
+    /** Самый большой файл, который принимаем: 200 МБ. */
+    const val MAX_BYTES = 200L * 1024 * 1024
+
+    private fun dir(context: Context): File = File(context.filesDir, "media").apply { mkdirs() }
+
+    /**
+     * Скопировать выбранный файл (галерея, документы) в память приложения.
+     * kind = null — определить по типу файла. null в ответе — файл не
+     * прочитался или слишком большой.
+     */
+    fun import(context: Context, uri: Uri, kind: MediaKind? = null): Attachment? {
+        val resolver = context.contentResolver
+        val mime = resolver.getType(uri).orEmpty()
+        var name = ""
+        var size = -1L
+        runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    name = c.getString(0).orEmpty()
+                    if (!c.isNull(1)) size = c.getLong(1)
+                }
+            }
+        }
+        if (size > MAX_BYTES) return null
+        val type = kind ?: when {
+            mime.startsWith("image/") -> MediaKind.Photo
+            mime.startsWith("video/") -> MediaKind.Video
+            else -> MediaKind.Document
+        }
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+            ?: name.substringAfterLast('.', "").ifEmpty { null }
+            ?: when (type) {
+                MediaKind.Photo -> "jpg"
+                MediaKind.Video -> "mp4"
+                MediaKind.Document -> "bin"
+            }
+        val id = UUID.randomUUID().toString()
+        val target = File(dir(context), "$id.$ext")
+        return try {
+            var copied = 0L
+            resolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        copied += n
+                        if (copied > MAX_BYTES) error("too big")
+                        output.write(buffer, 0, n)
+                    }
+                }
+            } ?: return null
+            Attachment(id, type, target.absolutePath, name.ifEmpty { target.name }, copied, mime)
+        } catch (e: Exception) {
+            target.delete()
+            null
+        }
+    }
+
+    /**
+     * Пустой файл для съёмки камерой и адрес, по которому камера его
+     * запишет. После съёмки — capturedAttachment().
+     */
+    fun newCapture(context: Context, kind: MediaKind): Pair<File, Uri> {
+        val ext = if (kind == MediaKind.Video) "mp4" else "jpg"
+        val file = File(dir(context), "${UUID.randomUUID()}.$ext")
+        return file to FileProvider.getUriForFile(context, authority(context), file)
+    }
+
+    /** Снятый камерой файл как вложение; null — съёмку отменили. */
+    fun captured(file: File, kind: MediaKind): Attachment? {
+        if (!file.exists() || file.length() == 0L) {
+            file.delete()
+            return null
+        }
+        return Attachment(
+            file.nameWithoutExtension, kind, file.absolutePath, file.name, file.length(),
+            if (kind == MediaKind.Video) "video/mp4" else "image/jpeg",
+        )
+    }
+
+    /** Удалить копию вложения (из удалённого сообщения или черновика). */
+    fun delete(attachment: Attachment) {
+        runCatching { File(attachment.path).delete() }
+    }
+
+    /** Открыть документ в подходящем приложении. false — открыть нечем. */
+    fun open(context: Context, attachment: Attachment): Boolean {
+        val file = File(attachment.path)
+        if (!file.exists()) return false
+        val uri = FileProvider.getUriForFile(context, authority(context), file)
+        val mime = attachment.mime.ifEmpty {
+            MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension) ?: "*/*"
+        }
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, mime)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(Intent.createChooser(intent, attachment.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (e: ActivityNotFoundException) {
+            false
+        }
+    }
+
+    /**
+     * Уменьшенная картинка для ленты и чата: фото — с прореживанием при
+     * чтении (полноразмерный снимок с камеры занял бы десятки мегабайт
+     * памяти), видео — первый кадр. Вызывать не в главном потоке.
+     */
+    fun thumbnail(attachment: Attachment, maxSide: Int): Bitmap? = runCatching {
+        when (attachment.kind) {
+            MediaKind.Photo -> {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(attachment.path, bounds)
+                var sample = 1
+                while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
+                BitmapFactory.decodeFile(attachment.path, BitmapFactory.Options().apply { inSampleSize = sample })
+            }
+            MediaKind.Video -> {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(attachment.path)
+                    retriever.getFrameAtTime(0)?.let { scaleDown(it, maxSide) }
+                } finally {
+                    retriever.release()
+                }
+            }
+            MediaKind.Document -> null
+        }
+    }.getOrNull()
+
+    private fun scaleDown(bitmap: Bitmap, maxSide: Int): Bitmap {
+        val side = maxOf(bitmap.width, bitmap.height)
+        if (side <= maxSide) return bitmap
+        val k = maxSide.toFloat() / side
+        return Bitmap.createScaledBitmap(bitmap, (bitmap.width * k).toInt().coerceAtLeast(1), (bitmap.height * k).toInt().coerceAtLeast(1), true)
+    }
+
+    private fun authority(context: Context) = "${context.packageName}.files"
+}
+
+/** «2,4 МБ» — размер документа. */
+fun sizeTitle(bytes: Long): String = when {
+    bytes >= 1024L * 1024 * 1024 -> String.format(java.util.Locale("ru"), "%.1f ГБ", bytes / (1024.0 * 1024 * 1024))
+    bytes >= 1024L * 1024 -> String.format(java.util.Locale("ru"), "%.1f МБ", bytes / (1024.0 * 1024))
+    bytes >= 1024 -> "${bytes / 1024} КБ"
+    else -> "$bytes Б"
+}

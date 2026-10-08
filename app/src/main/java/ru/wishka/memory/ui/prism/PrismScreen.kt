@@ -1,4 +1,4 @@
-package ru.wishka.memory.ui.reels
+package ru.wishka.memory.ui.prism
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -34,9 +34,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import ru.wishka.memory.data.Reel
+import ru.wishka.memory.data.Prism
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
@@ -48,40 +50,62 @@ import ru.wishka.memory.ui.components.compact
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Вкладка Reels: короткие вертикальные ролики во весь экран, листаются
- * вверх-вниз. Нажатие — пауза, двойное нажатие — «нравится». Играет только
+ * Вкладка PRISM: короткие вертикальные ролики во весь экран, листаются
+ * вверх-вниз. Нажатие — пауза, двойное нажатие — «нравится». Справа —
+ * «нравится», обсуждение, «поделиться» и «сохранить». Играет только
  * ролик на экране: соседние стоят, чтобы не тратить батарею.
  */
 @Composable
-fun ReelsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
-    val reels = state.reels
-    val pager = rememberPagerState(pageCount = { reels.size })
+fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
+    val prisms = state.prisms
+    val context = LocalContext.current
+    val pager = rememberPagerState(pageCount = { prisms.size })
+    // Открыли из «Сохранённого» — сразу на нужный ролик
+    LaunchedEffect(state.prismStartId) {
+        val id = state.prismStartId ?: return@LaunchedEffect
+        val index = prisms.indexOfFirst { it.id == id }
+        if (index >= 0) pager.scrollToPage(index)
+        vm.consumePrismStart()
+    }
     VerticalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
-        val reel = reels[page]
-        ReelPage(
-            reel = reel,
+        val prism = prisms[page]
+        PrismPage(
+            prism = prism,
             active = pager.currentPage == page,
-            following = if (reel.author.id == state.me.id) null else reel.author.id in state.following,
+            following = if (prism.author.id == state.me.id) null else prism.author.id in state.following,
             contentPadding = contentPadding,
-            onLike = { vm.toggleReelLike(reel.id) },
-            onAuthor = { vm.openPerson(reel.author.id) },
-            onFollow = { vm.toggleFollow(reel.author.id) },
+            onLike = { vm.togglePrismLike(prism.id) },
+            onAuthor = { vm.openPerson(prism.author.id) },
+            onFollow = { vm.toggleFollow(prism.author.id) },
+            onComments = { vm.openPrismComments(prism.id) },
+            onShare = { sharePrism(context, prism) },
+            onSave = { vm.togglePrismSave(prism.id) },
         )
     }
 }
 
+/** «Поделиться»: системное меню — мессенджеры, почта, копирование ссылки. */
+private fun sharePrism(context: android.content.Context, prism: Prism) {
+    val text = "${prism.caption}\n— ${prism.author.name} (@${prism.author.handle}) в Memory · PRISM"
+    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+    context.startActivity(Intent.createChooser(send, "Поделиться").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
 @Composable
-private fun ReelPage(
-    reel: Reel,
+private fun PrismPage(
+    prism: Prism,
     active: Boolean,
     following: Boolean?,
     contentPadding: PaddingValues,
     onLike: () -> Unit,
     onAuthor: () -> Unit,
     onFollow: () -> Unit,
+    onComments: () -> Unit,
+    onShare: () -> Unit,
+    onSave: () -> Unit,
 ) {
-    var paused by remember(reel.id) { mutableStateOf(false) }
-    var time by remember(reel.id) { mutableLongStateOf(0L) }
+    var paused by remember(prism.id) { mutableStateOf(false) }
+    var time by remember(prism.id) { mutableLongStateOf(0L) }
     // Пролистали на другой ролик — этот начнётся сначала, когда вернётесь
     LaunchedEffect(active) { if (!active) { time = 0L; paused = false } }
     LaunchedEffect(active, paused) {
@@ -89,7 +113,7 @@ private fun ReelPage(
         var last = withFrameMillis { it }
         while (true) {
             val now = withFrameMillis { it }
-            time = (time + (now - last)) % reel.durationMs
+            time = (time + (now - last)) % prism.durationMs
             last = now
         }
     }
@@ -97,14 +121,14 @@ private fun ReelPage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(reel.id) {
+            .pointerInput(prism.id) {
                 detectTapGestures(
                     onTap = { paused = !paused },
-                    onDoubleTap = { if (!reel.liked) onLike() },
+                    onDoubleTap = { if (!prism.liked) onLike() },
                 )
             },
     ) {
-        ReelArt(reel.seed, time, Modifier.fillMaxSize())
+        PrismArt(prism.seed, time, Modifier.fillMaxSize())
 
         // Затемнение снизу, чтобы подпись читалась на любом кадре
         Box(
@@ -128,13 +152,13 @@ private fun ReelPage(
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(time.toFloat() / reel.durationMs)
+                        .fillMaxWidth(time.toFloat() / prism.durationMs)
                         .height(2.dp)
                         .background(Brush.horizontalGradient(listOf(Palette.Lilac, Palette.Sky))),
                 )
             }
             Text(
-                "REELS",
+                "PRISM",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Ink,
                 modifier = Modifier.padding(top = 10.dp),
@@ -149,7 +173,7 @@ private fun ReelPage(
                     .clip(CircleShape)
                     .background(Palette.Void.copy(alpha = 0.5f)),
                 contentAlignment = Alignment.Center,
-            ) { Glyph(LineIcon.Reels, Palette.Ink, size = 36.dp) }
+            ) { Glyph(LineIcon.Play, Palette.Ink, size = 36.dp) }
         }
 
         // Кнопки справа
@@ -160,8 +184,10 @@ private fun ReelPage(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            SideButton(if (reel.liked) LineIcon.HeartFilled else LineIcon.Heart, compact(reel.likes), reel.liked, onLike)
-            SideButton(LineIcon.Comment, compact(reel.comments), false, onClick = null)
+            SideButton(if (prism.liked) LineIcon.HeartFilled else LineIcon.Heart, compact(prism.likes), onLike)
+            SideButton(LineIcon.Comment, compact(prism.comments), onComments)
+            SideButton(LineIcon.Share, "Поделиться", onShare)
+            SideButton(if (prism.saved) LineIcon.BookmarkFilled else LineIcon.Bookmark, if (prism.saved) "В закладках" else "Сохранить", onSave)
         }
 
         // Автор, подпись и музыка
@@ -176,20 +202,20 @@ private fun ReelPage(
                     modifier = Modifier.clip(CircleShape).clickable(onClick = onAuthor),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Avatar(reel.author, size = 36.dp)
+                    Avatar(prism.author, size = 36.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text(reel.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+                    Text(prism.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
                 }
                 Spacer(Modifier.width(10.dp))
                 if (following == false) GlowButton("Подписаться", onClick = onFollow)
                 else if (following == true) GhostButton("Вы подписаны", onClick = onFollow)
             }
-            Text(reel.caption, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+            Text(prism.caption, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Glyph(LineIcon.Music, Palette.Lilac, size = 16.dp)
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    reel.music,
+                    prism.music,
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     maxLines = 1,
@@ -201,7 +227,7 @@ private fun ReelPage(
 }
 
 @Composable
-private fun SideButton(icon: LineIcon, label: String, active: Boolean, onClick: (() -> Unit)?) {
+private fun SideButton(icon: LineIcon, label: String, onClick: (() -> Unit)?) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -209,7 +235,7 @@ private fun SideButton(icon: LineIcon, label: String, active: Boolean, onClick: 
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(4.dp),
     ) {
-        Glyph(icon, if (active) Color(0xFFFF9EDE) else Palette.Ink, size = 30.dp)
+        Glyph(icon, Palette.Ink, size = 30.dp)
         Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.Ink, modifier = Modifier.padding(top = 2.dp))
     }
 }

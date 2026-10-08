@@ -61,7 +61,9 @@ struct StoriesScreen: View {
                         onLike: { model.toggleLike(post.id) },
                         following: true,
                         onFollow: { model.toggleFollow(post.author.id) },
-                        onAuthor: { model.openPerson(post.author.id) }
+                        onAuthor: { model.openPerson(post.author.id) },
+                            onComments: { model.openComments(post.id) },
+                            onOpenMedia: model.openMedia
                     )
                 }
             }

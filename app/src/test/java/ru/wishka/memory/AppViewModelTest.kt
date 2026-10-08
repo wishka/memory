@@ -5,7 +5,11 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import ru.wishka.memory.data.Attachment
+import ru.wishka.memory.data.MediaKind
 import ru.wishka.memory.data.ProfileInfo
+import ru.wishka.memory.data.minutesSince
+import ru.wishka.memory.data.sizeTitle
 import ru.wishka.memory.data.agoTitle
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
@@ -154,11 +158,114 @@ class AppViewModelTest {
     }
 
     @Test
-    fun reelLike() {
+    fun prismLikeSaveAndComments() {
         val vm = AppViewModel()
-        val reel = vm.state.value.reels.first { !it.liked }
-        vm.toggleReelLike(reel.id)
-        assertEquals(reel.likes + 1, vm.state.value.reels.first { it.id == reel.id }.likes)
+        val prism = vm.state.value.prisms.first { !it.liked }
+        vm.togglePrismLike(prism.id)
+        assertEquals(prism.likes + 1, vm.state.value.findPrism(prism.id)!!.likes)
+        // «Сохранить» — закладка в профиле, повторно — убрать
+        assertTrue(vm.state.value.savedPrisms.isEmpty())
+        vm.togglePrismSave(prism.id)
+        assertEquals(listOf(prism.id), vm.state.value.savedPrisms.map { it.id })
+        vm.togglePrismSave(prism.id)
+        assertTrue(vm.state.value.savedPrisms.isEmpty())
+        // Комментарий: в обсуждении и в счётчике; свой можно удалить
+        vm.addPrismComment(prism.id, "  Красиво  ")
+        val withComment = vm.state.value.findPrism(prism.id)!!
+        assertEquals(prism.comments + 1, withComment.comments)
+        assertEquals("Красиво", withComment.commentList.last().text)
+        vm.deletePrismComment(prism.id, withComment.commentList.last().id)
+        assertEquals(prism.comments, vm.state.value.findPrism(prism.id)!!.comments)
+        // Открыть из «Сохранённого» — вкладка PRISM на нужном ролике
+        vm.openPrism(prism.id)
+        assertEquals(Tab.Prism, vm.state.value.tab)
+        assertEquals(prism.id, vm.state.value.prismStartId)
+    }
+
+    @Test
+    fun commentsOnFeedAndGroupPosts() {
+        val vm = AppViewModel(clock = { 1_000_000L })
+        val post = vm.state.value.posts.first()
+        vm.addComment(post.id, "Отличный кадр")
+        vm.addComment(post.id, "   ")
+        val updated = vm.state.value.findPost(post.id)!!
+        assertEquals(post.comments + 1, updated.comments)
+        assertEquals(post.commentList.size + 1, updated.commentList.size)
+        assertEquals(vm.state.value.me.id, updated.commentList.last().author.id)
+        // Чужой комментарий удалить нельзя, свой — можно
+        post.commentList.firstOrNull()?.let { vm.deleteComment(post.id, it.id) }
+        assertEquals(post.commentList.size + 1, vm.state.value.findPost(post.id)!!.commentList.size)
+        vm.deleteComment(post.id, updated.commentList.last().id)
+        assertEquals(post.commentList, vm.state.value.findPost(post.id)!!.commentList)
+        // Запись в группе обсуждается так же
+        val groupPost = vm.state.value.groups.first { it.posts.isNotEmpty() }.posts.first()
+        vm.addComment(groupPost.id, "И я там был")
+        assertEquals("И я там был", vm.state.value.findPost(groupPost.id)!!.commentList.last().text)
+    }
+
+    @Test
+    fun publishWithMediaOnly() {
+        val vm = AppViewModel()
+        val photo = Attachment("a", MediaKind.Photo, "/tmp/a.jpg")
+        vm.publish("", listOf(photo))
+        val top = vm.state.value.posts.first()
+        assertEquals(listOf(photo), top.media)
+        assertEquals("", top.text)
+        // Совсем пустую запись не публикуем
+        val count = vm.state.value.posts.size
+        vm.publish("  ", emptyList())
+        assertEquals(count, vm.state.value.posts.size)
+    }
+
+    @Test
+    fun sendAttachmentsAndDeleteMessages() {
+        val vm = AppViewModel(demoReplies = false)
+        val chat = vm.state.value.chats.first()
+        val doc = Attachment("d", MediaKind.Document, "/tmp/d.pdf", "Договор.pdf", 2048, "application/pdf")
+        vm.send(chat.id, "", listOf(doc))
+        val sent = vm.state.value.chats.first { it.id == chat.id }.messages.last()
+        assertEquals(listOf(doc), sent.attachments)
+        // Удалить у себя
+        vm.deleteMessage(chat.id, sent.id, forEveryone = false)
+        assertTrue(vm.state.value.chats.first { it.id == chat.id }.messages.none { it.id == sent.id })
+        assertFalse(sent.id in vm.deletedForEveryone)
+        // Удалить у обоих — запоминается для отправки на сервер
+        val other = vm.state.value.chats.first { it.id == chat.id }.messages.first()
+        vm.deleteMessage(chat.id, other.id, forEveryone = true)
+        assertTrue(other.id in vm.deletedForEveryone)
+        assertTrue(vm.state.value.chats.first { it.id == chat.id }.messages.none { it.id == other.id })
+    }
+
+    @Test
+    fun snapshotRestoresAndKeepsCurrentName() {
+        val vm = AppViewModel()
+        vm.setAccount("vera.moon", "Вера")
+        vm.publish("Мой момент")
+        vm.togglePrismSave(vm.state.value.prisms.first().id)
+        val snapshot = vm.snapshot()
+
+        val next = AppViewModel()
+        next.setAccount("vera.moon", "Вера Новая")
+        next.restore(snapshot)
+        assertEquals("Мой момент", next.state.value.myPosts.first().text)
+        assertEquals("Вера Новая", next.state.value.myPosts.first().author.name)
+        assertEquals(1, next.state.value.savedPrisms.size)
+        // Новые номера не совпадают с сохранёнными
+        next.publish("Ещё")
+        assertEquals(2, next.state.value.myPosts.map { it.id }.toSet().size)
+    }
+
+    @Test
+    fun overlaysCloseFirstOnBack() {
+        val vm = AppViewModel()
+        val post = vm.state.value.posts.first()
+        vm.openComments(post.id)
+        vm.openMedia(Attachment("p", MediaKind.Photo, "/tmp/p.jpg"))
+        assertTrue(vm.back())
+        assertNull(vm.state.value.viewing)
+        assertEquals(post.id, vm.state.value.commentsPostId)
+        assertTrue(vm.back())
+        assertNull(vm.state.value.commentsPostId)
     }
 
     @Test
@@ -168,5 +275,10 @@ class AppViewModelTest {
         assertEquals("вчера", agoTitle(60 * 30))
         assertEquals("21 запись", plural(21, "запись", "записи", "записей"))
         assertEquals("12 записей", plural(12, "запись", "записи", "записей"))
+        assertEquals("2,0 МБ", sizeTitle(2L * 1024 * 1024))
+        assertEquals("12 КБ", sizeTitle(12 * 1024))
+        // Время своей записи считается от момента публикации
+        assertEquals(3, minutesSince(createdAt = 0, minutesAgo = 3, now = 999))
+        assertEquals(5, minutesSince(createdAt = 60_000, minutesAgo = 0, now = 6 * 60_000))
     }
 }

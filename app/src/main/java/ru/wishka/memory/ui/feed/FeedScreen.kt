@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,7 +31,15 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.R
 import ru.wishka.memory.data.Post
+import ru.wishka.memory.data.Attachment
+import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.data.agoTitle
+import ru.wishka.memory.data.minutesSince
+import ru.wishka.memory.data.plural
+import ru.wishka.memory.ui.components.AttachButton
+import ru.wishka.memory.ui.components.PendingAttachments
+import ru.wishka.memory.ui.components.PostMedia
+import ru.wishka.memory.ui.components.rememberMediaPicker
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
@@ -76,33 +85,58 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 following = if (post.author.id == state.me.id) null else post.author.id in state.following,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
+                onComments = { vm.openComments(post.id) },
+                onOpenMedia = vm::openMedia,
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
+/**
+ * Новая запись: текст, фото и видео из галереи или с камеры. Вложения
+ * видны плитками под полем, крестик убирает лишнее.
+ */
 @Composable
-private fun Composer(onPublish: (String) -> Unit) {
+private fun Composer(onPublish: (String, List<Attachment>) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
+    var media by remember { mutableStateOf<List<Attachment>>(emptyList()) }
+    val picker = rememberMediaPicker { picked ->
+        media = (media + picked).take(AppViewModel.MAX_MEDIA)
+    }
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column {
             GlassField(text, { text = it.take(2000) }, "Чем хочется поделиться?")
+            PendingAttachments(
+                media,
+                onRemove = { item ->
+                    media = media - item
+                    MediaFiles.delete(item)
+                },
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 12.dp, bottom = 12.dp),
+                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                AttachButton(picker, documents = false, size = 40.dp)
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    if (text.isEmpty()) "Видят ваши подписчики" else "${text.length} / 2000",
+                    when {
+                        media.isNotEmpty() -> plural(media.size, "вложение", "вложения", "вложений")
+                        text.isEmpty() -> "Видят ваши подписчики"
+                        else -> "${text.length} / 2000"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.weight(1f),
                 )
-                GlowButton("Поделиться", enabled = text.isNotBlank(), onClick = {
-                    onPublish(text)
+                GlowButton("Поделиться", enabled = text.isNotBlank() || media.isNotEmpty(), onClick = {
+                    onPublish(text, media)
                     text = ""
+                    media = emptyList()
                 })
             }
         }
@@ -121,6 +155,10 @@ fun PostCard(
     onFollow: () -> Unit = {},
     /** Нажатие на аватар или имя — страница автора; null — не кликается. */
     onAuthor: (() -> Unit)? = null,
+    /** Открыть обсуждение; null — значок комментариев не нажимается. */
+    onComments: (() -> Unit)? = null,
+    /** Фото или видео записи на весь экран. */
+    onOpenMedia: (Attachment) -> Unit = {},
 ) {
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -137,7 +175,7 @@ fun PostCard(
                 Column(Modifier.weight(1f)) {
                     Text(post.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
                     Text(
-                        "@${post.author.handle} · ${agoTitle(post.minutesAgo)}",
+                        "@${post.author.handle} · ${agoTitle(minutesSince(post.createdAt, post.minutesAgo))}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Mist,
                     )
@@ -148,7 +186,10 @@ fun PostCard(
                     else GlowButton("Подписаться", onClick = onFollow)
                 }
             }
-            Text(post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+            if (post.text.isNotEmpty()) {
+                Text(post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+            }
+            PostMedia(post.media, onOpen = onOpenMedia)
             post.artSeed?.let { seed ->
                 Nebula(
                     seed,
@@ -178,14 +219,22 @@ fun PostCard(
                         modifier = Modifier.padding(start = 6.dp),
                     )
                 }
-                Spacer(Modifier.width(14.dp))
-                Glyph(LineIcon.Comment, Palette.Mist, size = 22.dp)
-                Text(
-                    "${post.comments}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Palette.Mist,
-                    modifier = Modifier.padding(start = 6.dp),
-                )
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .then(if (onComments != null) Modifier.clickable(onClick = onComments) else Modifier)
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Glyph(LineIcon.Comment, Palette.Mist, size = 22.dp)
+                    Text(
+                        "${post.comments}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Palette.Mist,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
             }
         }
     }

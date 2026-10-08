@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// «Видео» Reels, пока нет настоящих роликов: живая туманность в цветах
+/// «Видео» PRISM, пока нет настоящих роликов: живая туманность в цветах
 /// палитры, вращающийся кристалл и всплывающие искры. Всё — функция от
 /// времени ролика (timeMs), поэтому пауза и перемотка работают честно.
-struct ReelSpec {
+struct PrismSpec {
     struct Blob {
         let x: Double
         let y: Double
@@ -124,8 +124,8 @@ struct ReelSpec {
     }
 }
 
-struct ReelArt: View {
-    let spec: ReelSpec
+struct PrismArt: View {
+    let spec: PrismSpec
     let timeMs: Double
 
     var body: some View {

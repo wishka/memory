@@ -66,7 +66,12 @@ struct PersonScreen: View {
 
                 SectionTitle(text: posts.isEmpty ? "Записей пока нет" : "Записи · \(posts.count)")
                 ForEach(posts) { post in
-                    PostCard(post: post, onLike: { model.toggleLike(post.id) })
+                    PostCard(
+                        post: post,
+                        onLike: { model.toggleLike(post.id) },
+                        onComments: { model.openComments(post.id) },
+                        onOpenMedia: model.openMedia
+                    )
                 }
             }
             .padding(.top, 12)

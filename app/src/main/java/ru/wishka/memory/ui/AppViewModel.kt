@@ -13,7 +13,9 @@ import ru.wishka.memory.data.Demo
 import ru.wishka.memory.data.GROUP_TOPICS
 import ru.wishka.memory.data.Group
 import ru.wishka.memory.data.ProfileInfo
-import ru.wishka.memory.data.Reel
+import ru.wishka.memory.data.Prism
+import ru.wishka.memory.data.Attachment
+import ru.wishka.memory.data.Comment
 import ru.wishka.memory.data.Message
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.User
@@ -24,7 +26,7 @@ import java.time.format.DateTimeFormatter
 enum class Tab(val title: String) {
     Feed("Лента"),
     Stories("Истории"),
-    Reels("Reels"),
+    Prism("PRISM"),
     Chats("Чаты"),
     Groups("Группы"),
     Profile("Профиль"),
@@ -40,7 +42,15 @@ data class UiState(
     val notifications: Boolean = true,
     /** На кого подписан человек: их записи — во вкладке «Истории». */
     val following: Set<Int> = Demo.following,
-    val reels: List<Reel> = Demo.reels,
+    val prisms: List<Prism> = Demo.prisms,
+    /** Открытое обсуждение записи (в ленте, историях, группе); null — закрыто. */
+    val commentsPostId: Long? = null,
+    /** Открытое обсуждение PRISM; null — закрыто. */
+    val commentsPrismId: Long? = null,
+    /** Фото или видео на весь экран; null — не открыто. */
+    val viewing: Attachment? = null,
+    /** PRISM, с которого открыть вкладку (из «Сохранённого»); null — с первого. */
+    val prismStartId: Long? = null,
     val groups: List<Group> = Demo.groups,
     /** Страница человека поверх текущей вкладки; null — закрыта. */
     val openPersonId: Int? = null,
@@ -57,6 +67,12 @@ data class UiState(
     /** «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте. */
     val stories: List<Post> get() = posts.filter { it.author.id in following }
     val followedPeople: List<User> get() = Demo.people.filter { it.id in following }
+    /** «Сохранённое» в профиле: PRISM в закладках. */
+    val savedPrisms: List<Prism> get() = prisms.filter { it.saved }
+    /** Запись по номеру — в ленте или в группе: для обсуждения. */
+    fun findPost(id: Long): Post? =
+        posts.firstOrNull { it.id == id } ?: groups.firstNotNullOfOrNull { g -> g.posts.firstOrNull { it.id == id } }
+    fun findPrism(id: Long): Prism? = prisms.firstOrNull { it.id == id }
 }
 
 /**
@@ -65,7 +81,12 @@ data class UiState(
  * Как в angelsheart: одно состояние и свой простой переход между экранами
  * без библиотеки навигации — экранов мало, и так переходы видны целиком.
  */
-class AppViewModel : ViewModel() {
+class AppViewModel(
+    /** Часы — для времени своих записей и комментариев; в тестах подменяются. */
+    private val clock: () -> Long = System::currentTimeMillis,
+    /** Демо-собеседник отвечает на сообщения; в тестах выключен — там нет главного потока. */
+    private val demoReplies: Boolean = true,
+) : ViewModel() {
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -106,6 +127,8 @@ class AppViewModel : ViewModel() {
     fun back(): Boolean {
         val s = _state.value
         return when {
+            s.viewing != null -> { closeMedia(); true }
+            s.commentsPostId != null || s.commentsPrismId != null -> { closeComments(); true }
             s.openChatId != null -> { closeChat(); true }
             s.openPersonId != null -> { closePerson(); true }
             s.openGroupId != null -> { closeGroup(); true }
@@ -125,12 +148,61 @@ class AppViewModel : ViewModel() {
         }
     }
 
-    fun publish(text: String) {
+    /** Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем. */
+    fun publish(text: String, media: List<Attachment> = emptyList()) {
         val trimmed = text.trim()
+        if (trimmed.isEmpty() && media.isEmpty()) return
+        _state.update { s ->
+            s.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock())) + s.posts)
+        }
+    }
+
+    /** Комментарий к записи в ленте или в группе. */
+    fun addComment(postId: Long, text: String) {
+        val trimmed = text.trim().take(1000)
         if (trimmed.isEmpty()) return
         _state.update { s ->
-            s.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0)) + s.posts)
+            val comment = Comment(nextId++, s.me, trimmed, createdAt = clock())
+            fun Post.withComment() = if (id == postId) copy(comments = comments + 1, commentList = commentList + comment) else this
+            s.copy(
+                posts = s.posts.map { it.withComment() },
+                groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.withComment() }) },
+            )
         }
+    }
+
+    /** Свой комментарий можно удалить. */
+    fun deleteComment(postId: Long, commentId: Long) {
+        _state.update { s ->
+            fun Post.without() =
+                if (id == postId && commentList.any { it.id == commentId && it.author.id == s.me.id })
+                    copy(comments = (comments - 1).coerceAtLeast(0), commentList = commentList.filterNot { it.id == commentId })
+                else this
+            s.copy(
+                posts = s.posts.map { it.without() },
+                groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.without() }) },
+            )
+        }
+    }
+
+    fun openComments(postId: Long) {
+        _state.update { it.copy(commentsPostId = postId, commentsPrismId = null) }
+    }
+
+    fun openPrismComments(prismId: Long) {
+        _state.update { it.copy(commentsPrismId = prismId, commentsPostId = null) }
+    }
+
+    fun closeComments() {
+        _state.update { it.copy(commentsPostId = null, commentsPrismId = null) }
+    }
+
+    fun openMedia(attachment: Attachment) {
+        _state.update { it.copy(viewing = attachment) }
+    }
+
+    fun closeMedia() {
+        _state.update { it.copy(viewing = null) }
     }
 
     /** Подписаться или отписаться: записи человека появятся в «Историях» или уйдут оттуда. */
@@ -174,10 +246,11 @@ class AppViewModel : ViewModel() {
      * Отправка. В демо собеседник «печатает» и через пару секунд отвечает —
      * чтобы переписку можно было почувствовать без сервера.
      */
-    fun send(chatId: Int, text: String) {
+    fun send(chatId: Int, text: String, attachments: List<Attachment> = emptyList()) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        append(chatId, Message(nextId++, fromMe = true, text = trimmed, time = now()))
+        if (trimmed.isEmpty() && attachments.isEmpty()) return
+        append(chatId, Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA)))
+        if (!demoReplies) return
         viewModelScope.launch {
             delay(700)
             setTyping(chatId, true)
@@ -187,6 +260,25 @@ class AppViewModel : ViewModel() {
             append(chatId, Message(nextId++, fromMe = false, text = reply, time = now()))
         }
     }
+
+    /**
+     * Удалить сообщение. forEveryone = false — только у себя: у собеседника
+     * оно останется. true — у обоих. Пока сервера нет, собеседник — демо, и
+     * на этом телефоне оба варианта убирают сообщение из переписки; с
+     * сервером «у всех» уйдёт собеседнику командой удаления.
+     */
+    fun deleteMessage(chatId: Int, messageId: Long, forEveryone: Boolean) {
+        _state.update { s ->
+            s.copy(chats = s.chats.map { chat ->
+                if (chat.id != chatId) chat
+                else chat.copy(messages = chat.messages.filterNot { it.id == messageId })
+            })
+        }
+        if (forEveryone) deletedForEveryone += messageId
+    }
+
+    /** Какие сообщения удалены «у всех» — для будущей отправки на сервер. */
+    val deletedForEveryone = mutableSetOf<Long>()
 
     private fun append(chatId: Int, message: Message) {
         _state.update { s ->
@@ -207,15 +299,45 @@ class AppViewModel : ViewModel() {
         }
     }
 
-    // ==================== REELS ====================
+    // ==================== PRISM ====================
 
-    fun toggleReelLike(reelId: Long) {
-        _state.update { s ->
-            s.copy(reels = s.reels.map {
-                if (it.id != reelId) it
-                else it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1)
-            })
+    fun togglePrismLike(prismId: Long) {
+        updatePrism(prismId) { it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1) }
+    }
+
+    /** «Сохранить»: закладка, ролик появляется в «Сохранённом» в профиле. */
+    fun togglePrismSave(prismId: Long) {
+        updatePrism(prismId) { it.copy(saved = !it.saved) }
+    }
+
+    fun addPrismComment(prismId: Long, text: String) {
+        val trimmed = text.trim().take(1000)
+        if (trimmed.isEmpty()) return
+        val me = _state.value.me
+        val comment = Comment(nextId++, me, trimmed, createdAt = clock())
+        updatePrism(prismId) { it.copy(comments = it.comments + 1, commentList = it.commentList + comment) }
+    }
+
+    fun deletePrismComment(prismId: Long, commentId: Long) {
+        val meId = _state.value.me.id
+        updatePrism(prismId) { p ->
+            if (p.commentList.none { it.id == commentId && it.author.id == meId }) p
+            else p.copy(comments = (p.comments - 1).coerceAtLeast(0), commentList = p.commentList.filterNot { it.id == commentId })
         }
+    }
+
+    /** Открыть вкладку PRISM на нужном ролике — из «Сохранённого». */
+    fun openPrism(prismId: Long) {
+        selectTab(Tab.Prism)
+        _state.update { it.copy(prismStartId = prismId) }
+    }
+
+    fun consumePrismStart() {
+        _state.update { it.copy(prismStartId = null) }
+    }
+
+    private fun updatePrism(prismId: Long, change: (Prism) -> Prism) {
+        _state.update { s -> s.copy(prisms = s.prisms.map { if (it.id == prismId) change(it) else it }) }
     }
 
     // ==================== ГРУППЫ ====================
@@ -265,7 +387,7 @@ class AppViewModel : ViewModel() {
         _state.update { s ->
             s.copy(groups = s.groups.map {
                 if (it.id != groupId || !it.joined) it
-                else it.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0)) + it.posts)
+                else it.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, createdAt = clock())) + it.posts)
             })
         }
     }
@@ -295,7 +417,7 @@ class AppViewModel : ViewModel() {
                 bio = info.bio, city = info.city, birthday = info.birthday,
                 website = info.website, interests = info.interests,
             )
-            s.copy(me = me, posts = s.posts.map { if (it.author.id == me.id) it.copy(author = me) else it })
+            s.withMe(me)
         }
     }
 
@@ -316,7 +438,7 @@ class AppViewModel : ViewModel() {
                 interests = info.interests,
             )
             // Свои записи в ленте показывают новое имя
-            s.copy(me = me, posts = s.posts.map { if (it.author.id == me.id) it.copy(author = me) else it })
+            s.withMe(me)
         }
     }
 
@@ -324,5 +446,58 @@ class AppViewModel : ViewModel() {
         _state.update { it.copy(notifications = enabled) }
     }
 
+    // ==================== СОХРАНЕНИЕ ====================
+
+    /** То, что сохраняется на телефоне между запусками (см. StateStore). */
+    fun snapshot(): Snapshot = _state.value.let {
+        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId)
+    }
+
+    /**
+     * Вернуть сохранённое состояние после входа. Свои записи и
+     * комментарии получают текущее имя и сведения из профиля.
+     */
+    fun restore(snapshot: Snapshot) {
+        nextId = maxOf(nextId, snapshot.nextId)
+        _state.update { s ->
+            s.copy(
+                posts = snapshot.posts,
+                chats = snapshot.chats,
+                groups = snapshot.groups,
+                prisms = snapshot.prisms,
+                following = snapshot.following - s.me.id,
+                notifications = snapshot.notifications,
+            ).withMe(s.me)
+        }
+    }
+
     private fun now(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+
+    companion object {
+        /** Сколько фото и видео можно приложить к одной записи или сообщению. */
+        const val MAX_MEDIA = 10
+    }
+}
+
+/** Сохраняемая часть состояния. */
+data class Snapshot(
+    val posts: List<Post>,
+    val chats: List<Chat>,
+    val groups: List<Group>,
+    val prisms: List<Prism>,
+    val following: Set<Int>,
+    val notifications: Boolean,
+    val nextId: Long,
+)
+
+/** Новое имя и сведения — во всех своих записях и комментариях. */
+private fun UiState.withMe(me: User): UiState {
+    fun Comment.fix() = if (author.id == me.id) copy(author = me) else this
+    fun Post.fix() = copy(author = if (author.id == me.id) me else author, commentList = commentList.map { it.fix() })
+    return copy(
+        me = me,
+        posts = posts.map { it.fix() },
+        groups = groups.map { g -> g.copy(posts = g.posts.map { it.fix() }) },
+        prisms = prisms.map { p -> p.copy(commentList = p.commentList.map { it.fix() }) },
+    )
 }

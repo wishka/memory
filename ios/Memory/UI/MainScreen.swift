@@ -43,10 +43,60 @@ struct MainScreen: View {
                 .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
+        // Обсуждение записи или PRISM — шторкой поверх любого экрана
+        .sheet(isPresented: commentsShown) { comments }
+        // Фото или видео — на весь экран
+        .fullScreenCover(item: viewing) { attachment in
+            MediaViewer(attachment: attachment) { model.closeMedia() }
+        }
         .animation(.easeOut(duration: 0.22), value: state.tab)
         .animation(.easeOut(duration: 0.25), value: state.openChatId)
         .animation(.easeOut(duration: 0.25), value: state.openPersonId)
         .animation(.easeOut(duration: 0.25), value: state.openGroupId)
+    }
+
+    private var commentsShown: Binding<Bool> {
+        Binding(
+            get: { model.state.commentsPostId != nil || model.state.commentsPrismId != nil },
+            set: { if !$0 { model.closeComments() } }
+        )
+    }
+
+    private var viewing: Binding<Attachment?> {
+        Binding(
+            get: { model.state.viewing },
+            set: { if $0 == nil { model.closeMedia() } }
+        )
+    }
+
+    /// Автор комментария: шторка закрывается, открывается его страница.
+    private func openAuthor(_ userId: Int) {
+        model.closeComments()
+        model.openPerson(userId)
+    }
+
+    @ViewBuilder
+    private var comments: some View {
+        let state = model.state
+        if let id = state.commentsPostId, let post = state.findPost(id) {
+            CommentsSheet(
+                total: post.comments,
+                comments: post.commentList,
+                myId: state.me.id,
+                onSend: { model.addComment(id, $0) },
+                onDelete: { model.deleteComment(id, $0) },
+                onAuthor: openAuthor
+            )
+        } else if let id = state.commentsPrismId, let prism = state.findPrism(id) {
+            CommentsSheet(
+                total: prism.comments,
+                comments: prism.commentList,
+                myId: state.me.id,
+                onSend: { model.addPrismComment(id, $0) },
+                onDelete: { model.deletePrismComment(id, $0) },
+                onAuthor: openAuthor
+            )
+        }
     }
 
     @ViewBuilder
@@ -54,7 +104,7 @@ struct MainScreen: View {
         switch tab {
         case .feed: FeedScreen(model: model)
         case .stories: StoriesScreen(model: model)
-        case .reels: ReelsScreen(model: model)
+        case .prism: PrismScreen(model: model)
         case .chats: ChatsScreen(model: model)
         case .groups: GroupsScreen(model: model)
         case .profile: ProfileScreen(model: model, onSaveProfile: onSaveProfile, onLogout: onLogout)

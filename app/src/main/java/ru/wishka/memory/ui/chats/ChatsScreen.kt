@@ -30,6 +30,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.Chat
+import ru.wishka.memory.data.MediaKind
+import ru.wishka.memory.data.Message
+import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
@@ -113,8 +116,8 @@ private fun ChatRow(chat: Chat, onClick: () -> Unit) {
                 val preview = when {
                     chat.typing -> "печатает…"
                     chat.last == null -> "Нет сообщений"
-                    chat.last?.fromMe == true -> "Вы: ${chat.last?.text}"
-                    else -> chat.last?.text.orEmpty()
+                    chat.last?.fromMe == true -> "Вы: ${chat.last?.let { previewOf(it) }}"
+                    else -> chat.last?.let { previewOf(it) }.orEmpty()
                 }
                 Text(
                     preview,
@@ -137,5 +140,18 @@ private fun ChatRow(chat: Chat, onClick: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/** Текст сообщения для списка чатов; без текста — что приложено. */
+fun previewOf(message: Message): String {
+    if (message.text.isNotEmpty()) return message.text
+    val a = message.attachments
+    return when {
+        a.isEmpty() -> ""
+        a.all { it.kind == MediaKind.Photo } -> if (a.size == 1) "Фото" else plural(a.size, "фото", "фото", "фото")
+        a.all { it.kind == MediaKind.Video } -> if (a.size == 1) "Видео" else plural(a.size, "видео", "видео", "видео")
+        a.all { it.kind == MediaKind.Document } -> a.singleOrNull()?.name?.ifEmpty { null } ?: plural(a.size, "файл", "файла", "файлов")
+        else -> plural(a.size, "вложение", "вложения", "вложений")
     }
 }

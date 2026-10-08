@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Нижняя панель: парящая «капсула» с шестью вкладками —
-/// Лента · Истории · Reels · Чаты · Группы · Профиль.
+/// Лента · Истории · PRISM · Чаты · Группы · Профиль.
 ///
 /// Почти непрозрачная: под ней прокручивается лента, и сквозь слишком
 /// прозрачное стекло текст записей мешал читать значки. Подпись видна
@@ -31,7 +31,7 @@ struct BottomBar: View {
         switch tab {
         case .feed: return .feed
         case .stories: return .stories
-        case .reels: return .reels
+        case .prism: return .prism
         case .chats: return .chats
         case .groups: return .groups
         case .profile: return .profile

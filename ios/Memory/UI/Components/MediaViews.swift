@@ -1,0 +1,348 @@
+import AVKit
+import PhotosUI
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+/// Уменьшенная картинка вложения; читается не в главном потоке.
+struct MediaThumbnail: View {
+    let attachment: Attachment
+    var maxPixel: CGFloat = 900
+    var contentMode: ContentMode = .fill
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+            } else {
+                Palette.plumRGB.opacity(0.6)
+                Glyph(kind: attachment.kind == .video ? .video : .image, color: Palette.mist)
+            }
+        }
+        .task(id: attachment.id) {
+            let item = attachment
+            let side = maxPixel
+            image = await Task.detached(priority: .userInitiated) {
+                MediaFiles.thumbnail(item, maxPixel: side)
+            }.value
+        }
+    }
+}
+
+/// Плитка фото или видео: картинка с обрезкой по рамке, у видео — значок «пуск».
+struct MediaTile: View {
+    let attachment: Attachment
+    var maxPixel: CGFloat = 900
+    var onTap: (() -> Void)? = nil
+
+    var body: some View {
+        let tile = ZStack {
+            Color.clear.overlay { MediaThumbnail(attachment: attachment, maxPixel: maxPixel) }.clipped()
+            if attachment.kind == .video {
+                Glyph(kind: .play, color: Palette.ink, size: 22)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Palette.voidRGB.opacity(0.55)))
+            }
+        }
+        .contentShape(Rectangle())
+        if let onTap {
+            Button(action: onTap) { tile }.buttonStyle(.plain)
+        } else {
+            tile
+        }
+    }
+}
+
+/// Фото и видео записи. Одно — во всю ширину; несколько — листаются вбок,
+/// с номером «2 / 5». Нажатие открывает на весь экран.
+struct PostMediaView: View {
+    let media: [Attachment]
+    var height: CGFloat = 260
+    let onOpen: (Attachment) -> Void
+    @State private var page = 0
+
+    var body: some View {
+        if media.count == 1 {
+            MediaTile(attachment: media[0]) { onOpen(media[0]) }
+                .frame(height: height)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        } else if media.count > 1 {
+            TabView(selection: $page) {
+                ForEach(Array(media.enumerated()), id: \.element.id) { index, item in
+                    MediaTile(attachment: item) { onOpen(item) }
+                        .tag(index)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                Text("\(page + 1) / \(media.count)")
+                    .textStyle(.label)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Palette.voidRGB.opacity(0.6)))
+                    .padding(10)
+            }
+        }
+    }
+}
+
+/// Документ: значок, имя и размер.
+struct DocumentRow: View {
+    let attachment: Attachment
+    var onTap: (() -> Void)? = nil
+
+    var body: some View {
+        let row = HStack(spacing: 10) {
+            Glyph(kind: .document, color: Palette.lilac, size: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(attachment.name.isEmpty ? "Документ" : attachment.name)
+                    .textStyle(.bodySmall)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if attachment.size > 0 {
+                    Text(sizeTitle(attachment.size)).textStyle(.label, Palette.mist)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.voidRGB.opacity(0.35)))
+        .contentShape(Rectangle())
+        if let onTap {
+            Button(action: onTap) { row }.buttonStyle(.plain)
+        } else {
+            row
+        }
+    }
+}
+
+/// Фото или видео на весь экран.
+struct MediaViewer: View {
+    let attachment: Attachment
+    let onClose: () -> Void
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.black.ignoresSafeArea()
+            switch attachment.kind {
+            case .video:
+                if let player {
+                    VideoPlayer(player: player).ignoresSafeArea()
+                }
+            default:
+                MediaThumbnail(attachment: attachment, maxPixel: 2400, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            RoundGlyphButton(icon: .close, strong: true, action: onClose)
+                .padding(12)
+        }
+        .onAppear {
+            if attachment.kind == .video {
+                let p = AVPlayer(url: MediaFiles.url(attachment))
+                player = p
+                p.play()
+            }
+        }
+        .onDisappear { player?.pause() }
+    }
+}
+
+/// Видео из галереи: файл копируется во временную папку, пока галерея его отдаёт.
+struct PickedMovie: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            let ext = received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return PickedMovie(url: copy)
+        }
+    }
+}
+
+/// Камера: снять фото или видео. Результат копируется в папку вложений.
+struct CameraPicker: UIViewControllerRepresentable {
+    let onFinish: (Attachment?) -> Void
+
+    static var isAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .camera
+        controller.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
+        controller.videoQuality = .typeHigh
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onFinish: onFinish) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onFinish: (Attachment?) -> Void
+
+        init(onFinish: @escaping (Attachment?) -> Void) {
+            self.onFinish = onFinish
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let url = info[.mediaURL] as? URL {
+                onFinish(MediaFiles.importFile(at: url, kind: .video))
+            } else if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) {
+                onFinish(MediaFiles.save(data, kind: .photo, ext: "jpg"))
+            } else {
+                onFinish(nil)
+            }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onFinish(nil)
+        }
+    }
+}
+
+/// Кнопка-скрепка с меню: галерея (фото и видео, до 10), камера и — в
+/// чатах — документы из «Файлов». Выбранное копируется в папку вложений
+/// и приходит в onPicked.
+struct AttachButton: View {
+    var documents: Bool = false
+    var size: CGFloat = 44
+    let onPicked: ([Attachment]) -> Void
+
+    @State private var showGallery = false
+    @State private var galleryItems: [PhotosPickerItem] = []
+    @State private var showCamera = false
+    @State private var showFiles = false
+    @State private var loading = false
+    @State private var failed = false
+
+    var body: some View {
+        Menu {
+            Button { showGallery = true } label: {
+                Label("Фото или видео из галереи", systemImage: "photo.on.rectangle")
+            }
+            Button { showCamera = true } label: {
+                Label("Снять фото или видео", systemImage: "camera")
+            }
+            .disabled(!CameraPicker.isAvailable)
+            if documents {
+                Button { showFiles = true } label: {
+                    Label("Документ", systemImage: "doc")
+                }
+            }
+        } label: {
+            ZStack {
+                if loading {
+                    ProgressView().tint(Palette.lilac)
+                } else {
+                    Glyph(kind: .attach, color: Palette.lilac, size: 22)
+                }
+            }
+            .frame(width: size, height: size)
+            .glass(Circle())
+        }
+        .disabled(loading)
+        .photosPicker(
+            isPresented: $showGallery,
+            selection: $galleryItems,
+            maxSelectionCount: AppModel.maxMedia,
+            matching: .any(of: [.images, .videos])
+        )
+        .onChange(of: galleryItems) { _, items in
+            guard !items.isEmpty else { return }
+            galleryItems = []
+            loadGallery(items)
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { attachment in
+                showCamera = false
+                if let attachment { onPicked([attachment]) }
+            }
+            .ignoresSafeArea()
+        }
+        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            let picked = urls.prefix(AppModel.maxMedia).compactMap { MediaFiles.importFile(at: $0, kind: .document) }
+            if picked.count < urls.count { failed = true }
+            if !picked.isEmpty { onPicked(picked) }
+        }
+        .alert("Не все файлы удалось добавить", isPresented: $failed) {
+            Button("Понятно", role: .cancel) {}
+        } message: {
+            Text("Можно приложить файлы до 200 МБ.")
+        }
+    }
+
+    private func loadGallery(_ items: [PhotosPickerItem]) {
+        loading = true
+        Task {
+            var picked: [Attachment] = []
+            for item in items {
+                let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+                if isVideo {
+                    if let movie = try? await item.loadTransferable(type: PickedMovie.self) {
+                        if let attachment = MediaFiles.importFile(at: movie.url, kind: .video) {
+                            picked.append(attachment)
+                        }
+                        try? FileManager.default.removeItem(at: movie.url)
+                    }
+                } else if let data = try? await item.loadTransferable(type: Data.self) {
+                    let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                    if let attachment = MediaFiles.save(data, kind: .photo, ext: ext) {
+                        picked.append(attachment)
+                    }
+                }
+            }
+            loading = false
+            if picked.count < items.count { failed = true }
+            if !picked.isEmpty { onPicked(picked) }
+        }
+    }
+}
+
+/// Вложения, которые ещё не отправлены: маленькие плитки с крестиком.
+struct PendingAttachments: View {
+    let items: [Attachment]
+    let onRemove: (Attachment) -> Void
+
+    var body: some View {
+        if !items.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(items) { item in
+                        ZStack(alignment: .topTrailing) {
+                            if item.kind == .document {
+                                DocumentRow(attachment: item).frame(width: 180, height: 64)
+                            } else {
+                                MediaTile(attachment: item, maxPixel: 256)
+                                    .frame(width: 64, height: 64)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            Button { onRemove(item) } label: {
+                                Glyph(kind: .close, color: Palette.ink, size: 14)
+                                    .frame(width: 22, height: 22)
+                                    .background(Circle().fill(Palette.voidRGB.opacity(0.75)))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(2)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+        }
+    }
+}

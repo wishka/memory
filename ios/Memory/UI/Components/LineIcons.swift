@@ -4,7 +4,8 @@ import SwiftUI
 /// SF Symbols рядом с тонким Unbounded выглядят чужими. Всё рисуется
 /// линией в 1.5pt, с кристаллом-ромбом как общим мотивом.
 enum LineIcon {
-    case feed, stories, reels, groups, pin, gift, link, music, calendar, exit
+    case feed, stories, prism, groups, pin, gift, link, music, calendar, exit
+    case share, bookmark, bookmarkFilled, attach, camera, video, image, document, trash, play, close
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
 }
 
@@ -50,6 +51,13 @@ struct Glyph: View {
         return path
     }
 
+    /// Перламутр кристалла — те же цвета, что у стекла слова MEMORY.
+    static let crystalColors: [Color] = ([0xFF9EDE, 0xC6A2FF, 0x8CC4FF, 0xFFF4FF, 0xD08CFF] as [UInt32]).map { RGB($0).color }
+
+    private static func crystalShading(_ s: CGFloat) -> GraphicsContext.Shading {
+        .linearGradient(Gradient(colors: crystalColors), startPoint: .zero, endPoint: CGPoint(x: s, y: s))
+    }
+
     // swiftlint:disable:next function_body_length cyclomatic_complexity
     static func draw(_ kind: LineIcon, in context: inout GraphicsContext, s: CGFloat, color: Color) {
         let shading = GraphicsContext.Shading.color(color)
@@ -77,15 +85,119 @@ struct Glyph: View {
             }
             strokePath(arcs)
             strokePath(diamond(s, 0.5, 0.5, 0.12))
-        case .reels:
-            // Вертикальный кадр со скруглением и треугольник «пуск»
-            strokePath(roundRect(s, 0.24, 0.12, 0.52, 0.76, 0.1))
+        case .prism:
+            // Призма: треугольник, входящий луч и веер лучей-спектра
+            var tri = Path()
+            tri.move(to: p(s, 0.42, 0.18))
+            tri.addLine(to: p(s, 0.70, 0.80))
+            tri.addLine(to: p(s, 0.14, 0.80))
+            tri.closeSubpath()
+            strokePath(tri)
+            strokePath(line(s, 0.04, 0.58, 0.30, 0.52))
+            for k in 0..<3 {
+                strokePath(line(s, 0.56, 0.50, 0.94, 0.40 + CGFloat(k) * 0.12))
+            }
+        case .play:
             var play = Path()
-            play.move(to: p(s, 0.43, 0.38))
-            play.addLine(to: p(s, 0.62, 0.5))
-            play.addLine(to: p(s, 0.43, 0.62))
+            play.move(to: p(s, 0.34, 0.22))
+            play.addLine(to: p(s, 0.80, 0.5))
+            play.addLine(to: p(s, 0.34, 0.78))
             play.closeSubpath()
-            strokePath(play)
+            fillPath(play)
+        case .share:
+            // Стрелка из коробки
+            strokePath(line(s, 0.5, 0.14, 0.5, 0.6))
+            var arrow = Path()
+            arrow.move(to: p(s, 0.34, 0.3))
+            arrow.addLine(to: p(s, 0.5, 0.14))
+            arrow.addLine(to: p(s, 0.66, 0.3))
+            strokePath(arrow)
+            var box = Path()
+            box.move(to: p(s, 0.36, 0.44))
+            box.addLine(to: p(s, 0.22, 0.44))
+            box.addLine(to: p(s, 0.22, 0.86))
+            box.addLine(to: p(s, 0.78, 0.86))
+            box.addLine(to: p(s, 0.78, 0.44))
+            box.addLine(to: p(s, 0.64, 0.44))
+            strokePath(box)
+        case .bookmark, .bookmarkFilled:
+            var mark = Path()
+            mark.move(to: p(s, 0.26, 0.14))
+            mark.addLine(to: p(s, 0.74, 0.14))
+            mark.addLine(to: p(s, 0.74, 0.86))
+            mark.addLine(to: p(s, 0.5, 0.68))
+            mark.addLine(to: p(s, 0.26, 0.86))
+            mark.closeSubpath()
+            if kind == .bookmarkFilled { context.fill(mark, with: crystalShading(s)) }
+            strokePath(mark)
+        case .attach:
+            // Скрепка
+            var clip = Path()
+            clip.move(to: p(s, 0.62, 0.3))
+            clip.addLine(to: p(s, 0.36, 0.56))
+            clip.addCurve(to: p(s, 0.46, 0.68), control1: p(s, 0.28, 0.64), control2: p(s, 0.38, 0.76))
+            clip.addLine(to: p(s, 0.74, 0.40))
+            clip.addCurve(to: p(s, 0.56, 0.22), control1: p(s, 0.88, 0.26), control2: p(s, 0.70, 0.08))
+            clip.addLine(to: p(s, 0.26, 0.52))
+            clip.addCurve(to: p(s, 0.52, 0.78), control1: p(s, 0.06, 0.72), control2: p(s, 0.32, 0.98))
+            clip.addLine(to: p(s, 0.80, 0.50))
+            strokePath(clip)
+        case .camera:
+            strokePath(roundRect(s, 0.12, 0.3, 0.76, 0.52, 0.1))
+            var top = Path()
+            top.move(to: p(s, 0.34, 0.3))
+            top.addLine(to: p(s, 0.4, 0.2))
+            top.addLine(to: p(s, 0.6, 0.2))
+            top.addLine(to: p(s, 0.66, 0.3))
+            strokePath(top)
+            strokePath(circle(s, 0.5, 0.56, 0.13))
+        case .video:
+            strokePath(roundRect(s, 0.1, 0.28, 0.56, 0.44, 0.08))
+            var lens = Path()
+            lens.move(to: p(s, 0.66, 0.44))
+            lens.addLine(to: p(s, 0.9, 0.32))
+            lens.addLine(to: p(s, 0.9, 0.68))
+            lens.addLine(to: p(s, 0.66, 0.56))
+            strokePath(lens)
+        case .image:
+            strokePath(roundRect(s, 0.14, 0.18, 0.72, 0.64, 0.08))
+            var hills = Path()
+            hills.move(to: p(s, 0.18, 0.74))
+            hills.addLine(to: p(s, 0.4, 0.5))
+            hills.addLine(to: p(s, 0.56, 0.64))
+            hills.addLine(to: p(s, 0.66, 0.56))
+            hills.addLine(to: p(s, 0.84, 0.74))
+            strokePath(hills)
+            strokePath(circle(s, 0.64, 0.36, 0.06))
+        case .document:
+            var doc = Path()
+            doc.move(to: p(s, 0.24, 0.12))
+            doc.addLine(to: p(s, 0.58, 0.12))
+            doc.addLine(to: p(s, 0.78, 0.32))
+            doc.addLine(to: p(s, 0.78, 0.88))
+            doc.addLine(to: p(s, 0.24, 0.88))
+            doc.closeSubpath()
+            doc.move(to: p(s, 0.58, 0.12))
+            doc.addLine(to: p(s, 0.58, 0.32))
+            doc.addLine(to: p(s, 0.78, 0.32))
+            strokePath(doc)
+            strokePath(line(s, 0.36, 0.52, 0.66, 0.52))
+            strokePath(line(s, 0.36, 0.68, 0.6, 0.68))
+        case .trash:
+            strokePath(line(s, 0.16, 0.26, 0.84, 0.26))
+            var bin = Path()
+            bin.move(to: p(s, 0.38, 0.26))
+            bin.addLine(to: p(s, 0.42, 0.14))
+            bin.addLine(to: p(s, 0.58, 0.14))
+            bin.addLine(to: p(s, 0.62, 0.26))
+            bin.move(to: p(s, 0.24, 0.26))
+            bin.addLine(to: p(s, 0.3, 0.86))
+            bin.addLine(to: p(s, 0.7, 0.86))
+            bin.addLine(to: p(s, 0.76, 0.26))
+            strokePath(bin)
+        case .close:
+            strokePath(line(s, 0.26, 0.26, 0.74, 0.74))
+            strokePath(line(s, 0.74, 0.26, 0.26, 0.74))
         case .groups:
             // Трое: в центре ближе и крупнее
             strokePath(circle(s, 0.5, 0.36, 0.11))
@@ -177,8 +289,18 @@ struct Glyph: View {
             heart.addCurve(to: p(s, 0.68, 0.22), control1: p(s, 0.52, 0.28), control2: p(s, 0.58, 0.21))
             heart.addCurve(to: p(s, 0.5, 0.82), control1: p(s, 0.92, 0.24), control2: p(s, 0.9, 0.56))
             heart.closeSubpath()
-            if kind == .heartFilled { fillPath(heart) }
-            strokePath(heart)
+            if kind == .heartFilled {
+                // «Нравится» — кристальное сердце: перламутровый перелив,
+                // светлый контур и блик-звёздочка, как у слова MEMORY
+                context.fill(heart, with: crystalShading(s))
+                context.stroke(heart, with: .color(.white.opacity(0.9)), style: stroke)
+                let r: CGFloat = 0.07
+                let sparkle = StrokeStyle(lineWidth: 1.05, lineCap: .round)
+                context.stroke(line(s, 0.36 - r, 0.36, 0.36 + r, 0.36), with: .color(.white), style: sparkle)
+                context.stroke(line(s, 0.36, 0.36 - r, 0.36, 0.36 + r), with: .color(.white), style: sparkle)
+            } else {
+                strokePath(heart)
+            }
         case .send:
             var plane = Path()
             plane.move(to: p(s, 0.16, 0.2))
