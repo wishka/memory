@@ -16,6 +16,8 @@ class AtomFieldTest {
 
     private val dissolve = AtomField(xs, ys, SplashMode.Dissolve)
     private val assemble = AtomField(xs, ys, SplashMode.Assemble)
+    // Для сборки из центра: края слова (0 и 1) и середина (2)
+    private val center = AtomField(xs, ys, SplashMode.AssembleFromCenter)
     private val t = dissolve.timing
 
     @Test
@@ -61,9 +63,35 @@ class AtomFieldTest {
         for (time in listOf(assemble.pivotAt(0), assemble.totalMs)) {
             assertEquals(100f, assemble.x(0, time), 0.001f)
             assertEquals(300f, assemble.y(0, time), 0.001f)
-            assertEquals(1f, assemble.alpha(0, time), 0.001f)
         }
+        assertEquals(1f, assemble.alpha(0, assemble.pivotAt(0)), 0.001f)
+        // К концу слово целиком стало стеклом
+        assertEquals(1f, assemble.crystal(assemble.totalMs), 0.001f)
         assertTrue(assemble.totalMs > assemble.wordCompleteMs)
+    }
+
+    @Test
+    fun centerAssemblyGoesOutwardBothWays() {
+        // Середина собирается первой, края — позже
+        assertTrue(center.pivotAt(2) < center.pivotAt(0))
+        assertTrue(center.pivotAt(2) < center.pivotAt(1))
+        // Атомы краёв прилетают со своей стороны: левый — слева, правый — справа
+        val half = t.lifeMs / 2
+        assertTrue(center.x(0, center.pivotAt(0) - half) < 100f)
+        assertTrue(center.x(1, center.pivotAt(1) - half) > 900f)
+    }
+
+    @Test
+    fun centerAssemblyTurnsIntoCrystalWithShimmer() {
+        val done = center.wordCompleteMs
+        assertEquals(0f, center.crystal(done), 0.001f)
+        assertEquals(1f, center.crystal(done + AtomField.CRYSTALLIZE_MS), 0.001f)
+        // Когда слово стало стеклом, атомов уже не видно
+        assertEquals(0f, center.alpha(0, done + AtomField.CRYSTALLIZE_MS), 0.001f)
+        assertEquals(null, center.shimmer(done))
+        val mid = center.shimmer(done + AtomField.CRYSTALLIZE_MS + AtomField.SHIMMER_MS / 2)
+        assertEquals(0.5f, mid ?: -1f, 0.01f)
+        assertTrue(center.totalMs > done + AtomField.CRYSTALLIZE_MS + AtomField.SHIMMER_MS)
     }
 
     @Test

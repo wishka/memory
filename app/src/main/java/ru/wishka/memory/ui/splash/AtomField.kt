@@ -12,10 +12,12 @@ import kotlin.random.Random
  * Как слово ведёт себя на заставке.
  *
  * Dissolve — слово стоит целиком и, начиная с последней буквы,
- * рассыпается на атомы. Assemble — наоборот: атомы слетаются из
- * пространства и, начиная с первой буквы, собирают слово.
+ * рассыпается на атомы. Assemble — атомы слетаются из пространства и
+ * собирают слово с первой буквы. AssembleFromCenter — сборка начинается
+ * с середины слова и расходится в обе стороны; атомы левой половины
+ * прилетают слева, правой — справа.
  */
-enum class SplashMode { Dissolve, Assemble }
+enum class SplashMode { Dissolve, Assemble, AssembleFromCenter }
 
 /**
  * Физика заставки: слово из точек-«атомов».
@@ -42,15 +44,15 @@ class AtomField(
     /** Тайминги в миллисекундах. */
     data class Timing(
         /** Dissolve: слово проявляется. */
-        val appearMs: Long = 650,
+        val appearMs: Long = 500,
         /** Dissolve: слово стоит целиком перед распадом. Assemble: собранное слово стоит до перехода. */
-        val holdMs: Long = 350,
+        val holdMs: Long = 250,
         /** Волна проходит по слову: распад — с конца, сборка — с начала. */
-        val sweepMs: Long = 1150,
+        val sweepMs: Long = 800,
         /** Разброс момента соседних атомов — край волны «рваный». */
-        val jitterMs: Long = 220,
+        val jitterMs: Long = 160,
         /** Полёт атома. */
-        val lifeMs: Long = 950,
+        val lifeMs: Long = 700,
         /** Пауза в конце перед переходом в приложение. */
         val tailMs: Long = 120,
     )
@@ -84,10 +86,21 @@ class AtomField(
                 // Сборка с начала: левые атомы встают на место первыми;
                 // первые вылетают сразу, на полёт уходит lifeMs
                 SplashMode.Assemble -> t.lifeMs + (xn * t.sweepMs).toLong() + jitter
+                // От середины к краям: чем дальше от центра, тем позже
+                SplashMode.AssembleFromCenter ->
+                    t.lifeMs + (kotlin.math.abs(xn - 0.5f) * 2f * t.sweepMs).toLong() + jitter
             }
-            // Разлёт вправо-вверх, как дым на ветру, с разбросом направлений
-            val angle = (-PI / 2 + 0.95 + (rnd.nextFloat() - 0.5) * 1.9).toFloat()
-            val speed = 0.08f + rnd.nextFloat() * 0.2f   // пикс./мс
+            val angle = when (mode) {
+                // Из центра в разные стороны: левая половина — влево, правая — вправо,
+                // с разбросом вверх и вниз
+                SplashMode.AssembleFromCenter -> {
+                    val spread = ((rnd.nextFloat() - 0.5) * 1.6).toFloat()
+                    if (xn < 0.5f) (PI.toFloat() + spread) else spread
+                }
+                // Разлёт вправо-вверх, как дым на ветру, с разбросом направлений
+                else -> (-PI / 2 + 0.95 + (rnd.nextFloat() - 0.5) * 1.9).toFloat()
+            }
+            val speed = 0.1f + rnd.nextFloat() * 0.25f   // пикс./мс
             vx[i] = cos(angle) * speed
             vy[i] = sin(angle) * speed
             wobbleAmp[i] = 4f + rnd.nextFloat() * 14f
@@ -102,13 +115,27 @@ class AtomField(
     /** Когда заставка полностью закончилась. */
     val totalMs: Long = when (mode) {
         SplashMode.Dissolve -> (lastPivot ?: (timing.appearMs + timing.holdMs)) + timing.lifeMs + timing.tailMs
-        SplashMode.Assemble -> (lastPivot ?: timing.lifeMs) + timing.holdMs * 2 + timing.tailMs
+        // После сборки слово «кристаллизуется» и по нему пробегает блик
+        SplashMode.Assemble, SplashMode.AssembleFromCenter ->
+            (lastPivot ?: timing.lifeMs) + CRYSTALLIZE_MS + SHIMMER_MS + timing.holdMs + timing.tailMs
     }
 
     /** Когда слово целиком собрано (Assemble) или когда начинается распад (Dissolve). */
     val wordCompleteMs: Long = when (mode) {
         SplashMode.Dissolve -> timing.appearMs
-        SplashMode.Assemble -> lastPivot ?: 0L
+        SplashMode.Assemble, SplashMode.AssembleFromCenter -> lastPivot ?: 0L
+    }
+
+    /** 0..1 — насколько слово превратилось из атомов в кристалл. */
+    fun crystal(t: Long): Float =
+        if (mode == SplashMode.Dissolve) 0f
+        else ((t - wordCompleteMs).toFloat() / CRYSTALLIZE_MS).coerceIn(0f, 1f)
+
+    /** Положение блика по слову: null — блика нет, 0..1 — слева направо. */
+    fun shimmer(t: Long): Float? {
+        if (mode == SplashMode.Dissolve) return null
+        val p = (t - wordCompleteMs - CRYSTALLIZE_MS).toFloat() / SHIMMER_MS
+        return p.takeIf { it in 0f..1f }
     }
 
     /** Dissolve: момент отрыва атома i. Assemble: момент, когда он встал на место. */
@@ -117,7 +144,7 @@ class AtomField(
     /** Время полёта атома: 0 — атом в букве, больше нуля — в пути. */
     private fun flight(i: Int, t: Long): Long = when (mode) {
         SplashMode.Dissolve -> max(0L, t - pivot[i])
-        SplashMode.Assemble -> max(0L, pivot[i] - t)
+        else -> max(0L, pivot[i] - t)
     }
 
     /** Атом ещё (или уже) виден. */
@@ -144,7 +171,8 @@ class AtomField(
         val fade = 1f - decay(i, t).pow(1.4f)
         return when (mode) {
             SplashMode.Dissolve -> smooth(min(1f, t.toFloat() / timing.appearMs)) * fade
-            SplashMode.Assemble -> fade
+            // Когда слово стало кристаллом, атомы растворяются в нём
+            SplashMode.Assemble, SplashMode.AssembleFromCenter -> fade * (1f - crystal(t))
         }
     }
 
@@ -157,4 +185,9 @@ class AtomField(
     }
 
     private fun smooth(v: Float) = v * v * (3 - 2 * v)
+
+    companion object {
+        const val CRYSTALLIZE_MS = 350L
+        const val SHIMMER_MS = 550L
+    }
 }
