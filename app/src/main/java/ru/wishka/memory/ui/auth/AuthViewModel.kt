@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.auth.Account
 import ru.wishka.memory.data.auth.AuthResult
 import ru.wishka.memory.data.auth.LocalAuth
@@ -55,10 +56,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(account = null, error = null) }
     }
 
-    fun rename(displayName: String) {
+    /** Имя и сведения профиля — в сохранённый аккаунт, чтобы пережили перезапуск. */
+    fun saveProfile(displayName: String, info: ProfileInfo) {
         val account = _state.value.account ?: return
         auth.rename(account.username, displayName)
-        _state.update { it.copy(account = account.copy(displayName = displayName.trim())) }
+        auth.saveProfile(account.username, info)
+        _state.update { it.copy(account = account.copy(displayName = displayName.trim(), info = info)) }
     }
 
     fun clearError() {

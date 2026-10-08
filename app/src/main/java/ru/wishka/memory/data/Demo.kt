@@ -9,18 +9,41 @@ object Demo {
     val me = User(
         id = 1, name = "Андрей", handle = "wishka",
         bio = "Собираю моменты, которые не хочется забывать.", hue = 0.15f, online = true,
+        city = "Москва", interests = listOf("Фото", "Музыка", "Путешествия"), joined = "октябрь 2026",
     )
 
-    private val vera = User(2, "Вера Лунная", "vera.moon", "Фотографирую ночное небо", 0.05f, online = true)
-    private val mark = User(3, "Марк Север", "mark_north", "Музыка, синтезаторы, полночь", 0.75f)
-    private val alina = User(4, "Алина", "alina.prism", "Рисую свет", 0.35f, online = true)
-    private val timur = User(5, "Тимур", "timur", "", 0.9f)
-    private val sofia = User(6, "София Ри", "sofiari", "Путешествия и плёнка", 0.55f)
+    private val vera = User(
+        2, "Вера Лунная", "vera.moon", "Фотографирую ночное небо", 0.05f, online = true,
+        city = "Санкт-Петербург", birthday = "14 марта", website = "veramoon.ru",
+        interests = listOf("Фото", "Астрономия", "Природа"), joined = "май 2026", followers = 1284, followingCount = 211,
+    )
+    private val mark = User(
+        3, "Марк Север", "mark_north", "Музыка, синтезаторы, полночь", 0.75f,
+        city = "Казань", birthday = "2 ноября", interests = listOf("Музыка", "Кино"),
+        joined = "июнь 2026", followers = 532, followingCount = 98,
+    )
+    private val alina = User(
+        4, "Алина", "alina.prism", "Рисую свет", 0.35f, online = true,
+        city = "Москва", birthday = "21 июля", website = "behance.net/alina.prism",
+        interests = listOf("Искусство", "Фото"), joined = "июль 2026", followers = 2410, followingCount = 340,
+    )
+    private val timur = User(
+        5, "Тимур", "timur", "Ищу звездопады", 0.9f,
+        city = "Новосибирск", interests = listOf("Природа", "Спорт"), joined = "август 2026",
+        followers = 87, followingCount = 120,
+    )
+    private val sofia = User(
+        6, "София Ри", "sofiari", "Путешествия и плёнка", 0.55f,
+        city = "Иркутск", birthday = "5 января", interests = listOf("Путешествия", "Фото", "Книги"),
+        joined = "март 2026", followers = 978, followingCount = 260,
+    )
 
     val people = listOf(vera, mark, alina, timur, sofia)
 
     /** Изначальные подписки: Вера, Алина и София. */
     val following = setOf(2, 4, 6)
+
+    fun person(id: Int): User? = if (id == me.id) me else people.firstOrNull { it.id == id }
 
     val posts = listOf(
         Post(101, vera, "Сегодня небо было как акварель: фиолетовый перетекал в синий " +
@@ -33,6 +56,10 @@ object Demo {
             artSeed = 27, likes = 132, comments = 19),
         Post(105, timur, "Кто идёт смотреть звездопад в субботу? Беру термос и плед.", 2900,
             likes = 9, comments = 11),
+        Post(106, vera, "Луна сегодня почти касалась шпиля Петропавловки.", 4300,
+            artSeed = 41, likes = 203, comments = 25),
+        Post(107, alina, "Новая серия «Свет в стекле» — скоро покажу целиком.", 6100,
+            artSeed = 52, likes = 156, comments = 31),
     )
 
     val chats = listOf(
@@ -65,6 +92,41 @@ object Demo {
             4, sofia,
             listOf(Message(9, false, "Привет! Давно не виделись", "12.09")),
         ),
+    )
+
+    val groups = listOf(
+        Group(
+            1, "Ночное небо", "Фото звёзд, луны и северного сияния. Делимся местами и советами по съёмке.",
+            "Фото", 4821, seed = 61, joined = true,
+            posts = listOf(
+                Post(201, vera, "Сегодня в 23:40 МКС пролетит над Петербургом — кто снимает?", 40, likes = 64, comments = 12),
+                Post(202, timur, "Нашёл тёмное место в 40 км от Новосибирска: Млечный Путь виден глазом.", 900, artSeed = 71, likes = 120, comments = 18),
+            ),
+        ),
+        Group(
+            2, "Синтезаторная полночь", "Электронная музыка, своё звучание и ночные сессии.",
+            "Музыка", 1290, seed = 62,
+            posts = listOf(Post(203, mark, "Выложил пресеты для полночного пэда — бесплатно.", 300, likes = 40, comments = 7)),
+        ),
+        Group(
+            3, "Плёнка и дорога", "Путешествия, плёночная фотография, заметки из поездок.",
+            "Путешествия", 3305, seed = 63, joined = true,
+            posts = listOf(Post(204, sofia, "Ольхон зимой: где жить и что снимать — длинный пост в комментариях.", 2000, artSeed = 72, likes = 210, comments = 44)),
+        ),
+        Group(
+            4, "Свет и стекло", "Искусство света: призмы, витражи, отражения.", "Искусство", 870, seed = 64,
+            posts = listOf(Post(205, alina, "Задание недели: снимите радугу от призмы у себя дома.", 1200, likes = 77, comments = 23)),
+        ),
+        Group(5, "Читаем медленно", "Книжный клуб: одна книга в месяц и встречи по воскресеньям.", "Книги", 640, seed = 65),
+        Group(6, "Тропы и вершины", "Походы выходного дня и большие маршруты.", "Природа", 2150, seed = 66),
+    )
+
+    val reels = listOf(
+        Reel(301, vera, "Таймлапс: луна поднимается над Невой 🌙", "Ночной город — Lumen", 81, 1820, 64),
+        Reel(302, alina, "Как призма раскладывает свет на радугу", "Prism Waves — Alina", 82, 3400, 120, liked = true),
+        Reel(303, mark, "Собираю трек из шума дождя за 30 секунд", "Rain Synth — Mark North", 83, 950, 41),
+        Reel(304, sofia, "Байкал: лёд звенит, если по нему постучать", "Ice Bells — Sofia Ri", 84, 5120, 233),
+        Reel(305, timur, "Звездопад Персеиды, 20 минут в 15 секундах", "Meteor — Timur", 85, 760, 28),
     )
 
     /** Ответы собеседника в демо-переписке — по кругу. */

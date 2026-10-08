@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.agoTitle
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
@@ -54,10 +55,12 @@ class AppViewModelTest {
     fun renameShowsOnOwnPosts() {
         val vm = AppViewModel()
         vm.publish("Запись")
-        vm.updateProfile("Новое имя", "о себе")
+        vm.updateProfile("Новое имя", ProfileInfo(bio = "о себе", city = "Казань", interests = listOf("Фото")))
         assertEquals("Новое имя", vm.state.value.me.name)
         assertEquals("Новое имя", vm.state.value.myPosts.first().author.name)
-        vm.updateProfile("  ", "")
+        assertEquals("Казань", vm.state.value.me.city)
+        assertEquals(listOf("Фото"), vm.state.value.me.interests)
+        vm.updateProfile("  ", ProfileInfo())
         assertEquals("Новое имя", vm.state.value.me.name)
     }
 
@@ -87,6 +90,75 @@ class AppViewModelTest {
         assertEquals("vera.moon", vm.state.value.me.handle)
         vm.reset()
         assertTrue(vm.state.value.myPosts.isEmpty())
+    }
+
+    @Test
+    fun personPageAndBackOrder() {
+        val vm = AppViewModel()
+        vm.selectTab(Tab.Stories)
+        vm.openPerson(2)
+        assertEquals("Вера Лунная", vm.state.value.openPerson?.name)
+        // «Написать» открывает переписку поверх страницы, «назад» возвращает на неё
+        vm.writeTo(2)
+        assertEquals(2, vm.state.value.openChat?.peer?.id)
+        assertTrue(vm.back())
+        assertEquals(2, vm.state.value.openPersonId)
+        assertTrue(vm.back())
+        assertNull(vm.state.value.openPersonId)
+        // Своё имя ведёт в профиль
+        vm.openPerson(vm.state.value.me.id)
+        assertEquals(Tab.Profile, vm.state.value.tab)
+        assertNull(vm.state.value.openPersonId)
+    }
+
+    @Test
+    fun writeToNewPersonCreatesChat() {
+        val vm = AppViewModel()
+        val before = vm.state.value.chats.size
+        vm.writeTo(5) // с Тимуром переписки ещё нет
+        assertEquals(before + 1, vm.state.value.chats.size)
+        assertEquals(5, vm.state.value.openChat?.peer?.id)
+        vm.writeTo(5) // повторно — та же переписка
+        assertEquals(before + 1, vm.state.value.chats.size)
+    }
+
+    @Test
+    fun groupsJoinCreatePostDelete() {
+        val vm = AppViewModel()
+        val other = vm.state.value.groups.first { !it.joined }
+        vm.toggleGroup(other.id)
+        assertTrue(vm.state.value.groups.first { it.id == other.id }.joined)
+        assertEquals(other.members + 1, vm.state.value.groups.first { it.id == other.id }.members)
+
+        assertEquals("Название — от 3 символов", vm.createGroup("ab", "", "Фото"))
+        assertNull(vm.createGroup("Кофе и звёзды", "Ночные разговоры", "Природа"))
+        val mine = vm.state.value.openGroup!!
+        assertTrue(mine.mine && mine.joined)
+        assertTrue(vm.createGroup("кофе и звёзды", "", "Фото")!!.contains("уже есть"))
+
+        vm.postInGroup(mine.id, "Первая запись")
+        assertEquals("Первая запись", vm.state.value.openGroup!!.posts.first().text)
+        // Из своей группы не выйти — только удалить
+        vm.toggleGroup(mine.id)
+        assertTrue(vm.state.value.openGroup!!.joined)
+        vm.deleteGroup(mine.id)
+        assertTrue(vm.state.value.groups.none { it.id == mine.id })
+    }
+
+    @Test
+    fun cannotPostInGroupWithoutJoining() {
+        val vm = AppViewModel()
+        val other = vm.state.value.groups.first { !it.joined }
+        vm.postInGroup(other.id, "привет")
+        assertEquals(other.posts, vm.state.value.groups.first { it.id == other.id }.posts)
+    }
+
+    @Test
+    fun reelLike() {
+        val vm = AppViewModel()
+        val reel = vm.state.value.reels.first { !it.liked }
+        vm.toggleReelLike(reel.id)
+        assertEquals(reel.likes + 1, vm.state.value.reels.first { it.id == reel.id }.likes)
     }
 
     @Test

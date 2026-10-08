@@ -1,0 +1,237 @@
+package ru.wishka.memory.ui.groups
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import ru.wishka.memory.data.GROUP_TOPICS
+import ru.wishka.memory.data.Group
+import ru.wishka.memory.data.plural
+import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.UiState
+import ru.wishka.memory.ui.components.GhostButton
+import ru.wishka.memory.ui.components.GlassCard
+import ru.wishka.memory.ui.components.GlassField
+import ru.wishka.memory.ui.components.GlowButton
+import ru.wishka.memory.ui.components.Glyph
+import ru.wishka.memory.ui.components.LineIcon
+import ru.wishka.memory.ui.components.Nebula
+import ru.wishka.memory.ui.components.ScreenTitle
+import ru.wishka.memory.ui.components.glass
+import ru.wishka.memory.ui.theme.Palette
+
+/**
+ * Вкладка «Группы»: поиск по названию, описанию и теме, фильтр по теме,
+ * свои группы отдельно от остальных, создание новой группы.
+ */
+@Composable
+fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var topic by rememberSaveable { mutableStateOf<String?>(null) }
+    var creating by rememberSaveable { mutableStateOf(false) }
+
+    val needle = query.trim().lowercase()
+    val found = state.groups.filter { g ->
+        (topic == null || g.topic == topic) &&
+            (needle.isEmpty() || "${g.name} ${g.description} ${g.topic}".lowercase().contains(needle))
+    }
+    val mine = found.filter { it.joined }
+    val others = found.filterNot { it.joined }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = contentPadding,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ScreenTitle(
+                    "Группы",
+                    "Вы в ${plural(state.myGroups.size, "группе", "группах", "группах")}",
+                    Modifier.weight(1f),
+                )
+                if (!creating) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .glass(CircleShape)
+                            .clickable { creating = true },
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(LineIcon.Plus, Palette.Lilac, size = 22.dp) }
+                }
+            }
+        }
+
+        if (creating) {
+            item { CreateGroupCard(vm, onClose = { creating = false }) }
+        }
+
+        item {
+            GlassField(
+                query, { query = it.take(40) }, "Поиск групп",
+                singleLine = true,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth()
+                    .glass(RoundedCornerShape(50)),
+            )
+        }
+        item {
+            TopicChips(
+                selected = topic,
+                onSelect = { topic = if (topic == it) null else it },
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
+
+        if (found.isEmpty()) {
+            item {
+                Text(
+                    "Ничего не нашли. Создайте свою группу — кнопкой «+» вверху.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Mist,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                )
+            }
+        }
+        if (mine.isNotEmpty()) {
+            item { SectionTitle("Мои группы") }
+            items(mine, key = { it.id }) { GroupRow(it, onOpen = { vm.openGroup(it.id) }, onToggle = { vm.toggleGroup(it.id) }) }
+        }
+        if (others.isNotEmpty()) {
+            item { SectionTitle(if (needle.isEmpty() && topic == null) "Рекомендуем" else "Найдено") }
+            items(others, key = { it.id }) { GroupRow(it, onOpen = { vm.openGroup(it.id) }, onToggle = { vm.toggleGroup(it.id) }) }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = Palette.Mist,
+        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun GroupRow(group: Group, onOpen: () -> Unit, onToggle: () -> Unit) {
+    GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Nebula(group.seed, Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(group.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "${group.topic} · ${plural(group.members, "участник", "участника", "участников")}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Mist,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            when {
+                group.mine -> Text("ВАША", style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
+                group.joined -> GhostButton("Вы в группе", onClick = onToggle)
+                else -> GlowButton("Вступить", onClick = onToggle)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun TopicChips(selected: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GROUP_TOPICS.forEach { t ->
+            val active = t == selected
+            Text(
+                t,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (active) Palette.Ink else Palette.Lilac,
+                modifier = Modifier
+                    .glass(RoundedCornerShape(50), strong = active)
+                    .clickable { onSelect(t) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+/** Форма новой группы: название, описание, тема. */
+@Composable
+private fun CreateGroupCard(vm: AppViewModel, onClose: () -> Unit) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var description by rememberSaveable { mutableStateOf("") }
+    var topic by rememberSaveable { mutableStateOf(GROUP_TOPICS.first()) }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("НОВАЯ ГРУППА", style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
+            GlassField(
+                name, { name = it.take(40); error = null }, "Название",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp)),
+            )
+            GlassField(
+                description, { description = it.take(300) }, "О чём группа",
+                maxLines = 4,
+                modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp)),
+            )
+            Text("Тема", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+            TopicChips(selected = topic, onSelect = { topic = it })
+            error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
+            Spacer(Modifier.height(2.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GhostButton("Отмена", onClick = onClose)
+                GlowButton("Создать", enabled = name.isNotBlank(), onClick = {
+                    error = vm.createGroup(name, description, topic)
+                    if (error == null) onClose()
+                })
+            }
+        }
+    }
+}

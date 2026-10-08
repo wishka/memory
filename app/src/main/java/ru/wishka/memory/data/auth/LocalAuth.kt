@@ -1,5 +1,7 @@
 package ru.wishka.memory.data.auth
 
+import ru.wishka.memory.data.ProfileInfo
+
 /**
  * Хранилище «ключ → строка». На телефоне — SharedPreferences с
  * шифрованием сессии (SecurePrefs), в тестах — обычная карта.
@@ -10,8 +12,8 @@ interface KeyValueStore {
     fun remove(key: String)
 }
 
-/** Аккаунт на этом устройстве. */
-data class Account(val username: String, val displayName: String)
+/** Аккаунт на этом устройстве и то, что человек рассказал о себе. */
+data class Account(val username: String, val displayName: String, val info: ProfileInfo = ProfileInfo())
 
 sealed class AuthResult {
     data class Ok(val account: Account) : AuthResult()
@@ -97,6 +99,16 @@ class LocalAuth(
         if (name.isNotEmpty()) store.put(key(normalize(username), "name"), name.take(40))
     }
 
+    /** Сведения профиля: переживают перезапуск вместе с аккаунтом. */
+    fun saveProfile(username: String, info: ProfileInfo) {
+        val login = normalize(username)
+        store.put(key(login, "p.bio"), info.bio.trim().take(160))
+        store.put(key(login, "p.city"), info.city.trim().take(40))
+        store.put(key(login, "p.birthday"), info.birthday.trim().take(20))
+        store.put(key(login, "p.website"), info.website.trim().take(80))
+        store.put(key(login, "p.interests"), info.interests.joinToString("|"))
+    }
+
     /** Демо-аккаунт для первого знакомства с приложением; ничего не делает, если он уже есть. */
     fun ensureDemoAccount() {
         if (store.get(key(DEMO_LOGIN, "hash")) != null) return
@@ -115,7 +127,14 @@ class LocalAuth(
 
     private fun account(login: String): Account? {
         if (store.get(key(login, "hash")) == null) return null
-        return Account(login, store.get(key(login, "name")) ?: login)
+        val info = ProfileInfo(
+            bio = store.get(key(login, "p.bio")).orEmpty(),
+            city = store.get(key(login, "p.city")).orEmpty(),
+            birthday = store.get(key(login, "p.birthday")).orEmpty(),
+            website = store.get(key(login, "p.website")).orEmpty(),
+            interests = store.get(key(login, "p.interests")).orEmpty().split('|').filter { it.isNotBlank() },
+        )
+        return Account(login, store.get(key(login, "name")) ?: login, info)
     }
 
     private fun registerFailure(login: String, now: Long) {

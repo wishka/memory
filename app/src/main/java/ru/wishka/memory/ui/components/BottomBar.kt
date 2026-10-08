@@ -33,8 +33,13 @@ import ru.wishka.memory.ui.Tab
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Нижняя панель: парящая стеклянная «капсула» с четырьмя вкладками —
- * Лента · Истории · Чаты · Профиль. Выбранная вкладка светится сиренью, под ней
+ * Нижняя панель: парящая «капсула» с шестью вкладками —
+ * Лента · Истории · Reels · Чаты · Группы · Профиль.
+ *
+ * Почти непрозрачная: под ней прокручивается лента, и сквозь слишком
+ * прозрачное стекло текст записей мешал читать значки. Подпись видна
+ * только у выбранной вкладки — шесть подписей на узком экране не
+ * помещаются, а значки и так узнаваемы. Выбранная вкладка светится сиренью, под ней
  * короткая светящаяся черта. На «Чатах» — счётчик непрочитанных.
  */
 @Composable
@@ -42,7 +47,9 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .background(Palette.Night.copy(alpha = 0.92f))
             .glass(RoundedCornerShape(28.dp), strong = true)
             .height(68.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -78,7 +85,9 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                         when (tab) {
                             Tab.Feed -> LineIcon.Feed
                             Tab.Stories -> LineIcon.Stories
+                            Tab.Reels -> LineIcon.Reels
                             Tab.Chats -> LineIcon.Chats
+                            Tab.Groups -> LineIcon.Groups
                             Tab.Profile -> LineIcon.Profile
                         },
                         tint,
@@ -96,12 +105,15 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                         }
                     }
                 }
-                Text(
-                    tab.title.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = tint,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+                if (active) {
+                    Text(
+                        tab.title.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tint,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .padding(top = 4.dp)

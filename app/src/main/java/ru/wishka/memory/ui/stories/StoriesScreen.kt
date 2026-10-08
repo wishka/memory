@@ -1,7 +1,8 @@
 package ru.wishka.memory.ui.stories
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,9 +74,12 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     items(state.followedPeople, key = { it.id }) { person ->
-                        StoryRing(person, active = selected == null || selected == person.id) {
-                            only = if (selected == person.id) null else person.id
-                        }
+                        StoryRing(
+                            person,
+                            active = selected == null || selected == person.id,
+                            onClick = { only = if (selected == person.id) null else person.id },
+                            onLongClick = { vm.openPerson(person.id) },
+                        )
                     }
                 }
             }
@@ -110,20 +114,25 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                 onLike = { vm.toggleLike(post.id) },
                 following = true,
                 onFollow = { vm.toggleFollow(post.author.id) },
+                onAuthor = { vm.openPerson(post.author.id) },
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-/** Аватар в кольце-градиенте, как у историй; неактивные приглушены. */
+/**
+ * Аватар в кольце-градиенте, как у историй; неактивные приглушены.
+ * Нажатие — записи только этого человека, долгое нажатие — его страница.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StoryRing(person: User, active: Boolean, onClick: () -> Unit) {
+private fun StoryRing(person: User, active: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(72.dp)
             .alpha(if (active) 1f else 0.45f)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(

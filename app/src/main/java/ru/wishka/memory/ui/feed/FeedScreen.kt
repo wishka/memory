@@ -75,6 +75,7 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 onLike = { vm.toggleLike(post.id) },
                 following = if (post.author.id == state.me.id) null else post.author.id in state.following,
                 onFollow = { vm.toggleFollow(post.author.id) },
+                onAuthor = { vm.openPerson(post.author.id) },
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
@@ -113,10 +114,24 @@ private fun Composer(onPublish: (String) -> Unit) {
  * нет), true / false — подписан ли человек на автора.
  */
 @Composable
-fun PostCard(post: Post, onLike: () -> Unit, following: Boolean? = null, onFollow: () -> Unit = {}) {
+fun PostCard(
+    post: Post,
+    onLike: () -> Unit,
+    following: Boolean? = null,
+    onFollow: () -> Unit = {},
+    /** Нажатие на аватар или имя — страница автора; null — не кликается. */
+    onAuthor: (() -> Unit)? = null,
+) {
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .then(if (onAuthor != null) Modifier.clickable(onClick = onAuthor) else Modifier),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                 Avatar(post.author, size = 40.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -126,6 +141,7 @@ fun PostCard(post: Post, onLike: () -> Unit, following: Boolean? = null, onFollo
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Mist,
                     )
+                }
                 }
                 if (following != null) {
                     if (following) GhostButton("Вы подписаны", onClick = onFollow)
