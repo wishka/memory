@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Версия и ключи подписи приходят из окружения: их задают workflow
+// (.github/workflows). Локальная сборка без переменных получает версию
+// 0.1.0 (код 1), отладочную подпись, а release собирается неподписанным.
 fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
 
 android {
@@ -18,11 +21,39 @@ android {
         versionName = env("VERSION_NAME") ?: "0.1.0"
     }
 
+    signingConfigs {
+        // Общий ключ разработки: с ним dev-сборки из CI ставятся поверх
+        // друг друга. Файл и пароль — из секретов окружения dev
+        // (.github/workflows/dev-build.yml). Без них — обычный отладочный
+        // ключ машины, на которой идёт сборка.
+        env("DEV_KEYSTORE_PATH")?.let { path ->
+            create("dev") {
+                storeFile = file(path)
+                storePassword = env("DEV_KEYSTORE_PASSWORD")
+                keyAlias = env("DEV_KEY_ALIAS") ?: "dev"
+                keyPassword = env("DEV_KEYSTORE_PASSWORD")
+            }
+        }
+        // Ключ выпуска — один на всю жизнь приложения: потерянный ключ
+        // означает, что обновления больше не встанут поверх установленной
+        // версии. Файл и пароли — из секретов окружения production.
+        env("ANDROID_KEYSTORE_PATH")?.let { path ->
+            create("release") {
+                storeFile = file(path)
+                storePassword = env("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = env("ANDROID_KEY_ALIAS")
+                keyPassword = env("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
+            signingConfigs.findByName("dev")?.let { signingConfig = it }
         }
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
