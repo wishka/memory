@@ -1,0 +1,17 @@
+# Gradle и Android Studio
+.gradle/
+build/
+/app/build/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Ключи подписи — никогда в репозиторий
+*.jks
+*.keystore
+keystore.properties
+
+.DS_Store

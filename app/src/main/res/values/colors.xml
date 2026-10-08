@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Палитра Memory (см. ui/theme/Color.kt) -->
+    <color name="void_black">#FF07081A</color>
+    <color name="night">#FF0F153A</color>
+    <color name="lilac">#FFBC92CD</color>
+</resources>

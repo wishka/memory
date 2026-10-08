@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ сам показывает заставку со значком. Значок делаем
+         прозрачным, фон — цветом заставки Memory: системная заставка
+         превращается в тёмный кадр, а затем начинается своя — со словом
+         MEMORY, рассыпающимся на атомы (ui/splash/AtomSplash.kt). -->
+    <style name="Theme.Memory" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/void_black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground">@color/void_black</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/transparent</item>
+    </style>
+</resources>
