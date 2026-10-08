@@ -76,7 +76,7 @@ fun CosmicBackground(modifier: Modifier = Modifier) {
 fun Modifier.glass(shape: Shape = RoundedCornerShape(22.dp), strong: Boolean = false): Modifier =
     this
         .clip(shape)
-        .background(Palette.Plum.copy(alpha = if (strong) 0.62f else 0.38f))
+        .background(Palette.Plum.copy(alpha = if (strong) 0.7f else 0.38f))
         .border(
             1.dp,
             Brush.linearGradient(listOf(Palette.Lilac.copy(alpha = 0.38f), Palette.Sky.copy(alpha = 0.12f))),

@@ -1,6 +1,10 @@
 package ru.wishka.memory.data
 
-/** Человек в Memory. hue — 0..1, оттенок его аватара-градиента. */
+/**
+ * Человек в Memory. hue — 0..1, оттенок его аватара-градиента.
+ * followers / followingCount — числа для карточки; у «себя» подписки
+ * считаются по настоящему списку.
+ */
 data class User(
     val id: Int,
     val name: String,
@@ -8,6 +12,15 @@ data class User(
     val bio: String = "",
     val hue: Float = 0.5f,
     val online: Boolean = false,
+    val city: String = "",
+    /** «14 марта» — без года: возраст человек раскрывает сам, если хочет. */
+    val birthday: String = "",
+    val website: String = "",
+    val interests: List<String> = emptyList(),
+    /** «сентябрь 2026» */
+    val joined: String = "",
+    val followers: Int = 0,
+    val followingCount: Int = 0,
 ) {
     val initials: String
         get() = name.split(' ').filter { it.isNotBlank() }.take(2)
@@ -66,3 +79,45 @@ fun plural(n: Int, one: String, few: String, many: String): String {
     }
     return "$n $word"
 }
+
+/** Группа по интересам. seed — обложка (процедурная туманность). */
+data class Group(
+    val id: Int,
+    val name: String,
+    val description: String,
+    val topic: String,
+    val members: Int,
+    val seed: Int,
+    val joined: Boolean = false,
+    val mine: Boolean = false,
+    val posts: List<Post> = emptyList(),
+)
+
+/** Темы групп — для создания и поиска. */
+val GROUP_TOPICS = listOf("Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт")
+
+/**
+ * Короткое вертикальное видео. Пока сервера и загрузки видео нет, «кадр»
+ * рисуется анимацией (см. ReelArt) по seed — один и тот же Reels всегда
+ * выглядит одинаково.
+ */
+data class Reel(
+    val id: Long,
+    val author: User,
+    val caption: String,
+    val music: String,
+    val seed: Int,
+    val likes: Int,
+    val comments: Int,
+    val liked: Boolean = false,
+    val durationMs: Int = 9_000,
+)
+
+/** То, что человек рассказывает о себе в профиле. Сохраняется вместе с аккаунтом. */
+data class ProfileInfo(
+    val bio: String = "",
+    val city: String = "",
+    val birthday: String = "",
+    val website: String = "",
+    val interests: List<String> = emptyList(),
+)

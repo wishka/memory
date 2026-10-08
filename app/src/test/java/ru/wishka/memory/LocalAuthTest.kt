@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.auth.AuthResult
 import ru.wishka.memory.data.auth.KeyValueStore
 import ru.wishka.memory.data.auth.LocalAuth
@@ -91,6 +92,11 @@ class LocalAuthTest {
     fun renameSurvivesRestart() {
         auth().register("alex", "Алекс", "secret123", "secret123")
         auth().rename("alex", "Александр")
-        assertEquals("Александр", auth().current()?.displayName)
+        auth().saveProfile("alex", ProfileInfo(bio = "Привет", city = "Тверь", interests = listOf("Фото", "Книги")))
+        val restored = auth().current()!!
+        assertEquals("Александр", restored.displayName)
+        assertEquals("Тверь", restored.info.city)
+        assertEquals("Привет", restored.info.bio)
+        assertEquals(listOf("Фото", "Книги"), restored.info.interests)
     }
 }
