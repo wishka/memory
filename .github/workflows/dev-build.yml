@@ -35,9 +35,6 @@ jobs:
     permissions:
       contents: write
     env:
-      # Код версии растёт с каждым запуском: телефон ставит сборку только
-      # поверх более старой
-      VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: dev-${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +43,11 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+
+      - name: Версия
+        # Код версии — от времени сборки: растёт всегда, поэтому dev- и
+        # демо-сборки встают поверх друг друга в любом порядке
+        run: echo "VERSION_CODE=$(( $(date +%s) / 10 ))" >> "$GITHUB_ENV"
 
       - name: Ключ разработки
         env:

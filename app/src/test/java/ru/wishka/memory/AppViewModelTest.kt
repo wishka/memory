@@ -62,6 +62,34 @@ class AppViewModelTest {
     }
 
     @Test
+    fun storiesShowOnlyFollowed() {
+        val vm = AppViewModel()
+        val s = vm.state.value
+        assertTrue(s.stories.isNotEmpty())
+        assertTrue(s.stories.all { it.author.id in s.following })
+        // Подписка на Марка (3) добавляет его записи, отписка — убирает
+        assertFalse(s.stories.any { it.author.id == 3 })
+        vm.toggleFollow(3)
+        assertTrue(vm.state.value.stories.any { it.author.id == 3 })
+        vm.toggleFollow(3)
+        assertFalse(vm.state.value.stories.any { it.author.id == 3 })
+        // На себя подписаться нельзя
+        vm.toggleFollow(vm.state.value.me.id)
+        assertFalse(vm.state.value.me.id in vm.state.value.following)
+    }
+
+    @Test
+    fun accountNameAndReset() {
+        val vm = AppViewModel()
+        vm.setAccount("vera.moon", "Вера")
+        vm.publish("Привет")
+        assertEquals("Вера", vm.state.value.myPosts.first().author.name)
+        assertEquals("vera.moon", vm.state.value.me.handle)
+        vm.reset()
+        assertTrue(vm.state.value.myPosts.isEmpty())
+    }
+
+    @Test
     fun texts() {
         assertEquals("5 мин", agoTitle(5))
         assertEquals("2 ч", agoTitle(125))

@@ -19,6 +19,7 @@ import java.time.format.DateTimeFormatter
 /** Вкладки нижней панели — в порядке слева направо. */
 enum class Tab(val title: String) {
     Feed("Лента"),
+    Stories("Истории"),
     Chats("Чаты"),
     Profile("Профиль"),
 }
@@ -31,10 +32,15 @@ data class UiState(
     /** Открытая переписка поверх вкладки «Чаты»; null — список чатов. */
     val openChatId: Int? = null,
     val notifications: Boolean = true,
+    /** На кого подписан человек: их записи — во вкладке «Истории». */
+    val following: Set<Int> = Demo.following,
 ) {
     val openChat: Chat? get() = chats.firstOrNull { it.id == openChatId }
     val unreadTotal: Int get() = chats.sumOf { it.unread }
     val myPosts: List<Post> get() = posts.filter { it.author.id == me.id }
+    /** «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте. */
+    val stories: List<Post> get() = posts.filter { it.author.id in following }
+    val followedPeople: List<User> get() = Demo.people.filter { it.id in following }
 }
 
 /**
@@ -86,6 +92,14 @@ class AppViewModel : ViewModel() {
         if (trimmed.isEmpty()) return
         _state.update { s ->
             s.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0)) + s.posts)
+        }
+    }
+
+    /** Подписаться или отписаться: записи человека появятся в «Историях» или уйдут оттуда. */
+    fun toggleFollow(userId: Int) {
+        if (userId == _state.value.me.id) return
+        _state.update { s ->
+            s.copy(following = if (userId in s.following) s.following - userId else s.following + userId)
         }
     }
 
@@ -143,6 +157,22 @@ class AppViewModel : ViewModel() {
     }
 
     // ==================== ПРОФИЛЬ ====================
+
+    /**
+     * Вошедший человек: его имя и логин — в профиле и в его записях.
+     * Демо-данные остаются общими, поэтому номер у «себя» всегда тот же.
+     */
+    fun setAccount(username: String, displayName: String) {
+        _state.update { s ->
+            val me = s.me.copy(name = displayName, handle = username)
+            s.copy(me = me, posts = s.posts.map { if (it.author.id == me.id) it.copy(author = me) else it })
+        }
+    }
+
+    /** После выхода состояние сбрасывается: следующий вошедший не увидит чужие черновики и переписку. */
+    fun reset() {
+        _state.value = UiState()
+    }
 
     fun updateProfile(name: String, bio: String) {
         val newName = name.trim().ifEmpty { return }
