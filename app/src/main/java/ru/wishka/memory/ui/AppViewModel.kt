@@ -16,11 +16,21 @@ import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.Prism
 import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.Comment
+import ru.wishka.memory.data.ReplyRef
 import ru.wishka.memory.data.Message
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.User
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+
+/** Разделы профиля за счётчиками: записи, подписчики, подписки, группы, сохранённое. */
+enum class ProfileSection(val title: String) {
+    Posts("Записи"),
+    Followers("Подписчики"),
+    Following("Подписки"),
+    Groups("Группы"),
+    Saved("Сохранённое"),
+}
 
 /** Вкладки нижней панели — в порядке слева направо. */
 enum class Tab(val title: String) {
@@ -49,6 +59,10 @@ data class UiState(
     val commentsPrismId: Long? = null,
     /** Фото или видео на весь экран; null — не открыто. */
     val viewing: Attachment? = null,
+    /** Раздел профиля поверх вкладки «Профиль»; null — сам профиль. */
+    val profileSection: ProfileSection? = null,
+    /** Переписка, из которой открыли страницу человека: «назад» вернёт в неё. */
+    val returnToChatId: Int? = null,
     /** PRISM, с которого открыть вкладку (из «Сохранённого»); null — с первого. */
     val prismStartId: Long? = null,
     val groups: List<Group> = Demo.groups,
@@ -67,6 +81,8 @@ data class UiState(
     /** «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте. */
     val stories: List<Post> get() = posts.filter { it.author.id in following }
     val followedPeople: List<User> get() = Demo.people.filter { it.id in following }
+    /** Кто подписан на вас (пока — демо-люди). */
+    val followers: List<User> get() = Demo.people.filter { it.id in Demo.followers }
     /** «Сохранённое» в профиле: PRISM в закладках. */
     val savedPrisms: List<Prism> get() = prisms.filter { it.saved }
     /** Запись по номеру — в ленте или в группе: для обсуждения. */
@@ -103,21 +119,39 @@ class AppViewModel(
                 openChatId = if (tab == Tab.Chats) it.openChatId else null,
                 openGroupId = if (tab == Tab.Groups) it.openGroupId else null,
                 openPersonId = null,
+                returnToChatId = null,
+                // Нажатие на «Профиль» внизу всегда ведёт на сам профиль
+                profileSection = null,
             )
         }
     }
 
-    /** Страница автора. Своё имя ведёт в «Профиль». */
+    /** Раздел профиля: нажатие на «записи», «подписчики», «подписки», «группы» или «Сохранённое». */
+    fun openProfileSection(section: ProfileSection) {
+        _state.update { it.copy(tab = Tab.Profile, profileSection = section, openPersonId = null) }
+    }
+
+    fun closeProfileSection() {
+        _state.update { it.copy(profileSection = null) }
+    }
+
+    /**
+     * Страница автора. Своё имя ведёт в «Профиль». Из переписки страница
+     * открывается сразу поверх неё, а «назад» возвращает в переписку.
+     */
     fun openPerson(userId: Int) {
         if (userId == _state.value.me.id) {
             selectTab(Tab.Profile)
             return
         }
-        _state.update { it.copy(openPersonId = userId) }
+        _state.update {
+            if (it.openChatId != null) it.copy(openPersonId = userId, returnToChatId = it.openChatId, openChatId = null)
+            else it.copy(openPersonId = userId)
+        }
     }
 
     fun closePerson() {
-        _state.update { it.copy(openPersonId = null) }
+        _state.update { it.copy(openPersonId = null, openChatId = it.returnToChatId ?: it.openChatId, returnToChatId = null) }
     }
 
     /**
@@ -132,6 +166,7 @@ class AppViewModel(
             s.openChatId != null -> { closeChat(); true }
             s.openPersonId != null -> { closePerson(); true }
             s.openGroupId != null -> { closeGroup(); true }
+            s.profileSection != null -> { closeProfileSection(); true }
             s.tab != Tab.Feed -> { selectTab(Tab.Feed); true }
             else -> false
         }
@@ -220,6 +255,8 @@ class AppViewModel(
             s.copy(
                 tab = Tab.Chats,
                 openChatId = id,
+                // Страница человека остаётся под перепиской: «назад» вернёт на неё
+                returnToChatId = null,
                 chats = s.chats.map { if (it.id == id) it.copy(unread = 0) else it },
             )
         }
@@ -246,10 +283,13 @@ class AppViewModel(
      * Отправка. В демо собеседник «печатает» и через пару секунд отвечает —
      * чтобы переписку можно было почувствовать без сервера.
      */
-    fun send(chatId: Int, text: String, attachments: List<Attachment> = emptyList()) {
+    fun send(chatId: Int, text: String, attachments: List<Attachment> = emptyList(), replyTo: ReplyRef? = null) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() && attachments.isEmpty()) return
-        append(chatId, Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA)))
+        append(
+            chatId,
+            Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA), replyTo = replyTo),
+        )
         if (!demoReplies) return
         viewModelScope.launch {
             delay(700)
@@ -275,6 +315,31 @@ class AppViewModel(
             })
         }
         if (forEveryone) deletedForEveryone += messageId
+    }
+
+    /** Цитата для ответа на сообщение: автор и начало текста (или что приложено). */
+    fun replyRef(chatId: Int, message: Message): ReplyRef {
+        val chat = _state.value.chats.firstOrNull { it.id == chatId }
+        val author = if (message.fromMe) _state.value.me.name else chat?.peer?.name.orEmpty()
+        return ReplyRef(message.id, author, messagePreview(message).take(120))
+    }
+
+    /**
+     * Переслать сообщение в другую переписку: текст и вложения уходят от
+     * вашего имени с пометкой, чьё оно было. Пересланное открывается в
+     * переписке-получателе.
+     */
+    fun forward(fromChatId: Int, messageId: Long, toChatId: Int) {
+        val s = _state.value
+        val from = s.chats.firstOrNull { it.id == fromChatId } ?: return
+        val original = from.messages.firstOrNull { it.id == messageId } ?: return
+        if (s.chats.none { it.id == toChatId }) return
+        val author = original.forwardedFrom ?: if (original.fromMe) s.me.name else from.peer.name
+        append(
+            toChatId,
+            Message(nextId++, fromMe = true, text = original.text, time = now(), attachments = original.attachments, forwardedFrom = author),
+        )
+        openChat(toChatId)
     }
 
     /** Какие сообщения удалены «у всех» — для будущей отправки на сервер. */
@@ -342,8 +407,15 @@ class AppViewModel(
 
     // ==================== ГРУППЫ ====================
 
+    /** Группа поверх вкладки; из раздела профиля «назад» вернёт в него. */
     fun openGroup(groupId: Int) {
-        _state.update { it.copy(tab = Tab.Groups, openGroupId = groupId, openPersonId = null) }
+        _state.update {
+            it.copy(
+                tab = if (it.tab == Tab.Profile && it.profileSection != null) it.tab else Tab.Groups,
+                openGroupId = groupId,
+                openPersonId = null,
+            )
+        }
     }
 
     fun closeGroup() {
@@ -368,7 +440,7 @@ class AppViewModel(
         if (_state.value.groups.any { it.name.equals(title, ignoreCase = true) }) return "Группа «$title» уже есть"
         val id = (_state.value.groups.maxOfOrNull { it.id } ?: 0) + 1
         val group = Group(
-            id, title, description.trim(), topic.ifBlank { GROUP_TOPICS.first() },
+            id, title, description.trim(), topic.ifBlank { GROUP_TOPICS.last() },
             members = 1, seed = 100 + id, joined = true, mine = true,
         )
         _state.update { s -> s.copy(groups = listOf(group) + s.groups) }
@@ -476,6 +548,20 @@ class AppViewModel(
     companion object {
         /** Сколько фото и видео можно приложить к одной записи или сообщению. */
         const val MAX_MEDIA = 10
+    }
+}
+
+/** Текст сообщения для списков и цитат; без текста — что приложено. */
+fun messagePreview(message: Message): String {
+    if (message.text.isNotEmpty()) return message.text
+    val a = message.attachments
+    return when {
+        a.isEmpty() -> ""
+        a.all { it.kind == ru.wishka.memory.data.MediaKind.Photo } -> if (a.size == 1) "Фото" else "${a.size} фото"
+        a.all { it.kind == ru.wishka.memory.data.MediaKind.Video } -> if (a.size == 1) "Видео" else "${a.size} видео"
+        a.all { it.kind == ru.wishka.memory.data.MediaKind.Document } ->
+            a.singleOrNull()?.name?.ifEmpty { null } ?: ru.wishka.memory.data.plural(a.size, "файл", "файла", "файлов")
+        else -> ru.wishka.memory.data.plural(a.size, "вложение", "вложения", "вложений")
     }
 }
 

@@ -239,6 +239,65 @@ final class AppModelTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    func testPersonFromChatOpensAtOnceAndBackReturnsToChat() throws {
+        let vm = AppModel()
+        let chat = try XCTUnwrap(vm.state.chats.first)
+        vm.openChat(chat.id)
+        vm.openPerson(chat.peer.id)
+        // Страница человека сразу на экране — переписка её не закрывает
+        XCTAssertNil(vm.state.openChat)
+        XCTAssertEqual(vm.state.openPerson?.id, chat.peer.id)
+        XCTAssertTrue(vm.back())
+        XCTAssertEqual(vm.state.openChatId, chat.id)
+        XCTAssertNil(vm.state.openPersonId)
+    }
+
+    func testReplyAndForward() throws {
+        let vm = AppModel(demoReplies: false)
+        let chat = try XCTUnwrap(vm.state.chats.first)
+        let original = try XCTUnwrap(chat.messages.first { !$0.fromMe })
+        let ref = vm.replyRef(chat.id, original)
+        XCTAssertEqual(ref.author, chat.peer.name)
+        vm.send(chat.id, "Отвечаю", replyTo: ref)
+        let reply = try XCTUnwrap(vm.state.chats.first { $0.id == chat.id }?.messages.last)
+        XCTAssertEqual(reply.replyTo?.messageId, original.id)
+        // Переслать в другую переписку — с пометкой автора, и она откроется
+        let target = try XCTUnwrap(vm.state.chats.first { $0.id != chat.id })
+        vm.forward(chat.id, original.id, to: target.id)
+        let forwarded = try XCTUnwrap(vm.state.chats.first { $0.id == target.id }?.messages.last)
+        XCTAssertEqual(forwarded.text, original.text)
+        XCTAssertEqual(forwarded.forwardedFrom, chat.peer.name)
+        XCTAssertTrue(forwarded.fromMe)
+        XCTAssertEqual(vm.state.openChatId, target.id)
+    }
+
+    func testProfileSectionsAndBack() throws {
+        let vm = AppModel()
+        XCTAssertFalse(vm.state.followers.isEmpty)
+        vm.openProfileSection(.groups)
+        XCTAssertEqual(vm.state.tab, .profile)
+        // Группа из раздела профиля: «назад» — снова в раздел
+        let group = try XCTUnwrap(vm.state.myGroups.first)
+        vm.openGroup(group.id)
+        XCTAssertEqual(vm.state.tab, .profile)
+        XCTAssertTrue(vm.back())
+        XCTAssertEqual(vm.state.profileSection, .groups)
+        XCTAssertTrue(vm.back())
+        XCTAssertNil(vm.state.profileSection)
+        // Другая вкладка — раздел закрывается
+        vm.openProfileSection(.saved)
+        vm.selectTab(.feed)
+        XCTAssertNil(vm.state.profileSection)
+    }
+
+    /// Старый файл без ответов и пересылок читается: новые поля необязательные.
+    func testOldMessagesStillDecode() throws {
+        let json = #"{"id": 1, "fromMe": true, "text": "Привет", "time": "10:00", "attachments": []}"#
+        let message = try JSONDecoder().decode(Message.self, from: Data(json.utf8))
+        XCTAssertNil(message.replyTo)
+        XCTAssertNil(message.forwardedFrom)
+    }
+
     func testOverlaysCloseFirstOnBack() throws {
         let vm = AppModel()
         let post = try XCTUnwrap(vm.state.posts.first)

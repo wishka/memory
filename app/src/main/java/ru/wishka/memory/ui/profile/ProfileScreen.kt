@@ -36,11 +36,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import ru.wishka.memory.data.GROUP_TOPICS
 import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.User
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.FadeLine
@@ -61,7 +61,10 @@ import ru.wishka.memory.ui.prism.PrismArt
 import ru.wishka.memory.ui.theme.Palette
 
 /** Интересы на выбор в профиле: темы групп и ещё несколько. */
-private val INTERESTS = GROUP_TOPICS + listOf("Астрономия", "Кулинария", "Наука", "Игры")
+private val INTERESTS = listOf(
+    "Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт",
+    "Астрономия", "Кулинария", "Наука", "Игры", "Дизайн", "Танцы", "Театр", "Технологии",
+)
 
 /**
  * Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе,
@@ -134,11 +137,12 @@ fun ProfileScreen(
                         }
                         Spacer(Modifier.height(6.dp))
                         FadeLine()
+                        // Счётчики — кнопки: каждый открывает свой раздел
                         Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                            Stat(state.myPosts.size, "записи", Modifier.weight(1f))
-                            Stat(128, "подписчики", Modifier.weight(1f))
-                            Stat(state.following.size, "подписки", Modifier.weight(1f))
-                            Stat(state.myGroups.size, "группы", Modifier.weight(1f))
+                            StatButton(state.myPosts.size, "записи", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Posts) }
+                            StatButton(state.followers.size, "подписчики", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Followers) }
+                            StatButton(state.following.size, "подписки", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Following) }
+                            StatButton(state.myGroups.size, "группы", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Groups) }
                         }
                     }
                 }
@@ -165,66 +169,15 @@ fun ProfileScreen(
             }
         }
 
-        if (state.myGroups.isNotEmpty()) {
-            item { SectionTitle("Мои группы · ${state.myGroups.size}") }
-            item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(state.myGroups, key = { it.id }) { g ->
-                        Column(
-                            modifier = Modifier
-                                .width(96.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { vm.openGroup(g.id) },
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Nebula(g.seed, Modifier.size(80.dp).clip(RoundedCornerShape(18.dp)))
-                            Text(
-                                g.name, style = MaterialTheme.typography.labelLarge, color = Palette.Ink,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        if (state.savedPrisms.isNotEmpty()) {
-            item { SectionTitle("Сохранённое · ${state.savedPrisms.size}") }
-            item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(state.savedPrisms, key = { it.id }) { p ->
-                        Column(
-                            modifier = Modifier
-                                .width(96.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { vm.openPrism(p.id) },
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                PrismArt(p.seed, 1_500L, Modifier.width(96.dp).height(150.dp).clip(RoundedCornerShape(16.dp)))
-                                Glyph(LineIcon.Play, Palette.Ink, size = 26.dp)
-                            }
-                            Text(
-                                p.caption, style = MaterialTheme.typography.labelLarge, color = Palette.Ink,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        if (state.followedPeople.isNotEmpty()) {
-            item { SectionTitle("Подписки · ${state.followedPeople.size}") }
-            item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(state.followedPeople, key = { it.id }) { person -> PersonChip(person) { vm.openPerson(person.id) } }
-                }
-            }
-        }
-
         item {
             GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                 Column {
+                    Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Saved) }) {
+                        SettingRow(LineIcon.Bookmark, "Сохранённое") {
+                            Text("${state.savedPrisms.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                        }
+                    }
+                    FadeLine(Modifier.padding(horizontal = 16.dp))
                     SettingRow(LineIcon.Bell, "Уведомления") {
                         Switch(
                             checked = state.notifications,
@@ -250,25 +203,21 @@ fun ProfileScreen(
             }
         }
 
-        item { SectionTitle(if (state.myPosts.isEmpty()) "Мои записи" else "Мои записи · ${state.myPosts.size}") }
-        if (state.myPosts.isEmpty()) {
-            item {
-                Text(
-                    "Пока ни одной. Поделитесь первым моментом во вкладке «Лента».",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Palette.Mist,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
-            }
-        }
-        items(state.myPosts, key = { it.id }) { post ->
-            PostCard(
-                post,
-                onLike = { vm.toggleLike(post.id) },
-                onComments = { vm.openComments(post.id) },
-                onOpenMedia = vm::openMedia,
-            )
-        }
+        item { Spacer(Modifier.height(8.dp)) }
+    }
+}
+
+/** Счётчик профиля, который можно нажать. */
+@Composable
+private fun StatButton(value: Int, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Stat(value, label)
     }
 }
 
@@ -282,19 +231,6 @@ private fun SectionTitle(text: String) {
     )
 }
 
-@Composable
-private fun PersonChip(person: User, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier.width(68.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Avatar(person, size = 56.dp, showOnline = true)
-        Text(
-            person.name.substringBefore(' '), style = MaterialTheme.typography.labelLarge, color = Palette.Ink,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
-        )
-    }
-}
 
 @Composable
 private fun SettingRow(icon: LineIcon, title: String, trailing: @Composable () -> Unit) {

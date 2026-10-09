@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import ru.wishka.memory.data.User
 import ru.wishka.memory.ui.theme.Palette
 
@@ -24,7 +25,14 @@ import ru.wishka.memory.ui.theme.Palette
 fun Stat(value: Int, label: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(compact(value), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink)
-        Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
+        // Разрядка меньше обычной: «ПОДПИСЧИКИ» помещается в одну строку
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.04.em),
+            color = Palette.Mist,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 

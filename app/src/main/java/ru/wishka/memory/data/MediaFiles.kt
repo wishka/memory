@@ -129,6 +129,29 @@ object MediaFiles {
     }
 
     /**
+     * «Поделиться» сообщением через системное меню: текст и вложения.
+     * Файлы отдаются по временному разрешению через FileProvider.
+     */
+    fun share(context: Context, text: String, attachments: List<Attachment>) {
+        val uris = ArrayList(attachments.map { File(it.path) }.filter { it.exists() }
+            .map { FileProvider.getUriForFile(context, authority(context), it) })
+        val intent = when {
+            uris.isEmpty() -> Intent(Intent.ACTION_SEND).setType("text/plain")
+            uris.size == 1 -> Intent(Intent.ACTION_SEND).setType(attachments.first().mime.ifEmpty { "*/*" })
+                .putExtra(Intent.EXTRA_STREAM, uris.first())
+            else -> Intent(Intent.ACTION_SEND_MULTIPLE).setType("*/*")
+                .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        }
+        if (text.isNotEmpty()) intent.putExtra(Intent.EXTRA_TEXT, text)
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        try {
+            context.startActivity(Intent.createChooser(intent, "Поделиться").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: ActivityNotFoundException) {
+            // Делиться некуда — ничего не делаем
+        }
+    }
+
+    /**
      * Уменьшенная картинка для ленты и чата: фото — с прореживанием при
      * чтении (полноразмерный снимок с камеры занял бы десятки мегабайт
      * памяти), видео — первый кадр. Вызывать не в главном потоке.

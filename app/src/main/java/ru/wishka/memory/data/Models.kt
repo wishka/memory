@@ -82,13 +82,26 @@ data class Post(
 fun minutesSince(createdAt: Long, minutesAgo: Int, now: Long = System.currentTimeMillis()): Int =
     if (createdAt > 0) ((now - createdAt) / 60_000).toInt().coerceAtLeast(0) else minutesAgo
 
-/** Сообщение; text может быть пустым, если отправлены только вложения. */
+/** На какое сообщение отвечают: номер, чьё оно и начало текста — для цитаты над ответом. */
+data class ReplyRef(
+    val messageId: Long,
+    val author: String,
+    val preview: String,
+)
+
+/**
+ * Сообщение; text может быть пустым, если отправлены только вложения.
+ * replyTo — ответ на другое сообщение; forwardedFrom — имя автора
+ * пересланного сообщения.
+ */
 data class Message(
     val id: Long,
     val fromMe: Boolean,
     val text: String,
     val time: String,
     val attachments: List<Attachment> = emptyList(),
+    val replyTo: ReplyRef? = null,
+    val forwardedFrom: String? = null,
 )
 
 data class Chat(
@@ -135,8 +148,15 @@ data class Group(
     val posts: List<Post> = emptyList(),
 )
 
-/** Темы групп — для создания и поиска. */
-val GROUP_TOPICS = listOf("Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт")
+/** Темы групп — для создания и поиска, по алфавиту. */
+val GROUP_TOPICS = listOf(
+    "Авто и мото", "Анимация и комиксы", "Архитектура", "Астрономия", "Бизнес", "Блогинг",
+    "Дизайн", "Дети и родители", "Дом и интерьер", "Еда и кулинария", "Животные", "Здоровье",
+    "Игры", "Иностранные языки", "Искусство", "История", "Кино", "Книги", "Красота и мода",
+    "Музыка", "Наука", "Образование", "Психология", "Природа", "Программирование", "Путешествия",
+    "Работа и карьера", "Рукоделие", "Сад и огород", "Спорт", "Танцы", "Театр", "Технологии",
+    "Фитнес", "Философия", "Финансы", "Фото", "Юмор", "Другое",
+)
 
 /**
  * PRISM — короткое вертикальное видео. Пока сервера и загрузки видео нет,

@@ -1,10 +1,14 @@
 import SwiftUI
 
-/// Интересы на выбор в профиле: темы групп и ещё несколько.
-private let interestOptions = groupTopics + ["Астрономия", "Кулинария", "Наука", "Игры"]
+/// Интересы на выбор в профиле.
+private let interestOptions = [
+    "Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт",
+    "Астрономия", "Кулинария", "Наука", "Игры", "Дизайн", "Танцы", "Театр", "Технологии",
+]
 
-/// Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе,
-/// интересы, группы и подписки, настройки и свои записи.
+/// Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе
+/// и настройки. Записи, подписчики, подписки, группы и сохранённое — на
+/// своих страницах: их открывают счётчики и строка «Сохранённое».
 struct ProfileScreen: View {
     let model: AppModel
     /// Имя и сведения — ещё и в сохранённый аккаунт, чтобы пережили перезапуск.
@@ -56,11 +60,12 @@ struct ProfileScreen: View {
                                 Text(me.bio).textStyle(.bodySmall, Palette.mist).multilineTextAlignment(.center)
                             }
                             FadeLine().padding(.top, 6)
+                            // Счётчики — кнопки: каждый открывает свой раздел
                             HStack {
-                                Stat(value: state.myPosts.count, label: "записи")
-                                Stat(value: 128, label: "подписчики")
-                                Stat(value: state.following.count, label: "подписки")
-                                Stat(value: state.myGroups.count, label: "группы")
+                                statButton(state.myPosts.count, "записи", .posts)
+                                statButton(state.followers.count, "подписчики", .followers)
+                                statButton(state.following.count, "подписки", .following)
+                                statButton(state.myGroups.count, "группы", .groups)
                             }
                             .padding(.top, 6)
                         }
@@ -89,87 +94,8 @@ struct ProfileScreen: View {
                     .cardPadding()
                 }
 
-                if !state.myGroups.isEmpty {
-                    SectionTitle(text: "Мои группы · \(state.myGroups.count)")
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(state.myGroups) { g in
-                                Button { model.openGroup(g.id) } label: {
-                                    VStack(spacing: 6) {
-                                        Nebula(seed: g.seed)
-                                            .frame(width: 80, height: 80)
-                                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                        Text(g.name).textStyle(.labelLarge).lineLimit(1)
-                                    }
-                                    .frame(width: 96)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-
-                if !state.savedPrisms.isEmpty {
-                    SectionTitle(text: "Сохранённое · \(state.savedPrisms.count)")
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(state.savedPrisms) { p in
-                                Button { model.openPrism(p.id) } label: {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        ZStack {
-                                            PrismArt(spec: PrismSpec(seed: p.seed), timeMs: 1_500)
-                                            Glyph(kind: .play, color: Palette.ink, size: 26)
-                                        }
-                                        .frame(width: 96, height: 150)
-                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                        Text(p.caption).textStyle(.labelLarge).lineLimit(2)
-                                    }
-                                    .frame(width: 96)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-
-                if !state.followedPeople.isEmpty {
-                    SectionTitle(text: "Подписки · \(state.followedPeople.count)")
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(state.followedPeople) { person in
-                                Button { model.openPerson(person.id) } label: {
-                                    VStack(spacing: 6) {
-                                        Avatar(user: person, size: 56, showOnline: true)
-                                        Text(person.firstName).textStyle(.labelLarge).lineLimit(1)
-                                    }
-                                    .frame(width: 68)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-
                 settings(state)
 
-                SectionTitle(text: state.myPosts.isEmpty ? "Мои записи" : "Мои записи · \(state.myPosts.count)")
-                if state.myPosts.isEmpty {
-                    Text("Пока ни одной. Поделитесь первым моментом во вкладке «Лента».")
-                        .textStyle(.bodySmall, Palette.mist)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 24)
-                }
-                ForEach(state.myPosts) { post in
-                    PostCard(
-                        post: post,
-                        onLike: { model.toggleLike(post.id) },
-                        onComments: { model.openComments(post.id) },
-                        onOpenMedia: model.openMedia
-                    )
-                }
             }
             .padding(.top, 12)
             .padding(.bottom, tabBarSpace)
@@ -181,9 +107,26 @@ struct ProfileScreen: View {
         }
     }
 
+    private func statButton(_ value: Int, _ label: String, _ section: ProfileSection) -> some View {
+        Button { model.openProfileSection(section) } label: {
+            Stat(value: value, label: label)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private func settings(_ state: UiState) -> some View {
         GlassCard {
             VStack(spacing: 0) {
+                Button { model.openProfileSection(.saved) } label: {
+                    SettingRow(icon: .bookmark, title: "Сохранённое") {
+                        Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                FadeLine().padding(.horizontal, 16)
                 SettingRow(icon: .bell, title: "Уведомления") {
                     Toggle("", isOn: Binding(get: { state.notifications }, set: { model.setNotifications($0) }))
                         .labelsHidden()

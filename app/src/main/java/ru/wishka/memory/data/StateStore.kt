@@ -103,10 +103,14 @@ class StateStore(private val context: Context) {
         private fun message(m: Message) = JSONObject()
             .put("id", m.id).put("fromMe", m.fromMe).put("text", m.text).put("time", m.time)
             .put("attachments", JSONArray(m.attachments.map { attachment(it) }))
+            .put("replyTo", m.replyTo?.let { JSONObject().put("messageId", it.messageId).put("author", it.author).put("preview", it.preview) } ?: JSONObject.NULL)
+            .put("forwardedFrom", m.forwardedFrom ?: JSONObject.NULL)
 
         private fun message(o: JSONObject) = Message(
             o.getLong("id"), o.getBoolean("fromMe"), o.getString("text"), o.getString("time"),
             o.optJSONArray("attachments").objects().map { attachment(it) },
+            replyTo = o.optJSONObject("replyTo")?.let { ReplyRef(it.getLong("messageId"), it.optString("author"), it.optString("preview")) },
+            forwardedFrom = if (o.isNull("forwardedFrom")) null else o.optString("forwardedFrom"),
         )
 
         private fun chat(c: Chat) = JSONObject()

@@ -13,6 +13,7 @@ import ru.wishka.memory.data.sizeTitle
 import ru.wishka.memory.data.agoTitle
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.Tab
 
 class AppViewModelTest {
@@ -253,6 +254,59 @@ class AppViewModelTest {
         // Новые номера не совпадают с сохранёнными
         next.publish("Ещё")
         assertEquals(2, next.state.value.myPosts.map { it.id }.toSet().size)
+    }
+
+    @Test
+    fun personFromChatOpensAtOnceAndBackReturnsToChat() {
+        val vm = AppViewModel()
+        val chat = vm.state.value.chats.first()
+        vm.openChat(chat.id)
+        vm.openPerson(chat.peer.id)
+        // Страница человека сразу на экране — переписка её не закрывает
+        assertNull(vm.state.value.openChat)
+        assertEquals(chat.peer.id, vm.state.value.openPerson?.id)
+        assertTrue(vm.back())
+        assertEquals(chat.id, vm.state.value.openChatId)
+        assertNull(vm.state.value.openPersonId)
+    }
+
+    @Test
+    fun replyAndForward() {
+        val vm = AppViewModel(demoReplies = false)
+        val chat = vm.state.value.chats.first()
+        val original = chat.messages.first { !it.fromMe }
+        val ref = vm.replyRef(chat.id, original)
+        assertEquals(chat.peer.name, ref.author)
+        vm.send(chat.id, "Отвечаю", replyTo = ref)
+        val reply = vm.state.value.chats.first { it.id == chat.id }.messages.last()
+        assertEquals(original.id, reply.replyTo?.messageId)
+        // Переслать в другую переписку — с пометкой автора, и она откроется
+        val target = vm.state.value.chats.first { it.id != chat.id }
+        vm.forward(chat.id, original.id, target.id)
+        val forwarded = vm.state.value.chats.first { it.id == target.id }.messages.last()
+        assertEquals(original.text, forwarded.text)
+        assertEquals(chat.peer.name, forwarded.forwardedFrom)
+        assertTrue(forwarded.fromMe)
+        assertEquals(target.id, vm.state.value.openChatId)
+    }
+
+    @Test
+    fun profileSectionsAndBack() {
+        val vm = AppViewModel()
+        assertTrue(vm.state.value.followers.isNotEmpty())
+        vm.openProfileSection(ProfileSection.Groups)
+        assertEquals(Tab.Profile, vm.state.value.tab)
+        // Группа из раздела профиля: «назад» — снова в раздел
+        vm.openGroup(vm.state.value.myGroups.first().id)
+        assertEquals(Tab.Profile, vm.state.value.tab)
+        assertTrue(vm.back())
+        assertEquals(ProfileSection.Groups, vm.state.value.profileSection)
+        assertTrue(vm.back())
+        assertNull(vm.state.value.profileSection)
+        // Другая вкладка — раздел закрывается
+        vm.openProfileSection(ProfileSection.Saved)
+        vm.selectTab(Tab.Feed)
+        assertNull(vm.state.value.profileSection)
     }
 
     @Test

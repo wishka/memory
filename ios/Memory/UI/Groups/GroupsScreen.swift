@@ -45,7 +45,7 @@ struct GroupsScreen: View {
                     .glass(Capsule())
                     .padding(.horizontal, 16)
 
-                TopicChips(selected: topic) { t in topic = topic == t ? nil : t }
+                TopicDropdown(selected: topic, allLabel: "Все темы") { topic = $0 }
                     .padding(.horizontal, 16)
 
                 if found.isEmpty {
@@ -113,18 +113,40 @@ private struct GroupRow: View {
     }
 }
 
-/// Темы групп метками; выбранная подсвечена.
-struct TopicChips: View {
+/// Тема группы — выпадающим списком: тем много, и рядом меток они
+/// занимали бы пол-экрана. allLabel != nil — первый пункт «все темы»
+/// (для поиска), выбор его даёт nil.
+struct TopicDropdown: View {
     let selected: String?
-    let onSelect: (String) -> Void
+    var allLabel: String? = nil
+    let onSelect: (String?) -> Void
 
     var body: some View {
-        FlowLayout(spacing: 8) {
-            ForEach(groupTopics, id: \.self) { t in
-                Chip(text: t, active: t == selected) { onSelect(t) }
+        Menu {
+            if let allLabel {
+                Button { onSelect(nil) } label: {
+                    if selected == nil { Label(allLabel, systemImage: "checkmark") } else { Text(allLabel) }
+                }
             }
+            ForEach(groupTopics, id: \.self) { t in
+                Button { onSelect(t) } label: {
+                    if t == selected { Label(t, systemImage: "checkmark") } else { Text(t) }
+                }
+            }
+        } label: {
+            HStack {
+                Text(selected ?? allLabel ?? "Выберите тему")
+                    .textStyle(.body, selected == nil ? Palette.mist : Palette.ink)
+                    .lineLimit(1)
+                Spacer()
+                Glyph(kind: .chevronDown, color: Palette.lilac, size: 20)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .glass(radius: 16)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
     }
 }
 
@@ -134,7 +156,7 @@ private struct CreateGroupCard: View {
     let onClose: () -> Void
     @State private var name = ""
     @State private var description = ""
-    @State private var topic = groupTopics[0]
+    @State private var topic = groupTopics.last ?? "Другое"
     @State private var error: String?
 
     var body: some View {
@@ -147,7 +169,9 @@ private struct CreateGroupCard: View {
                 GlassField(placeholder: "О чём группа", text: $description, limit: 300, maxLines: 4)
                     .glass(radius: 16)
                 Text("Тема").textStyle(.bodySmall, Palette.mist)
-                TopicChips(selected: topic) { topic = $0 }
+                TopicDropdown(selected: topic) { picked in
+                    if let picked { topic = picked }
+                }
                 if let error {
                     Text(error).textStyle(.bodySmall, Palette.error)
                 }

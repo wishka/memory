@@ -15,7 +15,7 @@ struct MainScreen: View {
 
             if let chat = state.openChat {
                 // Переписка — во весь экран, панель вкладок прячется
-                ChatScreen(model: model, chat: chat)
+                ChatScreen(model: model, chat: chat, otherChats: state.chats.filter { $0.id != chat.id })
                     .transition(.move(edge: .trailing))
                     .simultaneousGesture(backSwipe)
             } else {
@@ -53,6 +53,7 @@ struct MainScreen: View {
         .animation(.easeOut(duration: 0.25), value: state.openChatId)
         .animation(.easeOut(duration: 0.25), value: state.openPersonId)
         .animation(.easeOut(duration: 0.25), value: state.openGroupId)
+        .animation(.easeOut(duration: 0.2), value: state.profileSection)
     }
 
     private var commentsShown: Binding<Bool> {
@@ -107,7 +108,12 @@ struct MainScreen: View {
         case .prism: PrismScreen(model: model)
         case .chats: ChatsScreen(model: model)
         case .groups: GroupsScreen(model: model)
-        case .profile: ProfileScreen(model: model, onSaveProfile: onSaveProfile, onLogout: onLogout)
+        case .profile:
+            if let section = model.state.profileSection {
+                ProfileSectionScreen(model: model, section: section)
+            } else {
+                ProfileScreen(model: model, onSaveProfile: onSaveProfile, onLogout: onLogout)
+            }
         }
     }
 
