@@ -25,6 +25,7 @@ import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.TextureOverlay
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.ScaleAndRotateTransformation
@@ -36,7 +37,6 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
-import com.google.common.collect.ImmutableList
 import ru.wishka.memory.R
 import java.io.File
 import java.util.UUID
@@ -99,7 +99,7 @@ object VideoExporter {
         effects += Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         if (!edit.colorIsIdentity) effects += ColorEffect(edit.colorMatrix())
         if (overlay != null) {
-            effects += OverlayEffect(ImmutableList.of(BitmapOverlay.createStaticBitmapOverlay(overlay)))
+            effects += OverlayEffect(listOf<TextureOverlay>(BitmapOverlay.createStaticBitmapOverlay(overlay)))
         }
         return effects
     }
