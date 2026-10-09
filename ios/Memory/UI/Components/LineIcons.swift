@@ -6,7 +6,7 @@ import SwiftUI
 enum LineIcon {
     case feed, stories, prism, groups, pin, gift, link, music, calendar, exit
     case share, bookmark, bookmarkFilled, attach, camera, video, image, document, trash, play, close
-    case reply, forward, chevronDown
+    case reply, forward, chevronDown, pushpin
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
 }
 
@@ -122,6 +122,20 @@ struct Glyph: View {
             tail.addLine(to: p(s, 0.42, 0.46))
             tail.addCurve(to: p(s, 0.16, 0.80), control1: p(s, 0.20, 0.46), control2: p(s, 0.14, 0.62))
             strokePath(tail)
+        case .pushpin:
+            // Канцелярская кнопка, наклонённая вправо
+            var head = Path()
+            head.move(to: p(s, 0.56, 0.12))
+            head.addLine(to: p(s, 0.88, 0.44))
+            head.addLine(to: p(s, 0.74, 0.48))
+            head.addLine(to: p(s, 0.58, 0.64))
+            head.addLine(to: p(s, 0.58, 0.78))
+            head.addLine(to: p(s, 0.22, 0.42))
+            head.addLine(to: p(s, 0.36, 0.42))
+            head.addLine(to: p(s, 0.52, 0.26))
+            head.closeSubpath()
+            strokePath(head)
+            strokePath(line(s, 0.40, 0.60, 0.14, 0.86))
         case .chevronDown:
             var chevron = Path()
             chevron.move(to: p(s, 0.26, 0.38))

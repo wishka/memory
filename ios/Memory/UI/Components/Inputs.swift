@@ -149,3 +149,27 @@ struct FlowLayout: Layout {
         }
     }
 }
+
+/// Таблетка, которая раскрывает список под собой: «Все темы ▾»,
+/// «Интересы · 3 ▾». open — список раскрыт, стрелка смотрит вверх.
+struct DisclosurePill: View {
+    let text: String
+    let open: Bool
+    var active: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(text).textStyle(.labelLarge, active || open ? Palette.ink : Palette.lilac)
+                Glyph(kind: .chevronDown, color: Palette.lilac, size: 18)
+                    .rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 10)
+            .padding(.vertical, 8)
+            .glass(Capsule(), strong: active || open)
+        }
+        .buttonStyle(.plain)
+    }
+}

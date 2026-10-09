@@ -104,13 +104,17 @@ data class Message(
     val forwardedFrom: String? = null,
 )
 
+/** Переписка. pinnedId — закреплённое сообщение: видно полоской вверху. */
 data class Chat(
     val id: Int,
     val peer: User,
     val messages: List<Message>,
     val unread: Int = 0,
     val typing: Boolean = false,
+    val pinnedId: Long? = null,
 ) {
+    val pinned: Message? get() = pinnedId?.let { id -> messages.firstOrNull { it.id == id } }
+
     val last: Message? get() = messages.lastOrNull()
 }
 
@@ -147,6 +151,9 @@ data class Group(
     val mine: Boolean = false,
     val posts: List<Post> = emptyList(),
 )
+
+/** Интересы в профиле — те же темы, без «Другое». */
+val INTERESTS: List<String> get() = GROUP_TOPICS.filter { it != "Другое" }
 
 /** Темы групп — для создания и поиска, по алфавиту. */
 val GROUP_TOPICS = listOf(

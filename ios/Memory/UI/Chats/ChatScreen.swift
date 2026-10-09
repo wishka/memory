@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Переписка: шапка с собеседником, сообщения и поле ввода над клавиатурой.
 /// Скрепка — фото, видео (из галереи или с камеры) и документы. Долгое
-/// нажатие на сообщение — ответить, переслать, поделиться или удалить у
-/// себя или у обоих.
+/// нажатие на сообщение — ответить, переслать, закрепить или удалить у
+/// себя или у всех. Закреплённое сообщение — полоской под шапкой.
 struct ChatScreen: View {
     let model: AppModel
     let chat: Chat
@@ -16,6 +16,8 @@ struct ChatScreen: View {
     @State private var replyTo: ReplyRef?
     /// Какое сообщение пересылаем: выбор переписки.
     @State private var forwarding: Message?
+    /// К какому сообщению прокрутить (нажатие на закреплённое).
+    @State private var scrollTarget: Int64?
     /// Документ, открытый в просмотре (QuickLook).
     @State private var preview: URL?
 
@@ -27,6 +29,13 @@ struct ChatScreen: View {
         VStack(spacing: 0) {
             header
             FadeLine()
+            if let pin = chat.pinned {
+                PinnedBar(
+                    message: pin,
+                    onOpen: { scrollTarget = pin.id },
+                    onUnpin: { model.unpin(chat.id) }
+                )
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 8) {
@@ -36,6 +45,8 @@ struct ChatScreen: View {
                                 peerName: chat.peer.firstName,
                                 onReply: { replyTo = model.replyRef(chat.id, message) },
                                 onForward: { forwarding = message },
+                                pinned: chat.pinnedId == message.id,
+                                onPin: { model.togglePin(chat.id, message.id) },
                                 onQuote: { id in
                                     // Нажатие на цитату — к исходному сообщению
                                     withAnimation { proxy.scrollTo(id, anchor: .center) }
@@ -62,6 +73,12 @@ struct ChatScreen: View {
                 }
                 .onChange(of: chat.typing) { _, _ in
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                // Нажатие на закреплённое — к самому сообщению
+                .onChange(of: scrollTarget) { _, target in
+                    guard let target else { return }
+                    withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    scrollTarget = nil
                 }
             }
             if let ref = replyTo {
@@ -154,19 +171,18 @@ struct ChatScreen: View {
 }
 
 /// Сообщение: пометка «Переслано», цитата ответа, вложения и текст.
-/// Долгое нажатие — меню: ответить, переслать, поделиться, удалить «у
-/// себя» (у собеседника останется) или «у меня и у <имя>».
+/// Долгое нажатие — меню: ответить, переслать, закрепить, удалить «у
+/// себя» (у собеседника останется) или «у всех».
 private struct Bubble: View {
     let message: Message
     let peerName: String
     let onReply: () -> Void
     let onForward: () -> Void
+    let pinned: Bool
+    let onPin: () -> Void
     let onQuote: (Int64) -> Void
     let onOpen: (Attachment) -> Void
     let onDelete: (Bool) -> Void
-
-    /// Файлы вложений — для «Поделиться».
-    private var files: [URL] { message.attachments.map(MediaFiles.url) }
 
     var body: some View {
         let mine = message.fromMe
@@ -242,20 +258,14 @@ private struct Bubble: View {
                 Button(action: onForward) {
                     Label("Переслать", systemImage: "arrowshape.turn.up.right")
                 }
-                if files.isEmpty {
-                    ShareLink(item: message.text) {
-                        Label("Поделиться", systemImage: "square.and.arrow.up")
-                    }
-                } else {
-                    ShareLink(items: files, message: message.text.isEmpty ? nil : Text(message.text)) {
-                        Label("Поделиться", systemImage: "square.and.arrow.up")
-                    }
+                Button(action: onPin) {
+                    Label(pinned ? "Открепить" : "Закрепить", systemImage: pinned ? "pin.slash" : "pin")
                 }
                 Button(role: .destructive) { onDelete(false) } label: {
                     Label("Удалить у себя", systemImage: "trash")
                 }
                 Button(role: .destructive) { onDelete(true) } label: {
-                    Label("Удалить у меня и у \(peerName)", systemImage: "trash.fill")
+                    Label("Удалить у всех", systemImage: "trash.fill")
                 }
             }
             // Пузырь не шире 290: длинное сообщение переносится
@@ -344,5 +354,42 @@ private struct ReplyBar: View {
         .glass(radius: 16)
         .padding(.horizontal, 12)
         .padding(.top, 8)
+    }
+}
+
+/// Закреплённое сообщение под шапкой: нажатие — к нему, крестик — открепить.
+private struct PinnedBar: View {
+    let message: Message
+    let onOpen: () -> Void
+    let onUnpin: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button(action: onOpen) {
+                    HStack(spacing: 10) {
+                        Glyph(kind: .pushpin, color: Palette.lilac, size: 20)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Закреплённое сообщение").textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+                            Text(previewOf(message)).textStyle(.bodySmall).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Button(action: onUnpin) {
+                    Glyph(kind: .close, color: Palette.mist, size: 18)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Открепить")
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 6)
+            .padding(.vertical, 6)
+            FadeLine()
+        }
     }
 }

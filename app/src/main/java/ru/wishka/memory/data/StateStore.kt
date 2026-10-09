@@ -115,12 +115,14 @@ class StateStore(private val context: Context) {
 
         private fun chat(c: Chat) = JSONObject()
             .put("id", c.id).put("peer", c.peer.id).put("unread", c.unread)
+            .put("pinnedId", c.pinnedId ?: JSONObject.NULL)
             .put("messages", JSONArray(c.messages.map { message(it) }))
 
         private fun chat(o: JSONObject) = Chat(
             o.getInt("id"), person(o.getInt("peer")),
             o.getJSONArray("messages").objects().map { message(it) },
             unread = o.optInt("unread"),
+            pinnedId = if (o.isNull("pinnedId")) null else o.getLong("pinnedId"),
         )
 
         private fun group(g: Group) = JSONObject()

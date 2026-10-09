@@ -364,10 +364,31 @@ final class AppModel {
     func deleteMessage(_ chatId: Int, _ messageId: Int64, forEveryone: Bool) {
         state.chats = state.chats.map { chat in
             var c = chat
-            if c.id == chatId { c.messages.removeAll { $0.id == messageId } }
+            if c.id == chatId {
+                c.messages.removeAll { $0.id == messageId }
+                // Удалили закреплённое — полоска вверху уходит
+                if c.pinnedId == messageId { c.pinnedId = nil }
+            }
             return c
         }
         if forEveryone { deletedForEveryone.insert(messageId) }
+    }
+
+    /// Закрепить сообщение вверху переписки; повторно — открепить. Закреплённое одно.
+    func togglePin(_ chatId: Int, _ messageId: Int64) {
+        state.chats = state.chats.map { chat in
+            var c = chat
+            if c.id == chatId { c.pinnedId = c.pinnedId == messageId ? nil : messageId }
+            return c
+        }
+    }
+
+    func unpin(_ chatId: Int) {
+        state.chats = state.chats.map { chat in
+            var c = chat
+            if c.id == chatId { c.pinnedId = nil }
+            return c
+        }
     }
 
     /// Цитата для ответа на сообщение: автор и начало текста (или что приложено).

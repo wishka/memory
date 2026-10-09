@@ -7,9 +7,5 @@
 		<key>UIColorName</key>
 		<string>LaunchBackground</string>
 	</dict>
-	<key>NSCameraUsageDescription</key>
-	<string>Чтобы снимать фото и видео для записей в Ленте и сообщений в чатах.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Чтобы записывать звук, когда вы снимаете видео для Ленты или чата.</string>
 </dict>
 </plist>

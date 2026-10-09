@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
@@ -81,5 +82,29 @@ fun GhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier
             .padding(horizontal = 20.dp, vertical = 10.dp),
     ) {
         Text(text.uppercase(), style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
+    }
+}
+
+/**
+ * Таблетка, которая раскрывает список под собой: «Все темы ▾»,
+ * «Интересы · 3 ▾». open — список раскрыт, стрелка смотрит вверх.
+ */
+@Composable
+fun DisclosurePill(text: String, open: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, active: Boolean = false) {
+    androidx.compose.foundation.layout.Row(
+        modifier = modifier
+            .glass(RoundedCornerShape(50), strong = active || open)
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge, color = if (active || open) Palette.Ink else Palette.Lilac)
+        androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 6.dp))
+        Glyph(
+            LineIcon.ChevronDown,
+            Palette.Lilac,
+            size = 18.dp,
+            modifier = Modifier.graphicsLayer { rotationZ = if (open) 180f else 0f },
+        )
     }
 }

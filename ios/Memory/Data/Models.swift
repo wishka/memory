@@ -109,14 +109,18 @@ struct Message: Identifiable, Equatable, Codable {
     var forwardedFrom: String? = nil
 }
 
+/// Переписка. pinnedId — закреплённое сообщение: видно полоской вверху
+/// (необязательное — старые сохранённые переписки читаются без него).
 struct Chat: Identifiable, Equatable, Codable {
     let id: Int
     var peer: User
     var messages: [Message]
     var unread: Int = 0
     var typing: Bool = false
+    var pinnedId: Int64? = nil
 
     var last: Message? { messages.last }
+    var pinned: Message? { pinnedId.flatMap { id in messages.first { $0.id == id } } }
 }
 
 /// «5 мин», «2 ч», «вчера», «3 дн» — время записи в ленте.
@@ -155,6 +159,9 @@ struct MemoryGroup: Identifiable, Equatable, Codable {
     var mine: Bool = false
     var posts: [Post] = []
 }
+
+/// Интересы в профиле — те же темы, без «Другое».
+var interestTopics: [String] { groupTopics.filter { $0 != "Другое" } }
 
 /// Темы групп — для создания и поиска, по алфавиту.
 let groupTopics = [

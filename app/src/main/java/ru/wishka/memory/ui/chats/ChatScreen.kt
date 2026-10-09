@@ -55,6 +55,7 @@ import ru.wishka.memory.data.MediaKind
 import ru.wishka.memory.data.Message
 import ru.wishka.memory.data.ReplyRef
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.messagePreview
 import ru.wishka.memory.ui.components.AttachButton
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.DocumentRow
@@ -72,8 +73,8 @@ import ru.wishka.memory.ui.theme.Palette
 /**
  * Переписка: шапка с собеседником, сообщения и поле ввода над клавиатурой.
  * Скрепка — фото, видео (из галереи или с камеры) и документы. Долгое
- * нажатие на сообщение — ответить, переслать, поделиться или удалить у
- * себя или у обоих.
+ * нажатие на сообщение — ответить, переслать, закрепить или удалить у
+ * себя или у всех. Закреплённое сообщение — полоской под шапкой.
  */
 @Composable
 fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
@@ -137,6 +138,17 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
         }
         FadeLine()
 
+        chat.pinned?.let { pin ->
+            PinnedBar(
+                pin,
+                onOpen = {
+                    val index = reversed.indexOfFirst { it.id == pin.id }
+                    if (index >= 0) scope.launch { listState.animateScrollToItem(index + if (chat.typing) 1 else 0) }
+                },
+                onUnpin = { vm.unpin(chat.id) },
+            )
+        }
+
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -153,7 +165,8 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
                     peerName = chat.peer.name.substringBefore(' '),
                     onReply = { replyTo = vm.replyRef(chat.id, message) },
                     onForward = { forwarding = message },
-                    onShare = { MediaFiles.share(context, message.text, message.attachments) },
+                    pinned = chat.pinnedId == message.id,
+                    onPin = { vm.togglePin(chat.id, message.id) },
                     onQuote = { id ->
                         // Нажатие на цитату — к исходному сообщению
                         val index = reversed.indexOfFirst { it.id == id }
@@ -232,6 +245,30 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
     }
 }
 
+/** Закреплённое сообщение под шапкой: нажатие — к нему, крестик — открепить. */
+@Composable
+private fun PinnedBar(message: Message, onOpen: () -> Unit, onUnpin: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Glyph(LineIcon.Pushpin, Palette.Lilac, size = 20.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Закреплённое сообщение", style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
+            Text(messagePreview(message), style = MaterialTheme.typography.bodyMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Box(
+            modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onUnpin),
+            contentAlignment = Alignment.Center,
+        ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp) }
+    }
+    FadeLine()
+}
+
 /** Полоска «Ответ …» над полем ввода; крестик — передумать. */
 @Composable
 private fun ReplyBar(ref: ReplyRef, onCancel: () -> Unit) {
@@ -290,8 +327,8 @@ private fun ForwardDialog(chats: List<Chat>, onPick: (Chat) -> Unit, onDismiss: 
 
 /**
  * Сообщение: пометка «Переслано», цитата ответа, вложения и текст.
- * Долгое нажатие — меню: ответить, переслать, поделиться, удалить «у
- * себя» (у собеседника останется) или «у меня и у <имя>».
+ * Долгое нажатие — меню: ответить, переслать, закрепить, удалить «у
+ * себя» (у собеседника останется) или «у всех».
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -300,7 +337,8 @@ private fun Bubble(
     peerName: String,
     onReply: () -> Unit,
     onForward: () -> Unit,
-    onShare: () -> Unit,
+    pinned: Boolean,
+    onPin: () -> Unit,
     onQuote: (Long) -> Unit,
     onOpen: (Attachment) -> Unit,
     onDelete: (Boolean) -> Unit,
@@ -386,15 +424,15 @@ private fun Bubble(
                     menu = false
                     onForward()
                 }
-                MenuRow(LineIcon.Share, "Поделиться") {
+                MenuRow(LineIcon.Pushpin, if (pinned) "Открепить" else "Закрепить") {
                     menu = false
-                    onShare()
+                    onPin()
                 }
                 MenuRow(LineIcon.Trash, "Удалить у себя") {
                     menu = false
                     onDelete(false)
                 }
-                MenuRow(LineIcon.Trash, "Удалить у меня и у $peerName", color = Palette.Lilac) {
+                MenuRow(LineIcon.Trash, "Удалить у всех", color = Palette.Lilac) {
                     menu = false
                     onDelete(true)
                 }
