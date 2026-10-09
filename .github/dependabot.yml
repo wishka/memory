@@ -1,6 +1,11 @@
 # Обновления зависимостей — пул-реквестами в develop. Каждый проходит те
-# же проверки, что и обычный PR. Крупные обновления (Gradle, Kotlin,
-# Compose BOM) вливайте по одному и только при зелёном CI.
+# же проверки, что и обычный PR.
+#
+# Связанные зависимости приходят одним PR (groups): Kotlin и плагин
+# компилятора Compose обязаны быть одной версии, а новые AndroidX и
+# Compose часто требуют свежего AGP и compileSdk — по отдельности такие
+# обновления не собираются. Крупные (major) обновления AGP и Kotlin
+# приходят отдельным PR: им обычно нужна правка сборки.
 version: 2
 updates:
   - package-ecosystem: gradle
@@ -9,9 +14,28 @@ updates:
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     labels: [dependencies]
+    groups:
+      kotlin:
+        patterns:
+          - "org.jetbrains.kotlin*"
+          - "org.jetbrains.kotlin:*"
+          - "org.jetbrains.kotlin.plugin.*"
+      android-build:
+        patterns:
+          - "com.android.*"
+        update-types: [minor, patch]
+      androidx:
+        patterns:
+          - "androidx.*"
+      kotlinx:
+        patterns:
+          - "org.jetbrains.kotlinx:*"
 
   - package-ecosystem: github-actions
     directory: /
     target-branch: develop
     schedule: { interval: monthly }
     labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ["*"]

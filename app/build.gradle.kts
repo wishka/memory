@@ -1,6 +1,6 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // Kotlin встроен в AGP 9 — отдельного плагина Kotlin нет
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -11,12 +11,14 @@ fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "ru.wishka.memory"
-    compileSdk = 35
+    // Compose 1.12 требует compileSdk 37
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "ru.wishka.memory"
         minSdk = 26
-        targetSdk = 35
+        // Google Play с 31 августа 2026 принимает обновления с targetSdk 36+
+        targetSdk = 36
         versionCode = env("VERSION_CODE")?.toInt() ?: 1
         versionName = env("VERSION_NAME") ?: "0.1.0"
     }
@@ -59,13 +61,10 @@ android {
         }
     }
 
+    // Kotlin берёт jvmTarget отсюда же — отдельный kotlinOptions не нужен
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     buildFeatures {
@@ -80,19 +79,18 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-core")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
