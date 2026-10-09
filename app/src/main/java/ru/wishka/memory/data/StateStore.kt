@@ -51,6 +51,8 @@ class StateStore(private val context: Context) {
             .put("notify", notify(s.notifications))
             .put("privacy", privacy(s.privacy))
             .put("blocked", JSONArray(s.blocked.toList()))
+            .put("tracks", JSONArray(s.tracks.map { track(it) }))
+            .put("playlists", JSONArray(s.playlists.map { playlist(it) }))
             .put("following", JSONArray(s.following.toList()))
             .put("posts", JSONArray(s.posts.map { post(it) }))
             .put("chats", JSONArray(s.chats.map { chat(it) }))
@@ -69,6 +71,25 @@ class StateStore(private val context: Context) {
             nextId = o.optLong("nextId", 10_000),
             privacy = o.optJSONObject("privacy")?.let { privacy(it) } ?: Privacy(),
             blocked = o.optJSONArray("blocked")?.let { a -> (0 until a.length()).map { a.getInt(it) }.toSet() } ?: emptySet(),
+            tracks = o.optJSONArray("tracks").objects().map { track(it) },
+            playlists = o.optJSONArray("playlists").objects().map { playlist(it) },
+        )
+
+        private fun track(t: MusicTrack) = JSONObject()
+            .put("id", t.id).put("title", t.title).put("artist", t.artist).put("path", t.path)
+            .put("durationMs", t.durationMs).put("addedAt", t.addedAt)
+
+        private fun track(o: JSONObject) = MusicTrack(
+            o.getString("id"), o.optString("title"), o.optString("artist"), o.getString("path"),
+            o.optLong("durationMs"), o.optLong("addedAt"),
+        )
+
+        private fun playlist(p: Playlist) = JSONObject()
+            .put("id", p.id).put("name", p.name).put("trackIds", JSONArray(p.trackIds))
+
+        private fun playlist(o: JSONObject) = Playlist(
+            o.getLong("id"), o.optString("name"),
+            o.optJSONArray("trackIds")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
         )
 
         private fun notify(n: Notifications) = JSONObject()
@@ -184,6 +205,9 @@ class StateStore(private val context: Context) {
             .put("id", p.id).put("author", p.author.id).put("caption", p.caption).put("music", p.music)
             .put("seed", p.seed).put("likes", p.likes).put("comments", p.comments).put("liked", p.liked)
             .put("durationMs", p.durationMs).put("saved", p.saved)
+            .put("video", p.video?.let { attachment(it) } ?: JSONObject.NULL)
+            .put("cover", p.cover?.let { attachment(it) } ?: JSONObject.NULL)
+            .put("createdAt", p.createdAt)
             .put("commentList", JSONArray(p.commentList.map { comment(it) }))
 
         private fun prism(o: JSONObject) = Prism(
@@ -191,6 +215,9 @@ class StateStore(private val context: Context) {
             o.optInt("seed"), o.optInt("likes"), o.optInt("comments"), o.optBoolean("liked"),
             o.optInt("durationMs", 9_000), o.optBoolean("saved"),
             o.optJSONArray("commentList").objects().map { comment(it) },
+            video = o.optJSONObject("video")?.let { attachment(it) },
+            cover = o.optJSONObject("cover")?.let { attachment(it) },
+            createdAt = o.optLong("createdAt"),
         )
 
         private fun JSONArray?.objects(): List<JSONObject> =

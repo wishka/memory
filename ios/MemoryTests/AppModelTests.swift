@@ -508,4 +508,104 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(plural(21, "запись", "записи", "записей"), "21 posts")
         XCTAssertEqual(sizeTitle(2 * 1024 * 1024), "2.0 MB")
     }
+
+    func testPublishAndDeleteOwnPrism() throws {
+        let vm = AppModel()
+        let video = Attachment(id: "v", kind: .video, fileName: "v.mp4")
+        vm.openPrismCreator()
+        XCTAssertTrue(vm.state.creatingPrism)
+        vm.publishPrism(video: video, cover: nil, caption: "  Закат  ", music: "", durationMs: 12_000)
+        let top = try XCTUnwrap(vm.state.prisms.first)
+        XCTAssertFalse(vm.state.creatingPrism)
+        XCTAssertEqual(vm.state.tab, .prism)
+        XCTAssertEqual(top.caption, "Закат")
+        XCTAssertEqual(top.video, video)
+        XCTAssertEqual(vm.state.prismStartId, top.id)
+        XCTAssertTrue(top.music.contains(vm.state.me.name))
+        // Чужой ролик удалить нельзя, свой — можно
+        let other = try XCTUnwrap(vm.state.prisms.first { $0.author.id != vm.state.me.id })
+        vm.deletePrism(other.id)
+        XCTAssertTrue(vm.state.prisms.contains { $0.id == other.id })
+        vm.deletePrism(top.id)
+        XCTAssertFalse(vm.state.prisms.contains { $0.id == top.id })
+    }
+
+    func testMusicLibraryAndPlaylists() throws {
+        let vm = AppModel()
+        let a = MusicTrack(id: "a", title: "Луна", artist: "Вера", fileName: "a.mp3", durationMs: 180_000)
+        let b = MusicTrack(id: "b", title: "Море", artist: "", fileName: "b.mp3", durationMs: 200_000)
+        vm.addTracks([a, b])
+        // Тот же файл второй раз не добавляется
+        vm.addTracks([MusicTrack(id: "a2", title: "Луна", artist: "Вера", fileName: "a.mp3")])
+        XCTAssertEqual(vm.state.tracks.count, 2)
+        let pid = try XCTUnwrap(vm.createPlaylist("  Дорога "))
+        XCTAssertNil(vm.createPlaylist("   "))
+        vm.addToPlaylist(pid, "a")
+        vm.addToPlaylist(pid, "b")
+        vm.addToPlaylist(pid, "a")
+        vm.addToPlaylist(pid, "нет такого")
+        let p = try XCTUnwrap(vm.state.playlists.first { $0.id == pid })
+        XCTAssertEqual(p.name, "Дорога")
+        XCTAssertEqual(p.trackIds, ["a", "b"])
+        vm.moveInPlaylist(pid, "b", step: -1)
+        XCTAssertEqual(vm.state.playlists.first { $0.id == pid }?.trackIds, ["b", "a"])
+        vm.renamePlaylist(pid, "Ночь")
+        XCTAssertEqual(vm.state.playlists.first { $0.id == pid }?.name, "Ночь")
+        // Удалённый трек уходит и из плейлиста
+        vm.deleteTrack("b")
+        XCTAssertEqual(vm.state.playlists.first { $0.id == pid }?.trackIds, ["a"])
+        // Всё переживает сохранение
+        let other = AppModel()
+        other.restore(vm.snapshot())
+        XCTAssertEqual(other.state.tracks.map(\.id), ["a"])
+        XCTAssertEqual(other.state.playlists.map(\.name), ["Ночь"])
+        vm.deletePlaylist(pid)
+        XCTAssertTrue(vm.state.playlists.isEmpty)
+    }
+
+    func testVideoEditRules() {
+        var e = VideoEdit(sourceURL: URL(fileURLWithPath: "/tmp/s.mp4"), sourceDurationMs: 90_000, sourceWidth: 1920, sourceHeight: 1080)
+        XCTAssertEqual(e.trimEndMs, 60_000)
+        // По умолчанию — вертикальный кадр 1080 × 1920
+        XCTAssertTrue(e.outputSize() == (1080, 1920))
+        e.aspect = .tall
+        XCTAssertTrue(e.outputSize() == (1080, 1350))
+        e.aspect = .square
+        XCTAssertTrue(e.outputSize() == (1080, 1080))
+        // «Оригинал» — как снято; после поворота стороны меняются
+        e.aspect = .original
+        XCTAssertTrue(e.outputSize() == (1920, 1080))
+        e.rotation = 90
+        XCTAssertTrue(e.outputSize() == (1080, 1920))
+        // Скорость меняет длительность
+        e.speed = 2
+        XCTAssertEqual(e.outputDurationMs, 30_000)
+        e.trimStartMs = 10_000
+        e.coverMs = 14_000
+        XCTAssertEqual(e.coverOutputMs, 2_000)
+        XCTAssertTrue(e.colorIsIdentity)
+        e.filter = .noir
+        XCTAssertFalse(e.colorIsIdentity)
+    }
+
+    func testColorMatrices() {
+        var e = VideoEdit(sourceURL: URL(fileURLWithPath: "/tmp/s.mp4"), sourceDurationMs: 10_000, sourceWidth: 1080, sourceHeight: 1920)
+        // Без правок цвет не меняется
+        let (r, g, b) = ColorMatrix.apply(e.colorMatrix, 0.2, 0.5, 0.8)
+        XCTAssertEqual(r, 0.2, accuracy: 1e-6)
+        XCTAssertEqual(g, 0.5, accuracy: 1e-6)
+        XCTAssertEqual(b, 0.8, accuracy: 1e-6)
+        // Ч/Б — все каналы равны
+        let (nr, ng, nb) = ColorMatrix.apply(VideoFilter.noir.matrix, 0.9, 0.1, 0.3)
+        XCTAssertEqual(nr, ng, accuracy: 1e-6)
+        XCTAssertEqual(ng, nb, accuracy: 1e-6)
+        // Яркость поднимает все каналы
+        e.brightness = 0.5
+        XCTAssertGreaterThan(ColorMatrix.apply(e.colorMatrix, 0.2, 0.5, 0.8).0, 0.2)
+        // Тепло: красного больше, синего меньше
+        e.brightness = 0
+        e.warmth = 1
+        let (wr, _, wb) = ColorMatrix.apply(e.colorMatrix, 0.5, 0.5, 0.5)
+        XCTAssertTrue(wr > 0.5 && wb < 0.5)
+    }
 }

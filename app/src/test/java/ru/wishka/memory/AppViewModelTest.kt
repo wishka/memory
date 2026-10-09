@@ -13,6 +13,11 @@ import ru.wishka.memory.data.sizeTitle
 import ru.wishka.memory.data.agoTitle
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.data.Audience
+import ru.wishka.memory.data.Aspect
+import ru.wishka.memory.data.ColorMatrix
+import ru.wishka.memory.data.MusicTrack
+import ru.wishka.memory.data.VideoEdit
+import ru.wishka.memory.data.VideoFilter
 import ru.wishka.memory.data.Notifications
 import ru.wishka.memory.data.Privacy
 import ru.wishka.memory.i18n.L10n
@@ -509,5 +514,103 @@ class AppViewModelTest {
         } finally {
             L10n.choice = Lang.Ru
         }
+    }
+
+    @Test
+    fun publishAndDeleteOwnPrism() {
+        val vm = AppViewModel()
+        val video = Attachment("v", MediaKind.Video, "/tmp/v.mp4")
+        vm.openPrismCreator()
+        assertTrue(vm.state.value.creatingPrism)
+        vm.publishPrism(video, null, "  Закат  ", "", 12_000)
+        val s = vm.state.value
+        val top = s.prisms.first()
+        assertFalse(s.creatingPrism)
+        assertEquals(Tab.Prism, s.tab)
+        assertEquals("Закат", top.caption)
+        assertEquals(video, top.video)
+        assertEquals(top.id, s.prismStartId)
+        assertTrue(top.music.contains(s.me.name))
+        // Чужой ролик удалить нельзя, свой — можно
+        val other = s.prisms.first { it.author.id != s.me.id }
+        vm.deletePrism(other.id)
+        assertTrue(vm.state.value.prisms.any { it.id == other.id })
+        vm.deletePrism(top.id)
+        assertTrue(vm.state.value.prisms.none { it.id == top.id })
+    }
+
+    @Test
+    fun musicLibraryAndPlaylists() {
+        val vm = AppViewModel()
+        val a = MusicTrack("a", "Луна", "Вера", "/tmp/a.mp3", 180_000)
+        val b = MusicTrack("b", "Море", "", "/tmp/b.mp3", 200_000)
+        vm.addTracks(listOf(a, b))
+        vm.addTracks(listOf(a.copy(id = "a2")))
+        assertEquals(2, vm.state.value.tracks.size)
+        val pid = vm.createPlaylist("  Дорога ")!!
+        assertEquals(null, vm.createPlaylist("   "))
+        vm.addToPlaylist(pid, "a")
+        vm.addToPlaylist(pid, "b")
+        vm.addToPlaylist(pid, "a")
+        vm.addToPlaylist(pid, "нет такого")
+        val p = vm.state.value.playlists.first { it.id == pid }
+        assertEquals("Дорога", p.name)
+        assertEquals(listOf("a", "b"), p.trackIds)
+        vm.moveInPlaylist(pid, "b", -1)
+        assertEquals(listOf("b", "a"), vm.state.value.playlists.first { it.id == pid }.trackIds)
+        vm.renamePlaylist(pid, "Ночь")
+        assertEquals("Ночь", vm.state.value.playlists.first { it.id == pid }.name)
+        // Удалённый трек уходит и из плейлиста
+        vm.deleteTrack("b")
+        assertEquals(listOf("a"), vm.state.value.playlists.first { it.id == pid }.trackIds)
+        // Всё переживает сохранение
+        val other = AppViewModel()
+        other.restore(vm.snapshot())
+        assertEquals(listOf("a"), other.state.value.tracks.map { it.id })
+        assertEquals("Ночь", other.state.value.playlists.single().name)
+        vm.deletePlaylist(pid)
+        assertTrue(vm.state.value.playlists.isEmpty())
+    }
+
+    @Test
+    fun videoEditRules() {
+        val e = VideoEdit("/tmp/s.mp4", 90_000, 1920, 1080, trimEndMs = 60_000)
+        // По умолчанию — вертикальный кадр 1080 × 1920
+        assertEquals(1080 to 1920, e.outputSize())
+        assertEquals(1080 to 1350, e.copy(aspect = Aspect.Tall).outputSize())
+        assertEquals(1080 to 1080, e.copy(aspect = Aspect.Square).outputSize())
+        // «Оригинал» — как снято; после поворота стороны меняются
+        assertEquals(1920 to 1080, e.copy(aspect = Aspect.Original).outputSize())
+        assertEquals(1080 to 1920, e.copy(aspect = Aspect.Original, rotation = 90).outputSize())
+        // Скорость меняет длительность
+        assertEquals(30_000L, e.copy(speed = 2f).outputDurationMs)
+        assertEquals(2_000L, e.copy(trimStartMs = 10_000, coverMs = 14_000, speed = 2f).coverOutputMs())
+        assertTrue(e.colorIsIdentity)
+        assertFalse(e.copy(filter = VideoFilter.Noir).colorIsIdentity)
+    }
+
+    @Test
+    fun colorMatrices() {
+        val e = VideoEdit("/tmp/s.mp4", 10_000, 1080, 1920)
+        // Без правок цвет не меняется
+        val (r, g, b) = ColorMatrix.apply(e.colorMatrix(), 0.2f, 0.5f, 0.8f)
+        assertEquals(0.2f, r, 1e-4f)
+        assertEquals(0.5f, g, 1e-4f)
+        assertEquals(0.8f, b, 1e-4f)
+        // Ч/Б — все каналы равны
+        val (nr, ng, nb) = ColorMatrix.apply(VideoFilter.Noir.matrix, 0.9f, 0.1f, 0.3f)
+        assertEquals(nr, ng, 1e-4f)
+        assertEquals(ng, nb, 1e-4f)
+        // Яркость поднимает все каналы
+        val (br, _, _) = ColorMatrix.apply(e.copy(brightness = 0.5f).colorMatrix(), 0.2f, 0.5f, 0.8f)
+        assertTrue(br > 0.2f)
+        // Тепло: красного больше, синего меньше
+        val (wr, _, wb) = ColorMatrix.apply(e.copy(warmth = 1f).colorMatrix(), 0.5f, 0.5f, 0.5f)
+        assertTrue(wr > 0.5f && wb < 0.5f)
+        // Матрица для OpenGL — по столбцам, сдвиг — в четвёртом столбце
+        val gl = ColorMatrix.toGl(ColorMatrix.offset(0.1f, 0.2f, 0.3f))
+        assertEquals(0.1f, gl[12], 1e-6f)
+        assertEquals(0.3f, gl[14], 1e-6f)
+        assertEquals(1f, gl[15], 1e-6f)
     }
 }

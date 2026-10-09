@@ -22,7 +22,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -43,6 +42,7 @@ import ru.wishka.memory.data.INTERESTS
 import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.User
 import ru.wishka.memory.data.plural
+import ru.wishka.memory.ui.components.MemoryMenu
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.UiState
@@ -147,10 +147,7 @@ fun ProfileScreen(
                                 .clickable { avatarMenu = true },
                             contentAlignment = Alignment.Center,
                         ) { Glyph(LineIcon.Camera, Palette.Ink, size = 16.dp) }
-                        DropdownMenu(
-                            expanded = avatarMenu,
-                            onDismissRequest = { avatarMenu = false },
-                        ) {
+                        MemoryMenu(expanded = avatarMenu, onDismiss = { avatarMenu = false }) {
                             MenuRow(LineIcon.Image, t("Выбрать из галереи")) { avatarMenu = false; picker.pickPhoto() }
                             MenuRow(LineIcon.Camera, t("Сделать фото")) { avatarMenu = false; picker.takePhoto() }
                             if (me.avatar.isNotEmpty()) {
@@ -213,9 +210,17 @@ fun ProfileScreen(
             }
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-                    Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Saved) }) {
-                        SettingRow(LineIcon.Bookmark, t("Сохранённое")) {
-                            Text("${state.savedPrisms.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                    Column {
+                        Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Saved) }) {
+                            SettingRow(LineIcon.Bookmark, t("Сохранённое")) {
+                                Text("${state.savedPrisms.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                            }
+                        }
+                        FadeLine(Modifier.padding(horizontal = 16.dp))
+                        Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Music) }) {
+                            SettingRow(LineIcon.Music, t("Моя музыка")) {
+                                Text("${state.tracks.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                            }
                         }
                     }
                 }

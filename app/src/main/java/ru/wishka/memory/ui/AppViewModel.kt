@@ -18,6 +18,8 @@ import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.Comment
 import ru.wishka.memory.data.ReplyRef
 import ru.wishka.memory.data.Message
+import ru.wishka.memory.data.MusicTrack
+import ru.wishka.memory.data.Playlist
 import ru.wishka.memory.data.Notifications
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.Privacy
@@ -34,6 +36,7 @@ enum class ProfileSection(private val ru: String) {
     Following("Подписки"),
     Groups("Группы"),
     Saved("Сохранённое"),
+    Music("Моя музыка"),
     ;
 
     /** Название на выбранном языке. */
@@ -79,6 +82,11 @@ data class UiState(
     val privacy: Privacy = Privacy(),
     /** Чёрный список: их записи, комментарии и сообщения не видны. */
     val blocked: Set<Int> = emptySet(),
+    /** «Моя музыка»: треки и плейлисты — только на этом телефоне. */
+    val tracks: List<MusicTrack> = emptyList(),
+    val playlists: List<Playlist> = emptyList(),
+    /** Создание своего PRISM — камера, редактор, публикация — поверх всего. */
+    val creatingPrism: Boolean = false,
     /** Настройки поверх вкладки «Профиль»; null — закрыты. */
     val settingsPage: SettingsPage? = null,
     /** Раздел чужого профиля (записи, подписчики, подписки) поверх его страницы. */
@@ -136,6 +144,8 @@ data class UiState(
     val followers: List<User> get() = Demo.people.filter { it.id in Demo.followers }
     /** «Сохранённое» в профиле: PRISM в закладках. */
     val savedPrisms: List<Prism> get() = prisms.filter { it.saved }
+    fun track(id: String): MusicTrack? = tracks.firstOrNull { it.id == id }
+    fun playlistTracks(playlist: Playlist): List<MusicTrack> = playlist.trackIds.mapNotNull { track(it) }
     /** Запись по номеру — в ленте или в группе: для обсуждения. */
     fun findPost(id: Long): Post? =
         posts.firstOrNull { it.id == id } ?: groups.firstNotNullOfOrNull { g -> g.posts.firstOrNull { it.id == id } }
@@ -233,6 +243,7 @@ class AppViewModel(
     fun back(): Boolean {
         val s = _state.value
         return when {
+            s.creatingPrism -> { closePrismCreator(); true }
             s.viewing != null -> { closeMedia(); true }
             s.commentsPostId != null || s.commentsPrismId != null -> { closeComments(); true }
             s.openChatId != null -> { closeChat(); true }
@@ -534,12 +545,107 @@ class AppViewModel(
         _state.update { it.copy(prismStartId = prismId) }
     }
 
+    /** Свой PRISM: камера → редактор → публикация. */
+    fun openPrismCreator() {
+        _state.update { it.copy(creatingPrism = true) }
+    }
+
+    fun closePrismCreator() {
+        _state.update { it.copy(creatingPrism = false) }
+    }
+
+    /**
+     * Опубликовать свой ролик: готовое видео из редактора, обложка,
+     * подпись и что звучит. Ролик встаёт первым во вкладке PRISM.
+     */
+    fun publishPrism(video: Attachment, cover: Attachment?, caption: String, music: String, durationMs: Int) {
+        _state.update { s ->
+            val prism = Prism(
+                id = nextId++, author = s.me, caption = caption.trim().take(300),
+                music = music.ifBlank { tf("Оригинальный звук · %s", s.me.name) },
+                seed = (nextId % 97).toInt(), likes = 0, comments = 0,
+                durationMs = durationMs.coerceAtLeast(1000), video = video, cover = cover, createdAt = clock(),
+            )
+            s.copy(prisms = listOf(prism) + s.prisms, creatingPrism = false, tab = Tab.Prism, prismStartId = prism.id)
+        }
+    }
+
+    /** Удалить свой ролик. Файлы удаляет экран — модель о файлах не знает. */
+    fun deletePrism(prismId: Long) {
+        _state.update { s ->
+            s.copy(prisms = s.prisms.filterNot { it.id == prismId && it.author.id == s.me.id })
+        }
+    }
+
     fun consumePrismStart() {
         _state.update { it.copy(prismStartId = null) }
     }
 
     private fun updatePrism(prismId: Long, change: (Prism) -> Prism) {
         _state.update { s -> s.copy(prisms = s.prisms.map { if (it.id == prismId) change(it) else it }) }
+    }
+
+    // ==================== МОЯ МУЗЫКА ====================
+
+    /** Новые треки — в начало списка; уже загруженные (тот же файл) не повторяются. */
+    fun addTracks(tracks: List<MusicTrack>) {
+        _state.update { s ->
+            val known = s.tracks.map { it.path }.toSet()
+            s.copy(tracks = tracks.filter { it.path !in known } + s.tracks)
+        }
+    }
+
+    /** Удалить трек: он уходит и из всех плейлистов. */
+    fun deleteTrack(trackId: String) {
+        _state.update { s ->
+            s.copy(
+                tracks = s.tracks.filterNot { it.id == trackId },
+                playlists = s.playlists.map { p -> p.copy(trackIds = p.trackIds - trackId) },
+            )
+        }
+    }
+
+    /** Новый плейлист; ответ — его номер, null — пустое название. */
+    fun createPlaylist(name: String): Long? {
+        val title = name.trim().take(60)
+        if (title.isEmpty()) return null
+        val id = nextId++
+        _state.update { s -> s.copy(playlists = s.playlists + Playlist(id, title)) }
+        return id
+    }
+
+    fun renamePlaylist(playlistId: Long, name: String) {
+        val title = name.trim().take(60)
+        if (title.isEmpty()) return
+        updatePlaylist(playlistId) { it.copy(name = title) }
+    }
+
+    fun deletePlaylist(playlistId: Long) {
+        _state.update { s -> s.copy(playlists = s.playlists.filterNot { it.id == playlistId }) }
+    }
+
+    /** Добавить трек в плейлист; уже добавленный не повторяется. */
+    fun addToPlaylist(playlistId: Long, trackId: String) {
+        if (_state.value.track(trackId) == null) return
+        updatePlaylist(playlistId) { if (trackId in it.trackIds) it else it.copy(trackIds = it.trackIds + trackId) }
+    }
+
+    fun removeFromPlaylist(playlistId: Long, trackId: String) {
+        updatePlaylist(playlistId) { it.copy(trackIds = it.trackIds - trackId) }
+    }
+
+    /** Сдвинуть трек в плейлисте на шаг вверх (-1) или вниз (+1). */
+    fun moveInPlaylist(playlistId: Long, trackId: String, step: Int) {
+        updatePlaylist(playlistId) { p ->
+            val i = p.trackIds.indexOf(trackId)
+            val j = i + step
+            if (i < 0 || j !in p.trackIds.indices) p
+            else p.copy(trackIds = p.trackIds.toMutableList().also { it.add(j, it.removeAt(i)) })
+        }
+    }
+
+    private fun updatePlaylist(playlistId: Long, change: (Playlist) -> Playlist) {
+        _state.update { s -> s.copy(playlists = s.playlists.map { if (it.id == playlistId) change(it) else it }) }
     }
 
     // ==================== ГРУППЫ ====================
@@ -692,7 +798,7 @@ class AppViewModel(
 
     /** То, что сохраняется на телефоне между запусками (см. StateStore). */
     fun snapshot(): Snapshot = _state.value.let {
-        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked)
+        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked, it.tracks, it.playlists)
     }
 
     /**
@@ -711,6 +817,8 @@ class AppViewModel(
                 notifications = snapshot.notifications,
                 privacy = snapshot.privacy,
                 blocked = snapshot.blocked - s.me.id,
+                tracks = snapshot.tracks,
+                playlists = snapshot.playlists,
             ).withMe(s.me)
         }
     }
@@ -748,6 +856,8 @@ data class Snapshot(
     val nextId: Long,
     val privacy: Privacy = Privacy(),
     val blocked: Set<Int> = emptySet(),
+    val tracks: List<MusicTrack> = emptyList(),
+    val playlists: List<Playlist> = emptyList(),
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

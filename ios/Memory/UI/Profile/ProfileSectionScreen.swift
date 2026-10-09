@@ -33,6 +33,7 @@ struct ProfileSectionScreen: View {
         case .following: return plural(state.followedPeople.count, "подписка", "подписки", "подписок")
         case .groups: return plural(state.myGroups.count, "группа", "группы", "групп")
         case .saved: return plural(state.savedPrisms.count, "ролик", "ролика", "роликов")
+        case .music: return plural(state.tracks.count, "трек", "трека", "треков")
         }
     }
 
@@ -85,6 +86,9 @@ struct ProfileSectionScreen: View {
                 }
             }
             .padding(.horizontal, 16)
+        case .music:
+            // «Моя музыка» — свой экран (MainScreen), сюда не попадает
+            EmptyView()
         }
     }
 
@@ -177,7 +181,11 @@ private struct SavedTile: View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack {
-                    PrismArt(spec: PrismSpec(seed: prism.seed), timeMs: 1_500)
+                    if let cover = prism.cover {
+                        MediaTile(attachment: cover, maxPixel: 480)
+                    } else {
+                        PrismArt(spec: PrismSpec(seed: prism.seed), timeMs: 1_500)
+                    }
                     Glyph(kind: .play, color: Palette.ink, size: 30)
                 }
                 .frame(height: 240)

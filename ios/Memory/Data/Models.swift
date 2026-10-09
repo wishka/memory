@@ -229,6 +229,39 @@ struct Prism: Identifiable, Equatable, Codable {
     var durationMs: Double = 9_000
     var saved: Bool = false
     var commentList: [Comment] = []
+    /// Свой ролик: готовое видео после редактора; nil — демо, «кадр»
+    /// рисует PrismArt. Необязательные — старые сохранения читаются без них.
+    var video: Attachment? = nil
+    /// Обложка своего ролика — кадр, выбранный в редакторе.
+    var cover: Attachment? = nil
+    var createdAt: Date? = nil
+}
+
+/// Трек в «Моей музыке». Файл — копия в папке приложения (fileName), его
+/// видит и слушает только владелец: пока сервера нет, это личная
+/// библиотека на телефоне.
+struct MusicTrack: Identifiable, Equatable, Codable, Hashable {
+    let id: String
+    var title: String
+    var artist: String
+    var fileName: String
+    var durationMs: Int64 = 0
+    var addedAt: Date? = nil
+
+    var url: URL { MediaFiles.directory.appendingPathComponent(fileName) }
+}
+
+/// Плейлист: название и треки по порядку.
+struct Playlist: Identifiable, Equatable, Codable {
+    let id: Int64
+    var name: String
+    var trackIds: [String] = []
+}
+
+/// «3:07» — длительность трека или ролика.
+func durationTitle(_ ms: Int64) -> String {
+    let total = max(0, ms / 1000)
+    return "\(total / 60):" + String(format: "%02d", Int(total % 60))
 }
 
 /// То, что человек рассказывает о себе в профиле. Сохраняется вместе с аккаунтом.

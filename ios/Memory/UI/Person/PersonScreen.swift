@@ -5,6 +5,7 @@ import SwiftUI
 struct PersonScreen: View {
     let model: AppModel
     let person: User
+    @State private var showMenu = false
 
     var body: some View {
         if let section = model.state.personSection {
@@ -28,17 +29,12 @@ struct PersonScreen: View {
                     Text("@\(person.handle)").textStyle(.title)
                     Spacer()
                     // «⋯»: заблокировать или разблокировать
-                    Menu {
-                        if blocked {
-                            Button(t("Разблокировать")) { model.unblock(person.id) }
-                        } else {
-                            Button(t("Заблокировать"), role: .destructive) { model.block(person.id) }
-                        }
-                    } label: {
-                        Glyph(kind: .more, color: Palette.ink, size: 24)
-                            .frame(width: 44, height: 44)
-                            .glass(Circle())
-                    }
+                    RoundGlyphButton(icon: .more) { showMenu = true }
+                        .glassActions($showMenu, title: person.name, actions: [
+                            blocked
+                                ? GlassAction(icon: .block, title: t("Разблокировать")) { model.unblock(person.id) }
+                                : GlassAction(icon: .block, title: t("Заблокировать"), destructive: true) { model.block(person.id) },
+                        ])
                 }
                 .padding(.horizontal, 12)
 

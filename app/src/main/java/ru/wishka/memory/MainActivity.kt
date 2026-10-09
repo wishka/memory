@@ -58,6 +58,9 @@ import ru.wishka.memory.ui.components.CosmicBackground
 import ru.wishka.memory.ui.feed.FeedScreen
 import ru.wishka.memory.ui.profile.ProfileScreen
 import ru.wishka.memory.ui.profile.ProfileSectionScreen
+import ru.wishka.memory.ui.profile.MusicScreen
+import ru.wishka.memory.ui.prism.create.PrismCreateFlow
+import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.settings.AccountActions
 import ru.wishka.memory.ui.settings.SettingsScreen
 import ru.wishka.memory.data.DevicePrefs
@@ -163,6 +166,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
     // → группа → лента → выход
     val canGoBack = state.viewing != null || state.commentsPostId != null || state.commentsPrismId != null ||
         state.openChatId != null || state.openPersonId != null || state.profileSection != null || state.settingsPage != null ||
+        state.creatingPrism ||
         state.openGroupId != null || state.tab != Tab.Feed
     BackHandler(enabled = canGoBack) { vm.back() }
 
@@ -201,6 +205,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                         val settings = state.settingsPage
                         when {
                             settings != null -> SettingsScreen(vm, state, settings, padding, version, prefs, account)
+                            section == ProfileSection.Music -> MusicScreen(vm, state, padding)
                             section != null -> ProfileSectionScreen(vm, state, section, padding)
                             else -> ProfileScreen(vm, state, padding, onSaveProfile)
                         }
@@ -250,5 +255,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             }
         }
         state.viewing?.let { MediaViewer(it, onClose = vm::closeMedia) }
+        // Свой PRISM — камера и редактор во весь экран, поверх всего
+        if (state.creatingPrism) PrismCreateFlow(vm, state)
     }
 }

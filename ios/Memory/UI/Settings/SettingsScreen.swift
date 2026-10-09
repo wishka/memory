@@ -94,12 +94,13 @@ private struct MainSettings: View {
             }
             .buttonStyle(.plain)
         }
-        .confirmationDialog(t("Выйти из аккаунта?"), isPresented: $confirmLogout, titleVisibility: .visible) {
-            Button(t("Выйти"), role: .destructive, action: account.logout)
-            Button(t("Отмена"), role: .cancel) {}
-        } message: {
-            Text(t("Записи и переписка останутся на этом телефоне — они вернутся, когда вы войдёте снова."))
-        }
+        .glassActions(
+            $confirmLogout,
+            title: t("Выйти из аккаунта?"),
+            message: t("Записи и переписка останутся на этом телефоне — они вернутся, когда вы войдёте снова."),
+            cancel: true,
+            actions: [GlassAction(icon: .exit, title: t("Выйти"), destructive: true, action: account.logout)]
+        )
     }
 }
 

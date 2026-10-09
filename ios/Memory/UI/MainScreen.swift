@@ -52,6 +52,10 @@ struct MainScreen: View {
         .fullScreenCover(item: viewing) { attachment in
             MediaViewer(attachment: attachment) { model.closeMedia() }
         }
+        // Свой PRISM: камера → редактор → публикация
+        .fullScreenCover(isPresented: creatingPrism) {
+            PrismCreateFlow(model: model)
+        }
         .animation(.easeOut(duration: 0.22), value: state.tab)
         .animation(.easeOut(duration: 0.25), value: state.openChatId)
         .animation(.easeOut(duration: 0.25), value: state.openPersonId)
@@ -65,6 +69,13 @@ struct MainScreen: View {
         Binding(
             get: { model.state.commentsPostId != nil || model.state.commentsPrismId != nil },
             set: { if !$0 { model.closeComments() } }
+        )
+    }
+
+    private var creatingPrism: Binding<Bool> {
+        Binding(
+            get: { model.state.creatingPrism },
+            set: { if !$0 { model.closePrismCreator() } }
         )
     }
 
@@ -118,6 +129,8 @@ struct MainScreen: View {
         case .profile:
             if let page = model.state.settingsPage {
                 SettingsScreen(model: model, page: page, account: account)
+            } else if model.state.profileSection == .music {
+                MusicScreen(model: model)
             } else if let section = model.state.profileSection {
                 ProfileSectionScreen(model: model, section: section)
             } else {

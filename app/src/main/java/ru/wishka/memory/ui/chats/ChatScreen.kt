@@ -29,7 +29,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,6 +54,7 @@ import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.data.MediaKind
 import ru.wishka.memory.data.Message
 import ru.wishka.memory.data.ReplyRef
+import ru.wishka.memory.ui.components.MemoryMenu
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.i18n.tf
 import ru.wishka.memory.ui.messagePreview
@@ -436,7 +436,7 @@ private fun Bubble(
                     )
                 }
             }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
                 MenuRow(LineIcon.Reply, t("Ответить")) {
                     menu = false
                     onReply()

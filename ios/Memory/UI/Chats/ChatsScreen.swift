@@ -6,6 +6,8 @@ struct ChatsScreen: View {
     @State private var query = ""
     /// Что подтверждаем: очистку истории или удаление переписки.
     @State private var confirm: ChatConfirm?
+    /// Переписка, для которой открыто меню (долгое нажатие).
+    @State private var menuChat: Chat?
 
     var body: some View {
         let state = model.state
@@ -37,9 +39,8 @@ struct ChatsScreen: View {
                 }
 
                 ForEach(chats) { chat in
-                    ChatRow(chat: chat) { model.openChat(chat.id) }
-                        // Долгое нажатие — меню переписки
-                        .contextMenu { menu(chat, blocked: state.isBlocked(chat.peer.id)) }
+                    // Долгое нажатие — меню переписки
+                    ChatRow(chat: chat, onOpen: { model.openChat(chat.id) }, onMenu: { menuChat = chat })
                     FadeLine().padding(.horizontal, 24)
                 }
             }
@@ -47,62 +48,53 @@ struct ChatsScreen: View {
             .padding(.bottom, tabBarSpace)
         }
         .scrollDismissesKeyboard(.interactively)
-        .confirmationDialog(confirmTitle, isPresented: confirmShown, titleVisibility: .visible) {
-            if let confirm {
-                Button(confirm.delete ? t("Удалить") : t("Очистить"), role: .destructive) {
-                    if confirm.delete { model.deleteChat(confirm.chatId) } else { model.clearHistory(confirm.chatId) }
-                }
-            }
-            Button(t("Отмена"), role: .cancel) {}
-        } message: {
-            Text(confirm?.delete == true
-                 ? t("Переписка исчезнет из списка вместе со всеми сообщениями.")
-                 : t("Сообщения удалятся, сама переписка останется в списке."))
+        .glassActions(item: $menuChat, title: { $0.peer.name }) { chat in
+            menu(chat, blocked: model.state.isBlocked(chat.peer.id))
         }
+        .background(
+            Color.clear.glassActions(
+                item: $confirm,
+                title: { $0.delete ? tf("Удалить переписку с %s?", $0.peer) : t("Очистить историю?") },
+                message: {
+                    $0.delete
+                        ? t("Переписка исчезнет из списка вместе со всеми сообщениями.")
+                        : t("Сообщения удалятся, сама переписка останется в списке.")
+                },
+                cancel: true
+            ) { c in
+                [GlassAction(icon: .trash, title: c.delete ? t("Удалить") : t("Очистить"), destructive: true) {
+                    if c.delete { model.deleteChat(c.chatId) } else { model.clearHistory(c.chatId) }
+                }]
+            }
+        )
     }
 
-    @ViewBuilder
-    private func menu(_ chat: Chat, blocked: Bool) -> some View {
-        Button { model.toggleChatOnTop(chat.id) } label: {
-            Label(chat.onTop ? t("Открепить") : t("Закрепить"), systemImage: chat.onTop ? "pin.slash" : "pin")
-        }
-        Button { model.toggleChatMute(chat.id) } label: {
-            Label(chat.muted ? t("Включить звук") : t("Без звука"), systemImage: chat.muted ? "bell" : "bell.slash")
-        }
+    private func menu(_ chat: Chat, blocked: Bool) -> [GlassAction] {
+        var items = [
+            GlassAction(icon: .pushpin, title: chat.onTop ? t("Открепить") : t("Закрепить")) { model.toggleChatOnTop(chat.id) },
+            GlassAction(icon: chat.muted ? .bell : .bellOff, title: chat.muted ? t("Включить звук") : t("Без звука")) { model.toggleChatMute(chat.id) },
+        ]
         if chat.unread > 0 {
-            Button { model.markRead(chat.id) } label: {
-                Label(t("Отметить прочитанным"), systemImage: "checkmark.message")
-            }
+            items.append(GlassAction(icon: .check, title: t("Отметить прочитанным")) { model.markRead(chat.id) })
         } else {
-            Button { model.markUnread(chat.id) } label: {
-                Label(t("Отметить непрочитанным"), systemImage: "message.badge")
-            }
+            items.append(GlassAction(icon: .chats, title: t("Отметить непрочитанным")) { model.markUnread(chat.id) })
         }
-        Button {
+        items.append(GlassAction(icon: .block, title: blocked ? t("Разблокировать") : t("Заблокировать")) {
             if blocked { model.unblock(chat.peer.id) } else { model.block(chat.peer.id) }
-        } label: {
-            Label(blocked ? t("Разблокировать") : t("Заблокировать"), systemImage: "nosign")
-        }
-        Button { confirm = ChatConfirm(chatId: chat.id, peer: chat.peer.name, delete: false) } label: {
-            Label(t("Очистить историю"), systemImage: "eraser")
-        }
-        Button(role: .destructive) { confirm = ChatConfirm(chatId: chat.id, peer: chat.peer.name, delete: true) } label: {
-            Label(t("Удалить чат"), systemImage: "trash")
-        }
-    }
-
-    private var confirmShown: Binding<Bool> {
-        Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } })
-    }
-
-    private var confirmTitle: String {
-        guard let confirm else { return "" }
-        return confirm.delete ? tf("Удалить переписку с %s?", confirm.peer) : t("Очистить историю?")
+        })
+        items.append(GlassAction(icon: .trash, title: t("Очистить историю")) {
+            confirm = ChatConfirm(chatId: chat.id, peer: chat.peer.name, delete: false)
+        })
+        items.append(GlassAction(icon: .trash, title: t("Удалить чат"), destructive: true) {
+            confirm = ChatConfirm(chatId: chat.id, peer: chat.peer.name, delete: true)
+        })
+        return items
     }
 }
 
 /// Подтверждение очистки или удаления переписки.
-private struct ChatConfirm {
+private struct ChatConfirm: Identifiable {
+    var id: Int { chatId }
     let chatId: Int
     let peer: String
     let delete: Bool
@@ -111,6 +103,7 @@ private struct ChatConfirm {
 private struct ChatRow: View {
     let chat: Chat
     let onOpen: () -> Void
+    let onMenu: () -> Void
 
     private var preview: String {
         if chat.typing { return t("печатает…") }
@@ -119,7 +112,20 @@ private struct ChatRow: View {
     }
 
     var body: some View {
-        Button(action: onOpen) {
+        content
+            .contentShape(Rectangle())
+            // Нажатие — переписка, долгое нажатие — меню
+            .onTapGesture(perform: onOpen)
+            .onLongPressGesture(minimumDuration: 0.4) {
+                pressCount += 1
+                onMenu()
+            }
+            .sensoryFeedback(.impact(weight: .medium), trigger: pressCount)
+    }
+
+    @State private var pressCount = 0
+
+    private var content: some View {
             HStack(spacing: 14) {
                 Avatar(user: chat.peer, size: 50, showOnline: true)
                 VStack(alignment: .leading, spacing: 3) {
@@ -150,9 +156,6 @@ private struct ChatRow: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 
