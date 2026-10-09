@@ -31,6 +31,11 @@ final class StateStore {
         try? data.write(to: file(login), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
+    /// Удалить сохранённое аккаунта — при удалении аккаунта.
+    func delete(_ login: String) {
+        try? FileManager.default.removeItem(at: file(login))
+    }
+
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .millisecondsSince1970

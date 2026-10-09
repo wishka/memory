@@ -51,7 +51,21 @@ struct RootView: View {
                 MainScreen(
                     model: model,
                     onSaveProfile: { name, info in auth.saveProfile(name, info) },
-                    onLogout: { auth.logout() }
+                    account: AccountActions(
+                        logout: { auth.logout() },
+                        changePassword: { current, new, repeated in
+                            await auth.changePassword(current, new, repeated)
+                        },
+                        deleteAccount: { password in
+                            let login = auth.account?.username
+                            let error = await auth.deleteAccount(password)
+                            if error == nil, let login {
+                                saveTask?.cancel()
+                                store.delete(login)
+                            }
+                            return error
+                        }
+                    )
                 )
                 .transition(.opacity)
             }

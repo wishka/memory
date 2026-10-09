@@ -58,6 +58,9 @@ import ru.wishka.memory.ui.components.CosmicBackground
 import ru.wishka.memory.ui.feed.FeedScreen
 import ru.wishka.memory.ui.profile.ProfileScreen
 import ru.wishka.memory.ui.profile.ProfileSectionScreen
+import ru.wishka.memory.ui.settings.AccountActions
+import ru.wishka.memory.ui.settings.SettingsScreen
+import ru.wishka.memory.data.DevicePrefs
 import ru.wishka.memory.ui.splash.AtomSplash
 import ru.wishka.memory.ui.theme.MemoryTheme
 
@@ -69,6 +72,8 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        // Язык и размер текста — до первого экрана, чтобы не мигали
+        DevicePrefs(applicationContext).load()
         setContent {
             MemoryTheme { AppRoot() }
         }
@@ -124,15 +129,31 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
         when (s) {
             Stage.Splash -> AtomSplash(onFinished = { splashDone = true })
             Stage.Auth -> AuthScreen(authVm, auth)
-            Stage.Main -> MainScreen(vm, onSaveProfile = authVm::saveProfile, onLogout = authVm::logout)
+            Stage.Main -> MainScreen(
+                vm,
+                onSaveProfile = authVm::saveProfile,
+                account = AccountActions(
+                    logout = authVm::logout,
+                    changePassword = authVm::changePassword,
+                    deleteAccount = { password ->
+                        val login = account?.username
+                        val error = authVm.deleteAccount(password)
+                        if (error == null && login != null) {
+                            withContext(Dispatchers.IO) { store.delete(login) }
+                        }
+                        error
+                    },
+                ),
+            )
         }
     }
 }
 
 @Composable
-private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) -> Unit, onLogout: () -> Unit) {
+private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) -> Unit, account: AccountActions) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
+    val prefs = remember(context) { DevicePrefs(context.applicationContext) }
     val version = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
             .getOrNull() ?: ""
@@ -141,7 +162,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
     // «Назад»: просмотр фото → обсуждение → переписка → страница человека
     // → группа → лента → выход
     val canGoBack = state.viewing != null || state.commentsPostId != null || state.commentsPrismId != null ||
-        state.openChatId != null || state.openPersonId != null || state.profileSection != null ||
+        state.openChatId != null || state.openPersonId != null || state.profileSection != null || state.settingsPage != null ||
         state.openGroupId != null || state.tab != Tab.Feed
     BackHandler(enabled = canGoBack) { vm.back() }
 
@@ -158,7 +179,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         val openPerson = state.openPerson
         val openGroup = state.openGroup
         if (openChat != null) {
-            ChatScreen(vm, openChat, state.chats.filter { it.id != openChat.id })
+            ChatScreen(vm, openChat, state.chats.filter { it.id != openChat.id }, blocked = state.isBlocked(openChat.peer.id))
         } else {
         when {
             // Страница человека и группы — поверх вкладки, панель вкладок остаётся
@@ -177,8 +198,12 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     Tab.Groups -> GroupsScreen(vm, state, padding)
                     Tab.Profile -> {
                         val section = state.profileSection
-                        if (section != null) ProfileSectionScreen(vm, state, section, padding)
-                        else ProfileScreen(vm, state, padding, version, onSaveProfile, onLogout)
+                        val settings = state.settingsPage
+                        when {
+                            settings != null -> SettingsScreen(vm, state, settings, padding, version, prefs, account)
+                            section != null -> ProfileSectionScreen(vm, state, section, padding)
+                            else -> ProfileScreen(vm, state, padding, onSaveProfile)
+                        }
                     }
                 }
             }
@@ -200,10 +225,11 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             state.findPost(id)?.let { post ->
                 CommentsSheet(
                     total = post.comments,
-                    comments = post.commentList,
+                    comments = post.commentList.filter { it.author.id !in state.blocked },
                     myId = state.me.id,
                     onSend = { vm.addComment(id, it) },
                     onDelete = { vm.deleteComment(id, it) },
+                    onLike = { vm.toggleCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
                 )
@@ -213,10 +239,11 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             state.findPrism(id)?.let { prism ->
                 CommentsSheet(
                     total = prism.comments,
-                    comments = prism.commentList,
+                    comments = prism.commentList.filter { it.author.id !in state.blocked },
                     myId = state.me.id,
                     onSend = { vm.addPrismComment(id, it) },
                     onDelete = { vm.deletePrismComment(id, it) },
+                    onLike = { vm.togglePrismCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
                 )

@@ -86,11 +86,11 @@ final class LocalAuth {
         let login = Self.normalize(username)
         if let error = Self.validateLogin(login) { return .error(error) }
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.isEmpty { return .error("Укажите имя") }
-        if name.count > 40 { return .error("Имя длиннее 40 символов") }
+        if name.isEmpty { return .error(t("Укажите имя")) }
+        if name.count > 40 { return .error(t("Имя длиннее 40 символов")) }
         if let error = Self.validatePassword(password) { return .error(error) }
-        if password != repeated { return .error("Пароли не совпадают") }
-        if store.get(key(login, "hash")) != nil { return .error("Логин @\(login) уже занят") }
+        if password != repeated { return .error(t("Пароли не совпадают")) }
+        if store.get(key(login, "hash")) != nil { return .error(tf("Логин @%s уже занят", login)) }
 
         let salt = PasswordHasher.newSalt()
         store.put(key(login, "salt"), salt.hex)
@@ -102,13 +102,13 @@ final class LocalAuth {
 
     func login(username: String, password: String) -> AuthResult {
         let login = Self.normalize(username)
-        if login.isEmpty || password.isEmpty { return .error("Введите логин и пароль") }
+        if login.isEmpty || password.isEmpty { return .error(t("Введите логин и пароль")) }
 
         let lockedUntil = store.get(key(login, "locked")).flatMap { Int64($0) } ?? 0
         let now = clock()
         if now < lockedUntil {
             let sec = max(1, (lockedUntil - now) / 1000)
-            return .error("Слишком много попыток. Попробуйте через \(sec) с")
+            return .error(tf("Слишком много попыток. Попробуйте через %s с", sec))
         }
 
         let hash = store.get(key(login, "hash"))
@@ -122,7 +122,7 @@ final class LocalAuth {
         }
         if !ok {
             if hash != nil { registerFailure(login, now: now) }
-            return .error("Неверный логин или пароль")
+            return .error(t("Неверный логин или пароль"))
         }
         store.remove(key(login, "fails"))
         store.remove(key(login, "locked"))
@@ -148,6 +148,44 @@ final class LocalAuth {
         store.put(key(login, "p.birthday"), Self.clip(info.birthday, 20))
         store.put(key(login, "p.website"), Self.clip(info.website, 80))
         store.put(key(login, "p.interests"), info.interests.joined(separator: "|"))
+        store.put(key(login, "p.avatar"), info.avatar)
+    }
+
+    /// Сменить пароль: нужен текущий. nil — готово, иначе текст ошибки.
+    /// Сессия остаётся: человек не выходит из профиля.
+    func changePassword(username: String, current: String, new: String, repeatPassword repeated: String) -> String? {
+        let login = Self.normalize(username)
+        if current.isEmpty { return t("Введите текущий пароль") }
+        if !checkPassword(login, current) { return t("Текущий пароль не подходит") }
+        if let error = Self.validatePassword(new) { return error }
+        if new != repeated { return t("Пароли не совпадают") }
+        if new == current { return t("Новый пароль совпадает с текущим") }
+        let salt = PasswordHasher.newSalt()
+        store.put(key(login, "salt"), salt.hex)
+        store.put(key(login, "hash"), PasswordHasher.hash(new, salt: salt, iterations: iterations).hex)
+        store.put(key(login, "iter"), String(iterations))
+        return nil
+    }
+
+    /// Удалить аккаунт с этого телефона — после проверки пароля. Сессия
+    /// завершается. nil — удалён, иначе текст ошибки.
+    func deleteAccount(username: String, password: String) -> String? {
+        let login = Self.normalize(username)
+        if password.isEmpty { return t("Введите пароль") }
+        if !checkPassword(login, password) { return t("Пароль не подходит") }
+        for field in ["salt", "hash", "iter", "name", "fails", "locked",
+                      "p.bio", "p.city", "p.birthday", "p.website", "p.interests", "p.avatar"] {
+            store.remove(key(login, field))
+        }
+        if store.get(Self.sessionUser) == login { logout() }
+        return nil
+    }
+
+    private func checkPassword(_ login: String, _ password: String) -> Bool {
+        guard let hash = store.get(key(login, "hash")), let salt = store.get(key(login, "salt")),
+              let saltBytes = [UInt8](hex: salt), let hashBytes = [UInt8](hex: hash) else { return false }
+        let iter = store.get(key(login, "iter")).flatMap { Int($0) } ?? PasswordHasher.iterations
+        return PasswordHasher.verify(password, salt: saltBytes, expected: hashBytes, iterations: iter)
     }
 
     /// Демо-аккаунт для первого знакомства с приложением; ничего не делает, если он уже есть.
@@ -157,7 +195,7 @@ final class LocalAuth {
         store.put(key(Self.demoLogin, "salt"), salt.hex)
         store.put(key(Self.demoLogin, "hash"), PasswordHasher.hash(Self.demoPassword, salt: salt, iterations: iterations).hex)
         store.put(key(Self.demoLogin, "iter"), String(iterations))
-        store.put(key(Self.demoLogin, "name"), "Гость Memory")
+        store.put(key(Self.demoLogin, "name"), t("Гость Memory"))
     }
 
     // MARK: - Внутреннее
@@ -179,7 +217,8 @@ final class LocalAuth {
             city: store.get(key(login, "p.city")) ?? "",
             birthday: store.get(key(login, "p.birthday")) ?? "",
             website: store.get(key(login, "p.website")) ?? "",
-            interests: interests
+            interests: interests,
+            avatar: store.get(key(login, "p.avatar")) ?? ""
         )
         return Account(username: login, displayName: store.get(key(login, "name")) ?? login, info: info)
     }
@@ -211,18 +250,18 @@ final class LocalAuth {
     private static let loginChars = Set("abcdefghijklmnopqrstuvwxyz0123456789._")
 
     static func validateLogin(_ login: String) -> String? {
-        if login.count < 3 { return "Логин — от 3 символов" }
-        if login.count > 20 { return "Логин — не длиннее 20 символов" }
+        if login.count < 3 { return t("Логин — от 3 символов") }
+        if login.count > 20 { return t("Логин — не длиннее 20 символов") }
         if !login.allSatisfy({ loginChars.contains($0) }) {
-            return "Логин: латинские буквы, цифры, точка и подчёркивание"
+            return t("Логин: латинские буквы, цифры, точка и подчёркивание")
         }
         return nil
     }
 
     static func validatePassword(_ password: String) -> String? {
-        if password.count < 8 { return "Пароль — от 8 символов" }
+        if password.count < 8 { return t("Пароль — от 8 символов") }
         if !password.contains(where: { $0.isLetter }) || !password.contains(where: { $0.isNumber }) {
-            return "В пароле нужны буквы и цифры"
+            return t("В пароле нужны буквы и цифры")
         }
         return nil
     }

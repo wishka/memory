@@ -37,13 +37,20 @@ class StateStore(private val context: Context) {
         }
     }
 
+    /** Удалить сохранённое аккаунта — при удалении аккаунта. */
+    fun delete(login: String) {
+        file(login).delete()
+    }
+
     private class Codec(private val me: User) {
         private fun person(id: Int): User = if (id == me.id) me else Demo.person(id) ?: User(id, "Неизвестный", "unknown")
 
         fun json(s: Snapshot): JSONObject = JSONObject()
             .put("version", VERSION)
             .put("nextId", s.nextId)
-            .put("notifications", s.notifications)
+            .put("notify", notify(s.notifications))
+            .put("privacy", privacy(s.privacy))
+            .put("blocked", JSONArray(s.blocked.toList()))
             .put("following", JSONArray(s.following.toList()))
             .put("posts", JSONArray(s.posts.map { post(it) }))
             .put("chats", JSONArray(s.chats.map { chat(it) }))
@@ -56,9 +63,39 @@ class StateStore(private val context: Context) {
             groups = o.getJSONArray("groups").objects().map { group(it) },
             prisms = o.getJSONArray("prisms").objects().map { prism(it) },
             following = o.getJSONArray("following").let { a -> (0 until a.length()).map { a.getInt(it) }.toSet() },
-            notifications = o.optBoolean("notifications", true),
+            // Старый файл: только общий выключатель «notifications»
+            notifications = o.optJSONObject("notify")?.let { notify(it) }
+                ?: Notifications(all = o.optBoolean("notifications", true)),
             nextId = o.optLong("nextId", 10_000),
+            privacy = o.optJSONObject("privacy")?.let { privacy(it) } ?: Privacy(),
+            blocked = o.optJSONArray("blocked")?.let { a -> (0 until a.length()).map { a.getInt(it) }.toSet() } ?: emptySet(),
         )
+
+        private fun notify(n: Notifications) = JSONObject()
+            .put("all", n.all).put("messages", n.messages).put("reactions", n.reactions)
+            .put("groups", n.groups).put("follows", n.follows)
+
+        private fun notify(o: JSONObject) = Notifications(
+            all = o.optBoolean("all", true), messages = o.optBoolean("messages", true),
+            reactions = o.optBoolean("reactions", true), groups = o.optBoolean("groups", true),
+            follows = o.optBoolean("follows", true),
+        )
+
+        private fun privacy(p: Privacy) = JSONObject()
+            .put("profileInfo", p.profileInfo.name).put("followLists", p.followLists.name)
+            .put("messages", p.messages.name).put("comments", p.comments.name)
+            .put("showOnline", p.showOnline).put("showBirthday", p.showBirthday)
+
+        private fun privacy(o: JSONObject) = Privacy(
+            profileInfo = audience(o.optString("profileInfo")),
+            followLists = audience(o.optString("followLists")),
+            messages = audience(o.optString("messages")),
+            comments = audience(o.optString("comments")),
+            showOnline = o.optBoolean("showOnline", true),
+            showBirthday = o.optBoolean("showBirthday", true),
+        )
+
+        private fun audience(name: String) = Audience.entries.firstOrNull { it.name == name } ?: Audience.Everyone
 
         private fun attachment(a: Attachment) = JSONObject()
             .put("id", a.id).put("kind", a.kind.name).put("path", a.path)
@@ -72,10 +109,12 @@ class StateStore(private val context: Context) {
         private fun comment(c: Comment) = JSONObject()
             .put("id", c.id).put("author", c.author.id).put("text", c.text)
             .put("minutesAgo", c.minutesAgo).put("createdAt", c.createdAt)
+            .put("likes", c.likes).put("liked", c.liked)
 
         private fun comment(o: JSONObject) = Comment(
             o.getLong("id"), person(o.getInt("author")), o.getString("text"),
             o.optInt("minutesAgo"), o.optLong("createdAt"),
+            likes = o.optInt("likes"), liked = o.optBoolean("liked"),
         )
 
         private fun post(p: Post) = JSONObject()
@@ -116,6 +155,7 @@ class StateStore(private val context: Context) {
         private fun chat(c: Chat) = JSONObject()
             .put("id", c.id).put("peer", c.peer.id).put("unread", c.unread)
             .put("pinnedId", c.pinnedId ?: JSONObject.NULL)
+            .put("onTop", c.onTop).put("muted", c.muted)
             .put("messages", JSONArray(c.messages.map { message(it) }))
 
         private fun chat(o: JSONObject) = Chat(
@@ -123,17 +163,21 @@ class StateStore(private val context: Context) {
             o.getJSONArray("messages").objects().map { message(it) },
             unread = o.optInt("unread"),
             pinnedId = if (o.isNull("pinnedId")) null else o.getLong("pinnedId"),
+            onTop = o.optBoolean("onTop"),
+            muted = o.optBoolean("muted"),
         )
 
         private fun group(g: Group) = JSONObject()
             .put("id", g.id).put("name", g.name).put("description", g.description).put("topic", g.topic)
             .put("members", g.members).put("seed", g.seed).put("joined", g.joined).put("mine", g.mine)
+            .put("muted", g.muted)
             .put("posts", JSONArray(g.posts.map { post(it) }))
 
         private fun group(o: JSONObject) = Group(
             o.getInt("id"), o.getString("name"), o.optString("description"), o.optString("topic"),
             o.optInt("members"), o.optInt("seed"), o.optBoolean("joined"), o.optBoolean("mine"),
             o.getJSONArray("posts").objects().map { post(it) },
+            muted = o.optBoolean("muted"),
         )
 
         private fun prism(p: Prism) = JSONObject()

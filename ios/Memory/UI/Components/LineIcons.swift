@@ -8,6 +8,7 @@ enum LineIcon {
     case share, bookmark, bookmarkFilled, attach, camera, video, image, document, trash, play, close
     case reply, forward, chevronDown, pushpin
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
+    case gear, shield, lock, block, textSize, globe, bellOff, more, eye, check
 }
 
 struct Glyph: View {
@@ -384,6 +385,88 @@ struct Glyph: View {
             bell.closeSubpath()
             strokePath(bell)
             strokePath(line(s, 0.44, 0.8, 0.56, 0.8))
+        case .gear:
+            // Шестерёнка: кольцо, восемь зубцов и ступица
+            strokePath(circle(s, 0.5, 0.5, 0.24))
+            strokePath(circle(s, 0.5, 0.5, 0.09))
+            let teeth = StrokeStyle(lineWidth: 2.4, lineCap: .round)
+            for k in 0..<8 {
+                let a = Double(k) * .pi / 4
+                let cx = CGFloat(cos(a))
+                let cy = CGFloat(sin(a))
+                context.stroke(line(s, 0.5 + cx * 0.25, 0.5 + cy * 0.25, 0.5 + cx * 0.37, 0.5 + cy * 0.37), with: shading, style: teeth)
+            }
+        case .shield:
+            var shield = Path()
+            shield.move(to: p(s, 0.5, 0.12))
+            shield.addLine(to: p(s, 0.8, 0.24))
+            shield.addLine(to: p(s, 0.8, 0.46))
+            shield.addCurve(to: p(s, 0.5, 0.88), control1: p(s, 0.8, 0.68), control2: p(s, 0.64, 0.82))
+            shield.addCurve(to: p(s, 0.2, 0.46), control1: p(s, 0.36, 0.82), control2: p(s, 0.2, 0.68))
+            shield.addLine(to: p(s, 0.2, 0.24))
+            shield.closeSubpath()
+            strokePath(shield)
+            strokePath(diamond(s, 0.5, 0.48, 0.1))
+        case .lock:
+            strokePath(roundRect(s, 0.24, 0.44, 0.52, 0.4, 0.08))
+            var shackle = Path()
+            shackle.move(to: p(s, 0.34, 0.44))
+            shackle.addLine(to: p(s, 0.34, 0.36))
+            shackle.addCurve(to: p(s, 0.66, 0.36), control1: p(s, 0.34, 0.14), control2: p(s, 0.66, 0.14))
+            shackle.addLine(to: p(s, 0.66, 0.44))
+            strokePath(shackle)
+            strokePath(line(s, 0.5, 0.58, 0.5, 0.7))
+        case .block:
+            strokePath(circle(s, 0.5, 0.5, 0.32))
+            strokePath(line(s, 0.28, 0.28, 0.72, 0.72))
+        case .textSize:
+            // Большая и маленькая «А»
+            var big = Path()
+            big.move(to: p(s, 0.1, 0.8))
+            big.addLine(to: p(s, 0.34, 0.2))
+            big.addLine(to: p(s, 0.58, 0.8))
+            strokePath(big)
+            strokePath(line(s, 0.19, 0.58, 0.49, 0.58))
+            var small = Path()
+            small.move(to: p(s, 0.6, 0.8))
+            small.addLine(to: p(s, 0.75, 0.44))
+            small.addLine(to: p(s, 0.9, 0.8))
+            strokePath(small)
+            strokePath(line(s, 0.66, 0.67, 0.84, 0.67))
+        case .globe:
+            strokePath(circle(s, 0.5, 0.5, 0.34))
+            strokePath(Path(ellipseIn: CGRect(x: s * 0.36, y: s * 0.16, width: s * 0.28, height: s * 0.68)))
+            strokePath(line(s, 0.16, 0.5, 0.84, 0.5))
+        case .bellOff:
+            var bell = Path()
+            bell.move(to: p(s, 0.24, 0.7))
+            bell.addLine(to: p(s, 0.76, 0.7))
+            bell.addLine(to: p(s, 0.7, 0.6))
+            bell.addLine(to: p(s, 0.7, 0.42))
+            bell.addCurve(to: p(s, 0.3, 0.42), control1: p(s, 0.7, 0.18), control2: p(s, 0.3, 0.18))
+            bell.addLine(to: p(s, 0.3, 0.6))
+            bell.closeSubpath()
+            strokePath(bell)
+            strokePath(line(s, 0.44, 0.8, 0.56, 0.8))
+            strokePath(line(s, 0.16, 0.16, 0.84, 0.84))
+        case .more:
+            for i in 0..<3 {
+                fillPath(circle(s, 0.28 + CGFloat(i) * 0.22, 0.5, 0.05))
+            }
+        case .eye:
+            var eye = Path()
+            eye.move(to: p(s, 0.1, 0.5))
+            eye.addQuadCurve(to: p(s, 0.9, 0.5), control: p(s, 0.5, 0.1))
+            eye.addQuadCurve(to: p(s, 0.1, 0.5), control: p(s, 0.5, 0.9))
+            eye.closeSubpath()
+            strokePath(eye)
+            strokePath(circle(s, 0.5, 0.5, 0.11))
+        case .check:
+            var check = Path()
+            check.move(to: p(s, 0.22, 0.52))
+            check.addLine(to: p(s, 0.42, 0.72))
+            check.addLine(to: p(s, 0.8, 0.3))
+            strokePath(check)
         case .info:
             strokePath(diamond(s, 0.5, 0.5, 0.34))
             strokePath(line(s, 0.5, 0.46, 0.5, 0.64))

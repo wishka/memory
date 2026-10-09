@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info }
+enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check }
 
 @Composable
 fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -338,6 +338,93 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                 }
                 drawPath(p, color, style = stroke)
                 drawLine(color, Offset(s * 0.44f, s * 0.8f), Offset(s * 0.56f, s * 0.8f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.Gear -> {
+                // Шестерёнка: кольцо, восемь зубцов и ступица
+                drawCircle(color, s * 0.24f, Offset(s * 0.5f, s * 0.5f), style = stroke)
+                drawCircle(color, s * 0.09f, Offset(s * 0.5f, s * 0.5f), style = stroke)
+                for (k in 0 until 8) {
+                    val a = Math.toRadians(k * 45.0)
+                    val cx = kotlin.math.cos(a).toFloat()
+                    val cy = kotlin.math.sin(a).toFloat()
+                    drawLine(
+                        color, Offset(s * (0.5f + cx * 0.25f), s * (0.5f + cy * 0.25f)),
+                        Offset(s * (0.5f + cx * 0.37f), s * (0.5f + cy * 0.37f)), stroke.width * 1.6f, StrokeCap.Round,
+                    )
+                }
+            }
+            LineIcon.Shield -> {
+                drawPath(Path().apply {
+                    moveTo(s * 0.5f, s * 0.12f); lineTo(s * 0.8f, s * 0.24f); lineTo(s * 0.8f, s * 0.46f)
+                    cubicTo(s * 0.8f, s * 0.68f, s * 0.64f, s * 0.82f, s * 0.5f, s * 0.88f)
+                    cubicTo(s * 0.36f, s * 0.82f, s * 0.2f, s * 0.68f, s * 0.2f, s * 0.46f)
+                    lineTo(s * 0.2f, s * 0.24f); close()
+                }, color, style = stroke)
+                diamond(Offset(s * 0.5f, s * 0.48f), s * 0.1f, color, stroke)
+            }
+            LineIcon.Lock -> {
+                drawRoundRect(
+                    color, Offset(s * 0.24f, s * 0.44f), Size(s * 0.52f, s * 0.4f),
+                    CornerRadius(s * 0.08f, s * 0.08f), style = stroke,
+                )
+                drawArc(
+                    color, startAngle = 180f, sweepAngle = 180f, useCenter = false,
+                    topLeft = Offset(s * 0.34f, s * 0.18f), size = Size(s * 0.32f, s * 0.4f), style = stroke,
+                )
+                drawLine(color, Offset(s * 0.34f, s * 0.38f), Offset(s * 0.34f, s * 0.44f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(s * 0.66f, s * 0.38f), Offset(s * 0.66f, s * 0.44f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(s * 0.5f, s * 0.58f), Offset(s * 0.5f, s * 0.7f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.Block -> {
+                drawCircle(color, s * 0.32f, Offset(s * 0.5f, s * 0.5f), style = stroke)
+                drawLine(color, Offset(s * 0.28f, s * 0.28f), Offset(s * 0.72f, s * 0.72f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.TextSize -> {
+                // Большая и маленькая «А»
+                drawPath(Path().apply {
+                    moveTo(s * 0.1f, s * 0.8f); lineTo(s * 0.34f, s * 0.2f); lineTo(s * 0.58f, s * 0.8f)
+                }, color, style = stroke)
+                drawLine(color, Offset(s * 0.19f, s * 0.58f), Offset(s * 0.49f, s * 0.58f), stroke.width, StrokeCap.Round)
+                drawPath(Path().apply {
+                    moveTo(s * 0.6f, s * 0.8f); lineTo(s * 0.75f, s * 0.44f); lineTo(s * 0.9f, s * 0.8f)
+                }, color, style = stroke)
+                drawLine(color, Offset(s * 0.66f, s * 0.67f), Offset(s * 0.84f, s * 0.67f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.Globe -> {
+                drawCircle(color, s * 0.34f, Offset(s * 0.5f, s * 0.5f), style = stroke)
+                drawOval(color, Offset(s * 0.36f, s * 0.16f), Size(s * 0.28f, s * 0.68f), style = stroke)
+                drawLine(color, Offset(s * 0.16f, s * 0.5f), Offset(s * 0.84f, s * 0.5f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.BellOff -> {
+                val p = Path().apply {
+                    moveTo(s * 0.24f, s * 0.7f)
+                    lineTo(s * 0.76f, s * 0.7f)
+                    lineTo(s * 0.7f, s * 0.6f)
+                    lineTo(s * 0.7f, s * 0.42f)
+                    cubicTo(s * 0.7f, s * 0.18f, s * 0.3f, s * 0.18f, s * 0.3f, s * 0.42f)
+                    lineTo(s * 0.3f, s * 0.6f)
+                    close()
+                }
+                drawPath(p, color, style = stroke)
+                drawLine(color, Offset(s * 0.44f, s * 0.8f), Offset(s * 0.56f, s * 0.8f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(s * 0.16f, s * 0.16f), Offset(s * 0.84f, s * 0.84f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.More -> {
+                for (i in 0..2) drawCircle(color, s * 0.05f, Offset(s * (0.28f + i * 0.22f), s * 0.5f))
+            }
+            LineIcon.Eye -> {
+                drawPath(Path().apply {
+                    moveTo(s * 0.1f, s * 0.5f)
+                    quadraticTo(s * 0.5f, s * 0.1f, s * 0.9f, s * 0.5f)
+                    quadraticTo(s * 0.5f, s * 0.9f, s * 0.1f, s * 0.5f)
+                    close()
+                }, color, style = stroke)
+                drawCircle(color, s * 0.11f, Offset(s * 0.5f, s * 0.5f), style = stroke)
+            }
+            LineIcon.Check -> {
+                drawPath(Path().apply {
+                    moveTo(s * 0.22f, s * 0.52f); lineTo(s * 0.42f, s * 0.72f); lineTo(s * 0.8f, s * 0.3f)
+                }, color, style = stroke)
             }
             LineIcon.Info -> {
                 diamond(Offset(s * 0.5f, s * 0.5f), s * 0.34f, color, stroke)

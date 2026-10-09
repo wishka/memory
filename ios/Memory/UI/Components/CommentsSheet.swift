@@ -9,6 +9,7 @@ struct CommentsSheet: View {
     let myId: Int
     let onSend: (String) -> Void
     let onDelete: (Int64) -> Void
+    let onLike: (Int64) -> Void
     let onAuthor: (Int) -> Void
 
     @State private var text = ""
@@ -27,7 +28,7 @@ struct CommentsSheet: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         if comments.isEmpty {
-                            Text("Пока никто не написал. Будьте первым.")
+                            Text(t("Пока никто не написал. Будьте первым."))
                                 .textStyle(.bodySmall, Palette.mist)
                                 .padding(.vertical, 20)
                         }
@@ -47,7 +48,7 @@ struct CommentsSheet: View {
 
             FadeLine()
             HStack(alignment: .bottom, spacing: 10) {
-                GlassField(placeholder: "Комментарий", text: $text, limit: 1000, maxLines: 4)
+                GlassField(placeholder: t("Комментарий"), text: $text, limit: 1000, maxLines: 4)
                     .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .focused($focused)
                 Button {
@@ -96,8 +97,22 @@ struct CommentsSheet: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Удалить комментарий")
+                .accessibilityLabel(t("Удалить комментарий"))
             }
+            // «Нравится» комментарию: сердце и число под ним
+            Button { onLike(c.id) } label: {
+                VStack(spacing: 0) {
+                    LikeHeart(liked: c.liked, color: c.liked ? Palette.lilac : Palette.mist, size: 18)
+                    if c.likes > 0 {
+                        Text("\(c.likes)").textStyle(.label, c.liked ? Palette.lilac : Palette.mist)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.selection, trigger: c.liked)
         }
     }
 }

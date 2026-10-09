@@ -9,6 +9,8 @@ struct MediaThumbnail: View {
     let attachment: Attachment
     var maxPixel: CGFloat = 900
     var contentMode: ContentMode = .fill
+    /// Показывать подложку со значком, пока картинка читается.
+    var placeholder: Bool = true
 
     @State private var image: UIImage?
 
@@ -18,7 +20,7 @@ struct MediaThumbnail: View {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
-            } else {
+            } else if placeholder {
                 Palette.plumRGB.opacity(0.6)
                 Glyph(kind: attachment.kind == .video ? .video : .image, color: Palette.mist)
             }
@@ -102,7 +104,7 @@ struct DocumentRow: View {
         let row = HStack(spacing: 10) {
             Glyph(kind: .document, color: Palette.lilac, size: 28)
             VStack(alignment: .leading, spacing: 1) {
-                Text(attachment.name.isEmpty ? "Документ" : attachment.name)
+                Text(attachment.name.isEmpty ? t("Документ") : attachment.name)
                     .textStyle(.bodySmall)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -174,6 +176,8 @@ struct PickedMovie: Transferable {
 
 /// Камера: снять фото или видео. Результат копируется в папку вложений.
 struct CameraPicker: UIViewControllerRepresentable {
+    /// Только фото — для аватара.
+    var photoOnly = false
     let onFinish: (Attachment?) -> Void
 
     static var isAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
@@ -181,7 +185,7 @@ struct CameraPicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let controller = UIImagePickerController()
         controller.sourceType = .camera
-        controller.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
+        controller.mediaTypes = photoOnly ? [UTType.image.identifier] : [UTType.image.identifier, UTType.movie.identifier]
         controller.videoQuality = .typeHigh
         controller.delegate = context.coordinator
         return controller
@@ -232,15 +236,15 @@ struct AttachButton: View {
     var body: some View {
         Menu {
             Button { showGallery = true } label: {
-                Label("Фото или видео из галереи", systemImage: "photo.on.rectangle")
+                Label(t("Фото или видео из галереи"), systemImage: "photo.on.rectangle")
             }
             Button { showCamera = true } label: {
-                Label("Снять фото или видео", systemImage: "camera")
+                Label(t("Снять фото или видео"), systemImage: "camera")
             }
             .disabled(!CameraPicker.isAvailable)
             if documents {
                 Button { showFiles = true } label: {
-                    Label("Документ", systemImage: "doc")
+                    Label(t("Документ"), systemImage: "doc")
                 }
             }
         } label: {
@@ -279,10 +283,10 @@ struct AttachButton: View {
             if picked.count < urls.count { failed = true }
             if !picked.isEmpty { onPicked(picked) }
         }
-        .alert("Не все файлы удалось добавить", isPresented: $failed) {
-            Button("Понятно", role: .cancel) {}
+        .alert(t("Не все файлы удалось добавить"), isPresented: $failed) {
+            Button(t("Понятно"), role: .cancel) {}
         } message: {
-            Text("Можно приложить файлы до 200 МБ.")
+            Text(t("Можно приложить файлы до 200 МБ."))
         }
     }
 

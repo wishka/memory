@@ -52,19 +52,19 @@ object Demo {
         Post(101, vera, "Сегодня небо было как акварель: фиолетовый перетекал в синий " +
             "прямо над крышами. Кажется, такие вечера и стоит запоминать.", 12, artSeed = 3, likes = 48, comments = 6,
             commentList = listOf(
-                Comment(1001, alina, "Какие цвета! Где снимала?", 10),
-                Comment(1002, sofia, "Это стоит распечатать и повесить на стену", 8),
+                Comment(1001, alina, "Какие цвета! Где снимала?", 10, likes = 4),
+                Comment(1002, sofia, "Это стоит распечатать и повесить на стену", 8, likes = 7),
             )),
         Post(102, mark, "Записал новый трек в три часа ночи. Назвал его «Memory». " +
             "Совпадение? Не думаю.", 95, likes = 21, comments = 3),
         Post(103, alina, "Призма на подоконнике поймала солнце — вся комната в радугах.", 260,
             artSeed = 11, likes = 87, liked = true, comments = 14,
-            commentList = listOf(Comment(1003, vera, "Обожаю такие утра ✨", 200))),
+            commentList = listOf(Comment(1003, vera, "Обожаю такие утра ✨", 200, likes = 2))),
         Post(104, sofia, "Нашла старую плёнку из поездки на Байкал. Лёд, звёзды и тишина.", 1500,
             artSeed = 27, likes = 132, comments = 19,
             commentList = listOf(
-                Comment(1004, timur, "Байкал зимой — мечта", 1400),
-                Comment(1005, mark, "Плёнка передаёт холод лучше любой цифры", 1300),
+                Comment(1004, timur, "Байкал зимой — мечта", 1400, likes = 12),
+                Comment(1005, mark, "Плёнка передаёт холод лучше любой цифры", 1300, likes = 5),
             )),
         Post(105, timur, "Кто идёт смотреть звездопад в субботу? Беру термос и плед.", 2900,
             likes = 9, comments = 11),
@@ -135,11 +135,11 @@ object Demo {
 
     val prisms = listOf(
         Prism(301, vera, "Таймлапс: луна поднимается над Невой 🌙", "Ночной город — Lumen", 81, 1820, 64,
-            commentList = listOf(Comment(1101, sofia, "Залипла на минуту 🌙", 30))),
+            commentList = listOf(Comment(1101, sofia, "Залипла на минуту 🌙", 30, likes = 3))),
         Prism(302, alina, "Как призма раскладывает свет на радугу", "Prism Waves — Alina", 82, 3400, 120, liked = true,
             commentList = listOf(
-                Comment(1102, vera, "Хочу такую же призму!", 90),
-                Comment(1103, mark, "Под этот трек идеально", 60),
+                Comment(1102, vera, "Хочу такую же призму!", 90, likes = 9),
+                Comment(1103, mark, "Под этот трек идеально", 60, likes = 1),
             )),
         Prism(303, mark, "Собираю трек из шума дождя за 30 секунд", "Rain Synth — Mark North", 83, 950, 41),
         Prism(304, sofia, "Байкал: лёд звенит, если по нему постучать", "Ice Bells — Sofia Ri", 84, 5120, 233),

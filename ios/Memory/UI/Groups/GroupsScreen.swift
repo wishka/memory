@@ -22,8 +22,8 @@ struct GroupsScreen: View {
             LazyVStack(spacing: 12) {
                 HStack {
                     ScreenTitle(
-                        title: "Группы",
-                        subtitle: "Вы в \(plural(state.myGroups.count, "группе", "группах", "группах"))"
+                        title: t("Группы"),
+                        subtitle: tf("Вы в %s", plural(state.myGroups.count, "группе", "группах", "группах"))
                     )
                     Spacer()
                     if !creating {
@@ -41,28 +41,28 @@ struct GroupsScreen: View {
                     }
                 }
 
-                GlassField(placeholder: "Поиск групп", text: $query, limit: 40, singleLine: true)
+                GlassField(placeholder: t("Поиск групп"), text: $query, limit: 40, singleLine: true)
                     .glass(Capsule())
                     .padding(.horizontal, 16)
 
-                TopicPicker(selected: topic, allLabel: "Все темы") { topic = $0 }
+                TopicPicker(selected: topic, allLabel: t("Все темы")) { topic = $0 }
                     .padding(.horizontal, 16)
 
                 if found.isEmpty {
-                    Text("Ничего не нашли. Создайте свою группу — кнопкой «+» вверху.")
+                    Text(t("Ничего не нашли. Создайте свою группу — кнопкой «+» вверху."))
                         .textStyle(.bodySmall, Palette.mist)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 24)
                         .padding(.vertical, 12)
                 }
                 if !mine.isEmpty {
-                    SectionTitle(text: "Мои группы")
+                    SectionTitle(text: t("Мои группы"))
                     ForEach(mine) { g in
                         GroupRow(group: g, onOpen: { model.openGroup(g.id) }, onToggle: { model.toggleGroup(g.id) })
                     }
                 }
                 if !others.isEmpty {
-                    SectionTitle(text: needle.isEmpty && topic == nil ? "Рекомендуем" : "Найдено")
+                    SectionTitle(text: needle.isEmpty && topic == nil ? t("Рекомендуем") : t("Найдено"))
                     ForEach(others) { g in
                         GroupRow(group: g, onOpen: { model.openGroup(g.id) }, onToggle: { model.toggleGroup(g.id) })
                     }
@@ -89,8 +89,11 @@ private struct GroupRow: View {
                             .frame(width: 56, height: 56)
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(group.name).textStyle(.title).lineLimit(1)
-                            Text("\(group.topic) · \(plural(group.members, "участник", "участника", "участников"))")
+                            HStack(spacing: 6) {
+                                Text(group.name).textStyle(.title).lineLimit(1)
+                                if group.muted { Glyph(kind: .bellOff, color: Palette.mist, size: 16) }
+                            }
+                            Text("\(t(group.topic)) · \(plural(group.members, "участник", "участника", "участников"))")
                                 .textStyle(.bodySmall, Palette.mist)
                                 .lineLimit(1)
                         }
@@ -100,11 +103,11 @@ private struct GroupRow: View {
                 }
                 .buttonStyle(.plain)
                 if group.mine {
-                    Text("ВАША").textStyle(.label, Palette.lilac)
+                    Text(t("ВАША")).textStyle(.label, Palette.lilac)
                 } else if group.joined {
-                    GhostButton(title: "Вы в группе", action: onToggle)
+                    GhostButton(title: t("Вы в группе"), action: onToggle)
                 } else {
-                    GlowButton(title: "Вступить", action: onToggle)
+                    GlowButton(title: t("Вступить"), action: onToggle)
                 }
             }
             .padding(12)
@@ -125,19 +128,23 @@ struct TopicPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             DisclosurePill(
-                text: selected ?? allLabel ?? "Выберите тему",
+                text: selected.map { t($0) } ?? allLabel ?? t("Выберите тему"),
                 open: open,
                 active: selected != nil
             ) {
                 withAnimation(.easeOut(duration: 0.2)) { open.toggle() }
             }
             if open {
+                // Метки раскрываются по одной, с небольшой задержкой
+                let shift = allLabel == nil ? 0 : 1
                 FlowLayout(spacing: 8) {
                     if let allLabel {
                         Chip(text: allLabel, active: selected == nil) { pick(nil) }
+                            .staggerIn(0)
                     }
-                    ForEach(groupTopics, id: \.self) { t in
-                        Chip(text: t, active: t == selected) { pick(t) }
+                    ForEach(Array(groupTopics.enumerated()), id: \.element) { i, topic in
+                        Chip(text: t(topic), active: topic == selected) { pick(topic) }
+                            .staggerIn(i + shift)
                     }
                 }
             }
@@ -157,19 +164,19 @@ private struct CreateGroupCard: View {
     let onClose: () -> Void
     @State private var name = ""
     @State private var description = ""
-    @State private var topic = groupTopics.last ?? "Другое"
+    @State private var topic = groupTopics.last ?? t("Другое")
     @State private var error: String?
 
     var body: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 10) {
-                Text("НОВАЯ ГРУППА").textStyle(.label, Palette.mist)
-                GlassField(placeholder: "Название", text: $name, limit: 40, singleLine: true)
+                Text(t("НОВАЯ ГРУППА")).textStyle(.label, Palette.mist)
+                GlassField(placeholder: t("Название"), text: $name, limit: 40, singleLine: true)
                     .glass(radius: 16)
                     .onChange(of: name) { _, _ in error = nil }
-                GlassField(placeholder: "О чём группа", text: $description, limit: 300, maxLines: 4)
+                GlassField(placeholder: t("О чём группа"), text: $description, limit: 300, maxLines: 4)
                     .glass(radius: 16)
-                Text("Тема").textStyle(.bodySmall, Palette.mist)
+                Text(t("Тема")).textStyle(.bodySmall, Palette.mist)
                 TopicPicker(selected: topic) { picked in
                     if let picked { topic = picked }
                 }
@@ -177,8 +184,8 @@ private struct CreateGroupCard: View {
                     Text(error).textStyle(.bodySmall, Palette.error)
                 }
                 HStack(spacing: 10) {
-                    GhostButton(title: "Отмена", action: onClose)
-                    GlowButton(title: "Создать", enabled: !name.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    GhostButton(title: t("Отмена"), action: onClose)
+                    GlowButton(title: t("Создать"), enabled: !name.trimmingCharacters(in: .whitespaces).isEmpty) {
                         error = model.createGroup(name: name, description: description, topic: topic)
                         if error == nil { onClose() }
                     }

@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.feed
 
+import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,7 @@ import ru.wishka.memory.ui.components.GlassField
 import ru.wishka.memory.ui.components.GhostButton
 import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.Glyph
+import ru.wishka.memory.ui.components.LikeHeart
 import ru.wishka.memory.ui.components.LineIcon
 import ru.wishka.memory.ui.components.Nebula
 import ru.wishka.memory.ui.components.ScreenTitle
@@ -68,7 +70,7 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ScreenTitle("Лента", "Моменты, которые остаются", Modifier.weight(1f))
+                ScreenTitle(t("Лента"), t("Моменты, которые остаются"), Modifier.weight(1f))
                 // Кристалл из значка приложения — знак Memory в шапке
                 Image(
                     painter = painterResource(R.drawable.memory_crystal),
@@ -78,7 +80,7 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
             }
         }
         item { Composer(onPublish = vm::publish) }
-        items(state.posts, key = { it.id }) { post ->
+        items(state.feed, key = { it.id }) { post ->
             PostCard(
                 post,
                 onLike = { vm.toggleLike(post.id) },
@@ -106,7 +108,7 @@ private fun Composer(onPublish: (String, List<Attachment>) -> Unit) {
     }
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column {
-            GlassField(text, { text = it.take(2000) }, "Чем хочется поделиться?")
+            GlassField(text, { text = it.take(2000) }, t("Чем хочется поделиться?"))
             PendingAttachments(
                 media,
                 onRemove = { item ->
@@ -126,14 +128,14 @@ private fun Composer(onPublish: (String, List<Attachment>) -> Unit) {
                 Text(
                     when {
                         media.isNotEmpty() -> plural(media.size, "вложение", "вложения", "вложений")
-                        text.isEmpty() -> "Видят ваши подписчики"
+                        text.isEmpty() -> t("Видят ваши подписчики")
                         else -> "${text.length} / 2000"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.weight(1f),
                 )
-                GlowButton("Поделиться", enabled = text.isNotBlank() || media.isNotEmpty(), onClick = {
+                GlowButton(t("Поделиться"), enabled = text.isNotBlank() || media.isNotEmpty(), onClick = {
                     onPublish(text, media)
                     text = ""
                     media = emptyList()
@@ -182,8 +184,8 @@ fun PostCard(
                 }
                 }
                 if (following != null) {
-                    if (following) GhostButton("Вы подписаны", onClick = onFollow)
-                    else GlowButton("Подписаться", onClick = onFollow)
+                    if (following) GhostButton(t("Вы подписаны"), onClick = onFollow)
+                    else GlowButton(t("Подписаться"), onClick = onFollow)
                 }
             }
             if (post.text.isNotEmpty()) {
@@ -207,11 +209,7 @@ fun PostCard(
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Glyph(
-                        if (post.liked) LineIcon.HeartFilled else LineIcon.Heart,
-                        if (post.liked) Palette.Lilac else Palette.Mist,
-                        size = 22.dp,
-                    )
+                    LikeHeart(post.liked, if (post.liked) Palette.Lilac else Palette.Mist, size = 22.dp)
                     Text(
                         "${post.likes}",
                         style = MaterialTheme.typography.labelLarge,

@@ -7,6 +7,12 @@ final class LocalAuthTests: XCTestCase {
     private var now: Int64 = 1_000_000
     private let store = MemoryStore()
 
+    override func setUp() {
+        super.setUp()
+        // Сообщения об ошибках сверяются по-русски, независимо от языка симулятора
+        L10n.shared.setLanguage(.ru)
+    }
+
     // Меньше итераций, чтобы тесты шли быстро; логика та же
     private func auth() -> LocalAuth {
         LocalAuth(store: store, clock: { [unowned self] in self.now }, iterations: 1_000)
@@ -95,5 +101,29 @@ final class LocalAuthTests: XCTestCase {
     func testPbkdf2MatchesReference() {
         let key = PasswordHasher.hash("passwd", salt: Array("salt".utf8), iterations: 1)
         XCTAssertEqual(key.hex, "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc")
+    }
+
+    func testChangePassword() {
+        _ = auth().register(username: "alex", displayName: "Алекс", password: "secret123", repeatPassword: "secret123")
+        XCTAssertEqual(auth().changePassword(username: "alex", current: "wrong123", new: "newpass99", repeatPassword: "newpass99"), "Текущий пароль не подходит")
+        XCTAssertEqual(auth().changePassword(username: "alex", current: "secret123", new: "newpass99", repeatPassword: "newpass98"), "Пароли не совпадают")
+        XCTAssertNil(auth().changePassword(username: "alex", current: "secret123", new: "newpass99", repeatPassword: "newpass99"))
+        // Сессия осталась, старый пароль больше не подходит
+        XCTAssertEqual(auth().current()?.username, "alex")
+        auth().logout()
+        XCTAssertFalse(isOk(auth().login(username: "alex", password: "secret123")))
+        XCTAssertTrue(isOk(auth().login(username: "alex", password: "newpass99")))
+    }
+
+    func testDeleteAccount() {
+        _ = auth().register(username: "alex", displayName: "Алекс", password: "secret123", repeatPassword: "secret123")
+        auth().saveProfile(username: "alex", info: ProfileInfo(city: "Тверь", avatar: "a.jpg"))
+        XCTAssertEqual(auth().current()?.info.avatar, "a.jpg")
+        XCTAssertEqual(auth().deleteAccount(username: "alex", password: "wrong123"), "Пароль не подходит")
+        XCTAssertNil(auth().deleteAccount(username: "alex", password: "secret123"))
+        XCTAssertNil(auth().current())
+        XCTAssertFalse(isOk(auth().login(username: "alex", password: "secret123")))
+        // Логин снова свободен
+        XCTAssertTrue(isOk(auth().register(username: "alex", displayName: "Алекс", password: "another12", repeatPassword: "another12")))
     }
 }

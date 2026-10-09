@@ -14,8 +14,9 @@ struct GroupScreen: View {
                     cover(safeTop: geo.safeAreaInsets.top)
                     about
                     composer
-                    SectionTitle(text: group.posts.isEmpty ? "Записей пока нет" : "Записи · \(group.posts.count)")
-                    ForEach(group.posts) { post in
+                    let posts = group.posts.filter { !model.state.isBlocked($0.author.id) }
+                    SectionTitle(text: posts.isEmpty ? t("Записей пока нет") : tf("Записи · %s", posts.count))
+                    ForEach(posts) { post in
                         PostCard(
                             post: post,
                             onLike: { model.toggleGroupPostLike(group.id, post.id) },
@@ -49,7 +50,7 @@ struct GroupScreen: View {
             VStack(alignment: .leading, spacing: 2) {
                 Spacer()
                 Text(group.name.uppercased()).textStyle(.headline)
-                Text("\(group.topic) · \(plural(group.members, "участник", "участника", "участников"))".uppercased())
+                Text("\(t(group.topic)) · \(plural(group.members, "участник", "участника", "участников"))".uppercased())
                     .textStyle(.label, Palette.mist)
             }
             .padding(.horizontal, 20)
@@ -67,22 +68,36 @@ struct GroupScreen: View {
             }
             HStack(spacing: 10) {
                 if group.mine {
-                    GhostButton(title: "Удалить группу") { confirmDelete = true }
+                    GhostButton(title: t("Удалить группу")) { confirmDelete = true }
                 } else if group.joined {
-                    GhostButton(title: "Выйти из группы") { model.toggleGroup(group.id) }
+                    GhostButton(title: t("Выйти из группы")) { model.toggleGroup(group.id) }
                 } else {
-                    GlowButton(title: "Вступить") { model.toggleGroup(group.id) }
+                    GlowButton(title: t("Вступить")) { model.toggleGroup(group.id) }
+                }
+                // Уведомления группы: колокольчик включает и выключает
+                if group.joined {
+                    Button { model.toggleGroupMute(group.id) } label: {
+                        HStack(spacing: 6) {
+                            Glyph(kind: group.muted ? .bellOff : .bell, color: Palette.lilac, size: 18)
+                            Text(group.muted ? t("Без звука").uppercased() : t("Уведомления").uppercased())
+                                .textStyle(.label, group.muted ? Palette.mist : Palette.ink)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .glass(Capsule(), strong: !group.muted)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             if confirmDelete {
                 GlassCard {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Удалить «\(group.name)» вместе с записями? Отменить будет нельзя.")
+                        Text(tf("Удалить «%s» вместе с записями? Отменить будет нельзя.", group.name))
                             .textStyle(.body)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 10) {
-                            GhostButton(title: "Отмена") { confirmDelete = false }
-                            GlowButton(title: "Удалить") { model.deleteGroup(group.id) }
+                            GhostButton(title: t("Отмена")) { confirmDelete = false }
+                            GlowButton(title: t("Удалить")) { model.deleteGroup(group.id) }
                         }
                     }
                     .padding(16)
@@ -98,10 +113,10 @@ struct GroupScreen: View {
         if group.joined {
             GlassCard {
                 VStack(spacing: 0) {
-                    GlassField(placeholder: "Написать в группу", text: $text, limit: 2000)
+                    GlassField(placeholder: t("Написать в группу"), text: $text, limit: 2000)
                     HStack {
                         Spacer()
-                        GlowButton(title: "Опубликовать", enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                        GlowButton(title: t("Опубликовать"), enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
                             model.postInGroup(group.id, text)
                             text = ""
                         }
@@ -112,7 +127,7 @@ struct GroupScreen: View {
             }
             .cardPadding()
         } else {
-            Text("Вступите, чтобы писать в группу.")
+            Text(t("Вступите, чтобы писать в группу."))
                 .textStyle(.bodySmall, Palette.mist)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 24)

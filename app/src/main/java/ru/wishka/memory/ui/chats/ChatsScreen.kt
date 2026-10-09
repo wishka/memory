@@ -1,7 +1,11 @@
 package ru.wishka.memory.ui.chats
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,11 +20,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,6 +44,9 @@ import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.FadeLine
 import ru.wishka.memory.ui.components.GlassField
+import ru.wishka.memory.ui.components.Glyph
+import ru.wishka.memory.ui.components.LineIcon
+import ru.wishka.memory.ui.components.MenuRow
 import ru.wishka.memory.ui.components.ScreenTitle
 import ru.wishka.memory.ui.components.glass
 import ru.wishka.memory.ui.theme.Palette
@@ -45,7 +56,7 @@ import ru.wishka.memory.ui.theme.Palette
 fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
     var query by rememberSaveable { mutableStateOf("") }
     val needle = query.trim().lowercase()
-    val chats = state.chats.filter {
+    val chats = state.chatList.filter {
         needle.isEmpty() || it.peer.name.lowercase().contains(needle) || it.peer.handle.contains(needle)
     }
 
@@ -55,14 +66,14 @@ fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
     ) {
         item {
             ScreenTitle(
-                "Чаты",
-                if (state.unreadTotal > 0) "Непрочитанных: ${state.unreadTotal}" else "Все прочитано",
+                t("Чаты"),
+                if (state.unreadTotal > 0) tf("Непрочитанных: %s", state.unreadTotal) else t("Все прочитано"),
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
         item {
             GlassField(
-                query, { query = it }, "Поиск по имени",
+                query, { query = it }, t("Поиск по имени"),
                 singleLine = true,
                 modifier = Modifier
                     .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -73,7 +84,7 @@ fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
         if (chats.isEmpty()) {
             item {
                 Text(
-                    "Никого не нашли",
+                    t("Никого не нашли"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.padding(24.dp),
@@ -81,18 +92,29 @@ fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
             }
         }
         items(chats, key = { it.id }) { chat ->
-            ChatRow(chat) { vm.openChat(chat.id) }
+            ChatRow(chat, blocked = state.isBlocked(chat.peer.id), vm = vm) { vm.openChat(chat.id) }
             FadeLine(Modifier.padding(horizontal = 24.dp))
         }
     }
 }
 
+/** Что подтверждаем в диалоге: очистку истории или удаление переписки. */
+private enum class ChatConfirm { Clear, Delete }
+
+/**
+ * Строка переписки. Долгое нажатие — меню: закрепить, без звука,
+ * прочитано, очистить историю, заблокировать, удалить.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatRow(chat: Chat, onClick: () -> Unit) {
+private fun ChatRow(chat: Chat, blocked: Boolean, vm: AppViewModel, onClick: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf<ChatConfirm?>(null) }
+    Box {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = { menu = true })
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -108,13 +130,15 @@ private fun ChatRow(chat: Chat, onClick: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (chat.muted) Glyph(LineIcon.BellOff, Palette.Mist, size = 16.dp, modifier = Modifier.padding(end = 4.dp))
+                if (chat.onTop) Glyph(LineIcon.Pushpin, Palette.Lilac, size = 16.dp, modifier = Modifier.padding(end = 4.dp))
                 Text(chat.last?.time.orEmpty(), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val preview = when {
-                    chat.typing -> "печатает…"
-                    chat.last == null -> "Нет сообщений"
-                    chat.last?.fromMe == true -> "Вы: ${chat.last?.let { messagePreview(it) }}"
+                    chat.typing -> t("печатает…")
+                    chat.last == null -> t("Нет сообщений")
+                    chat.last?.fromMe == true -> tf("Вы: %s", chat.last?.let { messagePreview(it) })
                     else -> chat.last?.let { messagePreview(it) }.orEmpty()
                 }
                 Text(
@@ -130,7 +154,11 @@ private fun ChatRow(chat: Chat, onClick: () -> Unit) {
                         modifier = Modifier
                             .padding(start = 8.dp)
                             .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(Palette.Orchid, Palette.Sky)))
+                            // Без звука — счётчик приглушённый
+                            .background(
+                                if (chat.muted) Brush.linearGradient(listOf(Palette.Plum, Palette.Plum))
+                                else Brush.linearGradient(listOf(Palette.Orchid, Palette.Sky))
+                            )
                             .padding(horizontal = 8.dp, vertical = 2.dp),
                     ) {
                         Text("${chat.unread}", style = MaterialTheme.typography.labelLarge, color = Palette.Ink)
@@ -138,5 +166,55 @@ private fun ChatRow(chat: Chat, onClick: () -> Unit) {
                 }
             }
         }
+    }
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        MenuRow(LineIcon.Pushpin, if (chat.onTop) t("Открепить") else t("Закрепить")) {
+            menu = false
+            vm.toggleChatOnTop(chat.id)
+        }
+        MenuRow(if (chat.muted) LineIcon.Bell else LineIcon.BellOff, if (chat.muted) t("Включить звук") else t("Без звука")) {
+            menu = false
+            vm.toggleChatMute(chat.id)
+        }
+        if (chat.unread > 0) {
+            MenuRow(LineIcon.Check, t("Отметить прочитанным")) { menu = false; vm.markRead(chat.id) }
+        } else {
+            MenuRow(LineIcon.Chats, t("Отметить непрочитанным")) { menu = false; vm.markUnread(chat.id) }
+        }
+        MenuRow(LineIcon.Block, if (blocked) t("Разблокировать") else t("Заблокировать")) {
+            menu = false
+            if (blocked) vm.unblock(chat.peer.id) else vm.block(chat.peer.id)
+        }
+        MenuRow(LineIcon.Trash, t("Очистить историю")) { menu = false; confirm = ChatConfirm.Clear }
+        MenuRow(LineIcon.Trash, t("Удалить чат"), color = Palette.Lilac) { menu = false; confirm = ChatConfirm.Delete }
+    }
+    }
+    confirm?.let { what ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            containerColor = Palette.Night,
+            title = {
+                Text(
+                    if (what == ChatConfirm.Delete) tf("Удалить переписку с %s?", chat.peer.name) else t("Очистить историю?"),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Palette.Ink,
+                )
+            },
+            text = {
+                Text(
+                    if (what == ChatConfirm.Delete) t("Переписка исчезнет из списка вместе со всеми сообщениями.")
+                    else t("Сообщения удалятся, сама переписка останется в списке."),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Mist,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = null
+                    if (what == ChatConfirm.Delete) vm.deleteChat(chat.id) else vm.clearHistory(chat.id)
+                }) { Text(if (what == ChatConfirm.Delete) t("Удалить") else t("Очистить"), color = Palette.Lilac) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text(t("Отмена"), color = Palette.Mist) } },
+        )
     }
 }

@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.person
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,9 +17,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +32,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.User
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.ProfileSection
+import ru.wishka.memory.ui.components.MenuRow
+import ru.wishka.memory.ui.profile.StatButton
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.FadeLine
@@ -46,8 +56,14 @@ import ru.wishka.memory.ui.theme.Palette
  */
 @Composable
 fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding: PaddingValues) {
+    state.personSection?.let { section ->
+        PersonSectionScreen(vm, state, person, section, contentPadding)
+        return
+    }
     val following = person.id in state.following
-    val posts = state.postsOf(person.id)
+    val blocked = state.isBlocked(person.id)
+    val posts = if (blocked) emptyList() else state.postsOf(person.id)
+    var menu by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -70,7 +86,25 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                     contentAlignment = Alignment.Center,
                 ) { Glyph(LineIcon.Back, Palette.Ink) }
                 Spacer(Modifier.size(12.dp))
-                Text("@${person.handle}", style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+                Text("@${person.handle}", style = MaterialTheme.typography.titleMedium, color = Palette.Ink, modifier = Modifier.weight(1f))
+                // «⋯»: заблокировать или разблокировать
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .glass(CircleShape)
+                            .clickable { menu = true },
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(LineIcon.More, Palette.Ink) }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        if (blocked) {
+                            MenuRow(LineIcon.Block, t("Разблокировать")) { menu = false; vm.unblock(person.id) }
+                        } else {
+                            MenuRow(LineIcon.Block, t("Заблокировать"), color = Palette.Lilac) { menu = false; vm.block(person.id) }
+                        }
+                    }
+                }
             }
         }
 
@@ -86,7 +120,7 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                     Avatar(person, size = 104.dp, ring = true, showOnline = true)
                     Text(person.name.uppercase(), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink)
                     Text(
-                        if (person.online) "в сети" else "@${person.handle}",
+                        if (person.online) t("в сети") else "@${person.handle}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (person.online) Palette.Lilac else Palette.Mist,
                     )
@@ -95,21 +129,36 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                     }
                     Spacer(Modifier.height(4.dp))
                     FadeLine()
+                    // Счётчики — кнопки: записи, подписчики и подписки человека
                     Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                        Stat(posts.size, "записи", Modifier.weight(1f))
-                        Stat(person.followers + if (following) 1 else 0, "подписчики", Modifier.weight(1f))
-                        Stat(person.followingCount, "подписки", Modifier.weight(1f))
+                        StatButton(posts.size, t("записи"), Modifier.weight(1f)) { vm.openPersonSection(ProfileSection.Posts) }
+                        StatButton(person.followers + if (following) 1 else 0, t("подписчики"), Modifier.weight(1f)) {
+                            vm.openPersonSection(ProfileSection.Followers)
+                        }
+                        StatButton(person.followingCount, t("подписки"), Modifier.weight(1f)) {
+                            vm.openPersonSection(ProfileSection.Following)
+                        }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
-                        if (following) GhostButton("Вы подписаны", onClick = { vm.toggleFollow(person.id) })
-                        else GlowButton("Подписаться", onClick = { vm.toggleFollow(person.id) })
-                        GhostButton("Написать", onClick = { vm.writeTo(person.id) })
+                    if (blocked) {
+                        Text(
+                            t("Вы заблокировали этого человека: его записи и сообщения вам не видны."),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Palette.Mist,
+                            textAlign = TextAlign.Center,
+                        )
+                        GhostButton(t("Разблокировать"), onClick = { vm.unblock(person.id) })
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
+                            if (following) GhostButton(t("Вы подписаны"), onClick = { vm.toggleFollow(person.id) })
+                            else GlowButton(t("Подписаться"), onClick = { vm.toggleFollow(person.id) })
+                            GhostButton(t("Написать"), onClick = { vm.writeTo(person.id) })
+                        }
                     }
                 }
             }
         }
 
-        if (person.city.isNotBlank() || person.birthday.isNotBlank() || person.website.isNotBlank() || person.interests.isNotEmpty()) {
+        if (!blocked && (person.city.isNotBlank() || person.birthday.isNotBlank() || person.website.isNotBlank() || person.interests.isNotEmpty())) {
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -122,7 +171,7 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
 
         item {
             Text(
-                if (posts.isEmpty()) "ЗАПИСЕЙ ПОКА НЕТ" else "ЗАПИСИ · ${posts.size}",
+                if (posts.isEmpty()) t("ЗАПИСЕЙ ПОКА НЕТ") else tf("ЗАПИСИ · %s", posts.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Mist,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),

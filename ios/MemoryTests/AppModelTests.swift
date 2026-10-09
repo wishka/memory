@@ -5,6 +5,12 @@ import XCTest
 /// Те же проверки, что AppViewModelTest на Android.
 final class AppModelTests: XCTestCase {
 
+    override func setUp() {
+        super.setUp()
+        // Строки в проверках — русские, независимо от языка симулятора
+        L10n.shared.setLanguage(.ru)
+    }
+
     func testLikeTogglesCount() throws {
         let vm = AppModel()
         let post = try XCTUnwrap(vm.state.posts.first { !$0.liked })
@@ -360,5 +366,146 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(minutesSince(nil, 3), 3)
         let start = Date(timeIntervalSince1970: 60)
         XCTAssertEqual(minutesSince(start, 0, now: Date(timeIntervalSince1970: 360)), 5)
+    }
+
+    func testCommentLikes() throws {
+        let vm = AppModel()
+        let post = try XCTUnwrap(vm.state.posts.first { !$0.commentList.isEmpty })
+        let comment = try XCTUnwrap(post.commentList.first)
+        vm.toggleCommentLike(post.id, comment.id)
+        let liked = try XCTUnwrap(vm.state.findPost(post.id)?.commentList.first { $0.id == comment.id })
+        XCTAssertTrue(liked.liked)
+        XCTAssertEqual(liked.likes, comment.likes + 1)
+        vm.toggleCommentLike(post.id, comment.id)
+        XCTAssertEqual(vm.state.findPost(post.id)?.commentList.first { $0.id == comment.id }?.likes, comment.likes)
+        // И у PRISM
+        let prism = try XCTUnwrap(vm.state.prisms.first { !$0.commentList.isEmpty })
+        let pc = try XCTUnwrap(prism.commentList.first)
+        vm.togglePrismCommentLike(prism.id, pc.id)
+        XCTAssertEqual(vm.state.findPrism(prism.id)?.commentList.first { $0.id == pc.id }?.liked, true)
+    }
+
+    func testSettingsNavigation() {
+        let vm = AppModel()
+        vm.openSettings()
+        XCTAssertEqual(vm.state.tab, .profile)
+        XCTAssertEqual(vm.state.settingsPage, .main)
+        vm.openSettings(.privacy)
+        // «Назад»: со страницы — в список, из списка — в профиль
+        XCTAssertTrue(vm.back())
+        XCTAssertEqual(vm.state.settingsPage, .main)
+        XCTAssertTrue(vm.back())
+        XCTAssertNil(vm.state.settingsPage)
+        // Вкладка внизу закрывает настройки
+        vm.openSettings(.language)
+        vm.selectTab(.profile)
+        XCTAssertNil(vm.state.settingsPage)
+    }
+
+    func testPersonSections() throws {
+        let vm = AppModel()
+        let person = try XCTUnwrap(vm.state.posts.first { $0.author.id != vm.state.me.id }?.author)
+        vm.openPerson(person.id)
+        vm.openPersonSection(.followers)
+        XCTAssertEqual(vm.state.personSection, .followers)
+        // «Назад» сначала закрывает раздел, потом страницу
+        XCTAssertTrue(vm.back())
+        XCTAssertNil(vm.state.personSection)
+        XCTAssertEqual(vm.state.openPersonId, person.id)
+        // Подписались — вы среди его подписчиков
+        if !vm.state.following.contains(person.id) { vm.toggleFollow(person.id) }
+        XCTAssertTrue(vm.state.followersOf(person).contains { $0.id == vm.state.me.id })
+        XCTAssertFalse(vm.state.followersOf(person).contains { $0.id == person.id })
+    }
+
+    func testBlockHidesPostsAndUnfollows() throws {
+        let vm = AppModel()
+        let author = try XCTUnwrap(vm.state.stories.first?.author)
+        vm.block(author.id)
+        XCTAssertTrue(vm.state.isBlocked(author.id))
+        XCTAssertFalse(vm.state.following.contains(author.id))
+        XCTAssertFalse(vm.state.feed.contains { $0.author.id == author.id })
+        XCTAssertFalse(vm.state.stories.contains { $0.author.id == author.id })
+        XCTAssertEqual(vm.state.blockedPeople.map(\.id), [author.id])
+        vm.unblock(author.id)
+        XCTAssertTrue(vm.state.feed.contains { $0.author.id == author.id })
+        // Себя заблокировать нельзя
+        vm.block(vm.state.me.id)
+        XCTAssertTrue(vm.state.blocked.isEmpty)
+    }
+
+    func testChatListMenu() throws {
+        let vm = AppModel()
+        let chats = vm.state.chats
+        let last = try XCTUnwrap(chats.last)
+        vm.toggleChatOnTop(last.id)
+        XCTAssertEqual(vm.state.chatList.first?.id, last.id)
+        // Без звука — не в счётчике вкладки
+        let unread = try XCTUnwrap(chats.first { $0.unread > 0 })
+        let before = vm.state.unreadTotal
+        vm.toggleChatMute(unread.id)
+        XCTAssertEqual(vm.state.unreadTotal, before - unread.unread)
+        vm.markRead(unread.id)
+        XCTAssertEqual(vm.state.chats.first { $0.id == unread.id }?.unread, 0)
+        vm.markUnread(unread.id)
+        XCTAssertEqual(vm.state.chats.first { $0.id == unread.id }?.unread, 1)
+        vm.clearHistory(last.id)
+        XCTAssertEqual(vm.state.chats.first { $0.id == last.id }?.messages.isEmpty, true)
+        vm.openChat(last.id)
+        vm.deleteChat(last.id)
+        XCTAssertFalse(vm.state.chats.contains { $0.id == last.id })
+        XCTAssertNil(vm.state.openChatId)
+    }
+
+    func testGroupMuteAndSettingsSurviveSnapshot() throws {
+        let vm = AppModel()
+        let group = try XCTUnwrap(vm.state.groups.first)
+        vm.toggleGroupMute(group.id)
+        vm.setPrivacy(Privacy(messages: .following, showOnline: false))
+        vm.setNotifications(Notifications(all: false))
+        vm.block(try XCTUnwrap(vm.state.stories.first?.author.id))
+        vm.setAvatar("a.jpg")
+        // Через JSON — как в файле на телефоне
+        let data = try JSONEncoder().encode(vm.snapshot())
+        let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+        let other = AppModel()
+        other.restore(snapshot)
+        XCTAssertEqual(other.state.groups.first { $0.id == group.id }?.muted, true)
+        XCTAssertEqual(other.state.privacy.messages, .following)
+        XCTAssertFalse(other.state.privacy.showOnline)
+        XCTAssertFalse(other.state.notifications.all)
+        XCTAssertEqual(other.state.blocked.count, 1)
+        XCTAssertEqual(vm.profileInfo().avatar, "a.jpg")
+    }
+
+    /// Старый файл без новых полей читается: они необязательные.
+    func testOldChatAndCommentStillDecode() throws {
+        let chat = #"{"id": 1, "peer": {"id": 2, "name": "Вера", "handle": "vera", "bio": "", "hue": 0.5, "online": false, "city": "", "birthday": "", "website": "", "interests": [], "joined": "", "followers": 0, "followingCount": 0}, "messages": [], "unread": 0, "typing": false}"#
+        let decoded = try JSONDecoder().decode(Chat.self, from: Data(chat.utf8))
+        XCTAssertFalse(decoded.onTop)
+        XCTAssertFalse(decoded.muted)
+        XCTAssertFalse(decoded.peer.hasAvatar)
+    }
+
+    func testCropKeepsCircleCovered() {
+        // Фото 2000 × 1000, круг 500: при zoom 1 квадрат — вся высота
+        let g = CropGeometry(imageSize: CGSize(width: 2000, height: 1000), circle: 500)
+        let square = g.sourceSquare(zoom: 1, pan: .zero)
+        XCTAssertEqual(square.width, 1000, accuracy: 0.5)
+        XCTAssertEqual(square.minX, 500, accuracy: 0.5)
+        XCTAssertEqual(square.minY, 0, accuracy: 0.5)
+        // Сдвиг дальше края не уводит квадрат за фото
+        XCTAssertEqual(g.sourceSquare(zoom: 1, pan: CGSize(width: 10_000, height: 0)).minX, 0, accuracy: 0.5)
+        // Увеличение вдвое — квадрат вдвое меньше
+        XCTAssertEqual(g.sourceSquare(zoom: 2, pan: .zero).width, 500, accuracy: 0.5)
+    }
+
+    func testEnglishTexts() {
+        L10n.shared.setLanguage(.en)
+        defer { L10n.shared.setLanguage(.ru) }
+        XCTAssertEqual(agoTitle(5), "5 min")
+        XCTAssertEqual(plural(1, "запись", "записи", "записей"), "1 post")
+        XCTAssertEqual(plural(21, "запись", "записи", "записей"), "21 posts")
+        XCTAssertEqual(sizeTitle(2 * 1024 * 1024), "2.0 MB")
     }
 }

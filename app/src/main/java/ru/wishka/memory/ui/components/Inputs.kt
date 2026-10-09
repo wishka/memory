@@ -108,3 +108,43 @@ fun DisclosurePill(text: String, open: Boolean, onClick: () -> Unit, modifier: M
         )
     }
 }
+
+/** Метка-капсула: тема, интерес. active — выбрана. */
+@Composable
+fun Chip(text: String, active: Boolean, onClick: () -> Unit) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (active) Palette.Ink else Palette.Lilac,
+        modifier = Modifier
+            .glass(RoundedCornerShape(50), strong = active)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
+}
+
+/**
+ * Появление по очереди: элемент номер index проявляется и чуть
+ * поднимается через index × STAGGER_MS после показа списка. Так метки
+ * тем и интересов раскрываются одна за другой, а не все разом.
+ */
+@Composable
+fun StaggerIn(index: Int, content: @Composable () -> Unit) {
+    val progress = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(index * STAGGER_MS)
+        progress.animateTo(1f, androidx.compose.animation.core.tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+    }
+    androidx.compose.foundation.layout.Box(
+        Modifier.graphicsLayer {
+            val p = progress.value
+            alpha = p
+            scaleX = 0.82f + 0.18f * p
+            scaleY = 0.82f + 0.18f * p
+            translationY = (1f - p) * 10.dp.toPx()
+        },
+    ) { content() }
+}
+
+/** Шаг между появлением соседних меток. */
+const val STAGGER_MS = 35L

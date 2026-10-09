@@ -145,7 +145,7 @@ object MediaFiles {
         if (text.isNotEmpty()) intent.putExtra(Intent.EXTRA_TEXT, text)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         try {
-            context.startActivity(Intent.createChooser(intent, "Поделиться").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            context.startActivity(Intent.createChooser(intent, ru.wishka.memory.i18n.t("Поделиться")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: ActivityNotFoundException) {
             // Делиться некуда — ничего не делаем
         }
@@ -189,9 +189,13 @@ object MediaFiles {
 }
 
 /** «2,4 МБ» — размер документа. */
-fun sizeTitle(bytes: Long): String = when {
-    bytes >= 1024L * 1024 * 1024 -> String.format(java.util.Locale("ru"), "%.1f ГБ", bytes / (1024.0 * 1024 * 1024))
-    bytes >= 1024L * 1024 -> String.format(java.util.Locale("ru"), "%.1f МБ", bytes / (1024.0 * 1024))
-    bytes >= 1024 -> "${bytes / 1024} КБ"
-    else -> "$bytes Б"
+fun sizeTitle(bytes: Long): String {
+    val en = ru.wishka.memory.i18n.L10n.english
+    val locale = if (en) java.util.Locale.US else java.util.Locale("ru")
+    return when {
+        bytes >= 1024L * 1024 * 1024 -> String.format(locale, if (en) "%.1f GB" else "%.1f ГБ", bytes / (1024.0 * 1024 * 1024))
+        bytes >= 1024L * 1024 -> String.format(locale, if (en) "%.1f MB" else "%.1f МБ", bytes / (1024.0 * 1024))
+        bytes >= 1024 -> if (en) "${bytes / 1024} KB" else "${bytes / 1024} КБ"
+        else -> if (en) "$bytes B" else "$bytes Б"
+    }
 }

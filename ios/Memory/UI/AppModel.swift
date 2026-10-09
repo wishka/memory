@@ -11,7 +11,8 @@ enum AppTab: String, CaseIterable, Identifiable {
     case profile = "Профиль"
 
     var id: String { rawValue }
-    var title: String { rawValue }
+    /// Название на выбранном языке.
+    var title: String { t(rawValue) }
 }
 
 /// Разделы профиля за счётчиками: записи, подписчики, подписки, группы, сохранённое.
@@ -22,7 +23,21 @@ enum ProfileSection: String, CaseIterable {
     case groups = "Группы"
     case saved = "Сохранённое"
 
-    var title: String { rawValue }
+    var title: String { t(rawValue) }
+}
+
+/// Страницы настроек за шестерёнкой в профиле. main — сам список настроек.
+enum SettingsPage: String, CaseIterable {
+    case main = "Настройки"
+    case security = "Безопасность"
+    case privacy = "Приватность"
+    case blacklist = "Чёрный список"
+    case notifications = "Уведомления"
+    case textSize = "Размер текста"
+    case language = "Язык"
+    case about = "О приложении"
+
+    var title: String { t(rawValue) }
 }
 
 /// Всё, что видно на экране. Те же поля и правила, что UiState на Android.
@@ -33,7 +48,14 @@ struct UiState: Equatable {
     var chats: [Chat] = Demo.chats
     /// Открытая переписка поверх вкладки «Чаты»; nil — список чатов.
     var openChatId: Int? = nil
-    var notifications: Bool = true
+    var notifications = Notifications()
+    var privacy = Privacy()
+    /// Чёрный список: их записи, комментарии и сообщения не видны.
+    var blocked: Set<Int> = []
+    /// Настройки поверх вкладки «Профиль»; nil — закрыты.
+    var settingsPage: SettingsPage? = nil
+    /// Раздел чужого профиля (записи, подписчики, подписки) поверх его страницы.
+    var personSection: ProfileSection? = nil
     /// На кого подписан человек: их записи — во вкладке «Истории».
     var following: Set<Int> = Demo.following
     var prisms: [Prism] = Demo.prisms
@@ -60,10 +82,34 @@ struct UiState: Equatable {
     var myGroups: [MemoryGroup] { groups.filter { $0.joined } }
     func postsOf(_ userId: Int) -> [Post] { posts.filter { $0.author.id == userId } }
     var openChat: Chat? { chats.first { $0.id == openChatId } }
-    var unreadTotal: Int { chats.reduce(0) { $0 + $1.unread } }
+    /// Счётчик на вкладке «Чаты»: переписки без звука не считаются.
+    var unreadTotal: Int { chats.filter { !$0.muted }.reduce(0) { $0 + $1.unread } }
+    /// Список чатов: закреплённые сверху, остальные — по последнему сообщению.
+    var chatList: [Chat] { chats.filter(\.onTop) + chats.filter { !$0.onTop } }
+    /// Лента без записей тех, кто в чёрном списке.
+    var feed: [Post] { posts.filter { !blocked.contains($0.author.id) } }
+    var blockedPeople: [User] { Demo.people.filter { blocked.contains($0.id) } }
+    func isBlocked(_ userId: Int) -> Bool { blocked.contains(userId) }
+    /// Подписчики другого человека. Сервера нет, поэтому видны только
+    /// знакомые по демо-данным — и вы, если подписаны.
+    func followersOf(_ user: User) -> [User] {
+        let you: [User] = following.contains(user.id) ? [me] : []
+        let known = Demo.people.filter { person in
+            person.id != user.id && !blocked.contains(person.id) && (person.id + user.id) % 2 == 1
+        }
+        return you + known
+    }
+    /// На кого подписан другой человек — тоже из знакомых; вы — если он подписан на вас.
+    func followingOf(_ user: User) -> [User] {
+        let you: [User] = Demo.followers.contains(user.id) ? [me] : []
+        let known = Demo.people.filter { person in
+            person.id != user.id && !blocked.contains(person.id) && (person.id + user.id) % 2 == 0
+        }
+        return you + known
+    }
     var myPosts: [Post] { posts.filter { $0.author.id == me.id } }
     /// «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте.
-    var stories: [Post] { posts.filter { following.contains($0.author.id) } }
+    var stories: [Post] { posts.filter { following.contains($0.author.id) && !blocked.contains($0.author.id) } }
     var followedPeople: [User] { Demo.people.filter { following.contains($0.id) } }
     /// Кто подписан на вас (пока — демо-люди).
     var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) } }
@@ -119,6 +165,10 @@ struct Snapshot: Codable, Equatable {
     var following: Set<Int>
     var notifications: Bool
     var nextId: Int64
+    /// Новые поля — необязательные: старые файлы читаются без них.
+    var notify: Notifications? = nil
+    var privacy: Privacy? = nil
+    var blocked: Set<Int>? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -161,9 +211,11 @@ final class AppModel {
         state.openChatId = tab == .chats ? state.openChatId : nil
         state.openGroupId = tab == .groups ? state.openGroupId : nil
         state.openPersonId = nil
+        state.personSection = nil
         state.returnToChatId = nil
         // Нажатие на «Профиль» внизу всегда ведёт на сам профиль
         state.profileSection = nil
+        state.settingsPage = nil
         state.tab = tab
     }
 
@@ -178,6 +230,28 @@ final class AppModel {
         state.profileSection = nil
     }
 
+    /// Настройки: шестерёнка в профиле открывает список, пункт списка — свою страницу.
+    func openSettings(_ page: SettingsPage = .main) {
+        state.tab = .profile
+        state.profileSection = nil
+        state.openPersonId = nil
+        state.settingsPage = page
+    }
+
+    /// «Назад» в настройках: со страницы — в список, из списка — в профиль.
+    func settingsBack() {
+        state.settingsPage = state.settingsPage == .main ? nil : .main
+    }
+
+    /// Записи, подписчики или подписки другого человека — нажатием на счётчик на его странице.
+    func openPersonSection(_ section: ProfileSection) {
+        state.personSection = section
+    }
+
+    func closePersonSection() {
+        state.personSection = nil
+    }
+
     /// Страница автора. Своё имя ведёт в «Профиль». Из переписки страница
     /// открывается сразу поверх неё, а «назад» возвращает в переписку.
     func openPerson(_ userId: Int) {
@@ -189,11 +263,13 @@ final class AppModel {
             state.returnToChatId = chatId
             state.openChatId = nil
         }
+        state.personSection = nil
         state.openPersonId = userId
     }
 
     func closePerson() {
         state.openPersonId = nil
+        state.personSection = nil
         if let chatId = state.returnToChatId {
             state.openChatId = chatId
             state.returnToChatId = nil
@@ -207,8 +283,10 @@ final class AppModel {
         if state.viewing != nil { closeMedia(); return true }
         if state.commentsPostId != nil || state.commentsPrismId != nil { closeComments(); return true }
         if state.openChatId != nil { closeChat(); return true }
+        if state.personSection != nil && state.openPersonId != nil { closePersonSection(); return true }
         if state.openPersonId != nil { closePerson(); return true }
         if state.openGroupId != nil { closeGroup(); return true }
+        if state.settingsPage != nil { settingsBack(); return true }
         if state.profileSection != nil { closeProfileSection(); return true }
         if state.tab != .feed { selectTab(.feed); return true }
         return false
@@ -249,6 +327,13 @@ final class AppModel {
             guard p.commentList.contains(where: { $0.id == commentId && $0.author.id == meId }) else { return }
             p.commentList.removeAll { $0.id == commentId }
             p.comments = max(0, p.comments - 1)
+        }
+    }
+
+    /// «Нравится» комментарию к записи — в ленте или в группе.
+    func toggleCommentLike(_ postId: Int64, _ commentId: Int64) {
+        updatePosts(postId) { p in
+            p.commentList = p.commentList.map { Self.flipLike($0, commentId) }
         }
     }
 
@@ -391,6 +476,43 @@ final class AppModel {
         }
     }
 
+    // MARK: Меню переписки в списке чатов (долгое нажатие)
+
+    /// Закрепить переписку вверху списка; повторно — открепить.
+    func toggleChatOnTop(_ chatId: Int) { updateChat(chatId) { $0.onTop.toggle() } }
+
+    /// Без звука: уведомлений нет, непрочитанные не попадают в счётчик на вкладке.
+    func toggleChatMute(_ chatId: Int) { updateChat(chatId) { $0.muted.toggle() } }
+
+    func markRead(_ chatId: Int) { updateChat(chatId) { $0.unread = 0 } }
+
+    /// Отметить непрочитанной — чтобы вернуться к переписке позже.
+    func markUnread(_ chatId: Int) { updateChat(chatId) { $0.unread = max($0.unread, 1) } }
+
+    /// Очистить историю: сообщения уходят, сама переписка остаётся в списке.
+    func clearHistory(_ chatId: Int) {
+        updateChat(chatId) { c in
+            c.messages = []
+            c.pinnedId = nil
+            c.unread = 0
+        }
+    }
+
+    /// Удалить переписку целиком; открытая — закрывается.
+    func deleteChat(_ chatId: Int) {
+        state.chats.removeAll { $0.id == chatId }
+        if state.openChatId == chatId { state.openChatId = nil }
+        if state.returnToChatId == chatId { state.returnToChatId = nil }
+    }
+
+    private func updateChat(_ chatId: Int, _ change: (inout Chat) -> Void) {
+        state.chats = state.chats.map { chat in
+            var c = chat
+            if c.id == chatId { change(&c) }
+            return c
+        }
+    }
+
     /// Цитата для ответа на сообщение: автор и начало текста (или что приложено).
     func replyRef(_ chatId: Int, _ message: Message) -> ReplyRef {
         let peer = state.chats.first { $0.id == chatId }?.peer.name ?? ""
@@ -433,6 +555,12 @@ final class AppModel {
     }
 
     // MARK: - PRISM
+
+    func togglePrismCommentLike(_ prismId: Int64, _ commentId: Int64) {
+        updatePrism(prismId) { p in
+            p.commentList = p.commentList.map { Self.flipLike($0, commentId) }
+        }
+    }
 
     func togglePrismLike(_ prismId: Int64) {
         updatePrism(prismId) { p in
@@ -510,21 +638,30 @@ final class AppModel {
         }
     }
 
+    /// Отключить или включить уведомления группы.
+    func toggleGroupMute(_ groupId: Int) {
+        state.groups = state.groups.map { group in
+            var g = group
+            if g.id == groupId { g.muted.toggle() }
+            return g
+        }
+    }
+
     /// Новая группа: создатель сразу в ней. Ошибка — текст для экрана, nil — успех.
     @discardableResult
     func createGroup(name: String, description: String, topic: String) -> String? {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title.count < 3 { return "Название — от 3 символов" }
-        if title.count > 40 { return "Название — не длиннее 40 символов" }
+        if title.count < 3 { return t("Название — от 3 символов") }
+        if title.count > 40 { return t("Название — не длиннее 40 символов") }
         if state.groups.contains(where: { $0.name.lowercased() == title.lowercased() }) {
-            return "Группа «\(title)» уже есть"
+            return tf("Группа «%s» уже есть", title)
         }
         let id = (state.groups.map(\.id).max() ?? 0) + 1
         let cleanTopic = topic.trimmingCharacters(in: .whitespaces)
         let group = MemoryGroup(
             id: id, name: title,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
-            topic: cleanTopic.isEmpty ? (groupTopics.last ?? "Другое") : cleanTopic,
+            topic: cleanTopic.isEmpty ? (groupTopics.last ?? t("Другое")) : cleanTopic,
             members: 1, seed: 100 + id, joined: true, mine: true
         )
         state.groups.insert(group, at: 0)
@@ -571,6 +708,7 @@ final class AppModel {
         me.birthday = info.birthday
         me.website = info.website
         me.interests = info.interests
+        me.avatar = info.avatar
         applyMe(me)
     }
 
@@ -589,11 +727,42 @@ final class AppModel {
         me.birthday = info.birthday.trimmingCharacters(in: .whitespacesAndNewlines)
         me.website = info.website.trimmingCharacters(in: .whitespacesAndNewlines)
         me.interests = info.interests
+        me.avatar = info.avatar
         applyMe(me)
     }
 
-    func setNotifications(_ enabled: Bool) {
-        state.notifications = enabled
+    /// Своё фото в профиле; "" — вернуть аватар из букв.
+    func setAvatar(_ fileName: String) {
+        var me = state.me
+        me.avatar = fileName
+        applyMe(me)
+    }
+
+    /// Сведения профиля как есть сейчас — чтобы сохранить их в аккаунт.
+    func profileInfo() -> ProfileInfo {
+        let me = state.me
+        return ProfileInfo(bio: me.bio, city: me.city, birthday: me.birthday, website: me.website,
+                           interests: me.interests, avatar: me.avatar ?? "")
+    }
+
+    func setNotifications(_ notifications: Notifications) {
+        state.notifications = notifications
+    }
+
+    func setPrivacy(_ privacy: Privacy) {
+        state.privacy = privacy
+    }
+
+    /// В чёрный список: записи, комментарии и сообщения человека больше не
+    /// видны, подписка на него снимается. Себя заблокировать нельзя.
+    func block(_ userId: Int) {
+        if userId == state.me.id { return }
+        state.blocked.insert(userId)
+        state.following.remove(userId)
+    }
+
+    func unblock(_ userId: Int) {
+        state.blocked.remove(userId)
     }
 
     /// Свои записи и комментарии показывают новое имя.
@@ -607,7 +776,8 @@ final class AppModel {
     func snapshot() -> Snapshot {
         Snapshot(
             posts: state.posts, chats: state.chats, groups: state.groups, prisms: state.prisms,
-            following: state.following, notifications: state.notifications, nextId: nextId
+            following: state.following, notifications: state.notifications.all, nextId: nextId,
+            notify: state.notifications, privacy: state.privacy, blocked: state.blocked
         )
     }
 
@@ -625,7 +795,10 @@ final class AppModel {
         s.groups = snapshot.groups
         s.prisms = snapshot.prisms
         s.following = snapshot.following.subtracting([s.me.id])
-        s.notifications = snapshot.notifications
+        // Старый файл: только общий выключатель уведомлений
+        s.notifications = snapshot.notify ?? Notifications(all: snapshot.notifications)
+        s.privacy = snapshot.privacy ?? Privacy()
+        s.blocked = (snapshot.blocked ?? []).subtracting([s.me.id])
         s.applyMe(s.me)
         state = s
     }
@@ -636,6 +809,15 @@ final class AppModel {
         p.likes += p.liked ? -1 : 1
         p.liked.toggle()
         return p
+    }
+
+    /// Переключить «нравится» у комментария с номером commentId.
+    private static func flipLike(_ comment: Comment, _ commentId: Int64) -> Comment {
+        guard comment.id == commentId else { return comment }
+        var c = comment
+        c.likes = max(0, c.likes + (c.liked ? -1 : 1))
+        c.liked.toggle()
+        return c
     }
 
     private static let timeFormatter: DateFormatter = {

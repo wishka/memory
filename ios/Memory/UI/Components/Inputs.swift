@@ -173,3 +173,28 @@ struct DisclosurePill: View {
         .buttonStyle(.plain)
     }
 }
+
+/// Шаг между появлением соседних меток, секунд.
+let staggerStep = 0.035
+
+/// Появление по очереди: элемент номер index проявляется и чуть
+/// поднимается через index × staggerStep после показа списка. Так метки
+/// тем и интересов раскрываются одна за другой, а не все разом.
+struct StaggerIn: ViewModifier {
+    let index: Int
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .scaleEffect(shown ? 1 : 0.82)
+            .offset(y: shown ? 0 : 10)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.26).delay(Double(index) * staggerStep)) { shown = true }
+            }
+    }
+}
+
+extension View {
+    func staggerIn(_ index: Int) -> some View { modifier(StaggerIn(index: index)) }
+}

@@ -60,6 +60,32 @@ final class AuthModel {
         account = current
     }
 
+    /// Смена пароля в «Безопасности». Ответ — текст ошибки или nil;
+    /// пароль проверяется не в главном потоке.
+    func changePassword(_ current: String, _ new: String, _ repeated: String) async -> String? {
+        guard let login = account?.username else { return t("Вы не вошли") }
+        let auth = self.auth
+        return await Task.detached(priority: .userInitiated) {
+            auth.changePassword(username: login, current: current, new: new, repeatPassword: repeated)
+        }.value
+    }
+
+    /// Удалить аккаунт с телефона. nil — удалён и выполнен выход.
+    func deleteAccount(_ password: String) async -> String? {
+        guard let login = account?.username else { return t("Вы не вошли") }
+        let auth = self.auth
+        let error = await Task.detached(priority: .userInitiated) {
+            auth.deleteAccount(username: login, password: password)
+        }.value
+        if error == nil {
+            await MainActor.run { [weak self] in
+                self?.account = nil
+                self?.error = nil
+            }
+        }
+        return error
+    }
+
     func clearError() {
         error = nil
     }

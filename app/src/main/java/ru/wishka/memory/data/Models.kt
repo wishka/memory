@@ -1,5 +1,9 @@
 package ru.wishka.memory.data
 
+import ru.wishka.memory.i18n.L10n
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
+
 /**
  * Человек в Memory. hue — 0..1, оттенок его аватара-градиента.
  * followers / followingCount — числа для карточки; у «себя» подписки
@@ -21,6 +25,8 @@ data class User(
     val joined: String = "",
     val followers: Int = 0,
     val followingCount: Int = 0,
+    /** Своё фото вместо букв: путь к круглой обрезке в памяти приложения; "" — буквы. */
+    val avatar: String = "",
 ) {
     val initials: String
         get() = name.split(' ').filter { it.isNotBlank() }.take(2)
@@ -53,6 +59,8 @@ data class Comment(
     val text: String,
     val minutesAgo: Int = 0,
     val createdAt: Long = 0,
+    val likes: Int = 0,
+    val liked: Boolean = false,
 )
 
 /**
@@ -104,7 +112,10 @@ data class Message(
     val forwardedFrom: String? = null,
 )
 
-/** Переписка. pinnedId — закреплённое сообщение: видно полоской вверху. */
+/**
+ * Переписка. pinnedId — закреплённое сообщение: видно полоской вверху.
+ * onTop — сама переписка закреплена вверху списка чатов; muted — без звука.
+ */
 data class Chat(
     val id: Int,
     val peer: User,
@@ -112,6 +123,8 @@ data class Chat(
     val unread: Int = 0,
     val typing: Boolean = false,
     val pinnedId: Long? = null,
+    val onTop: Boolean = false,
+    val muted: Boolean = false,
 ) {
     val pinned: Message? get() = pinnedId?.let { id -> messages.firstOrNull { it.id == id } }
 
@@ -120,15 +133,19 @@ data class Chat(
 
 /** «5 мин», «2 ч», «вчера», «3 дн» — время записи в ленте. */
 fun agoTitle(minutes: Int): String = when {
-    minutes < 1 -> "сейчас"
-    minutes < 60 -> "$minutes мин"
-    minutes < 60 * 24 -> "${minutes / 60} ч"
-    minutes < 60 * 48 -> "вчера"
-    else -> "${minutes / (60 * 24)} дн"
+    minutes < 1 -> t("сейчас")
+    minutes < 60 -> tf("%s мин", minutes)
+    minutes < 60 * 24 -> tf("%s ч", minutes / 60)
+    minutes < 60 * 48 -> t("вчера")
+    else -> tf("%s дн", minutes / (60 * 24))
 }
 
-/** Русское склонение: plural(5, "запись", "записи", "записей") → «5 записей». */
+/**
+ * Склонение: plural(5, "запись", "записи", "записей") → «5 записей».
+ * По-английски — «1 post» / «5 posts»: формы берутся из словаря.
+ */
 fun plural(n: Int, one: String, few: String, many: String): String {
+    if (L10n.english) return "$n ${t(if (n == 1) one else many)}"
     val mod10 = n % 10
     val mod100 = n % 100
     val word = when {
@@ -150,6 +167,8 @@ data class Group(
     val joined: Boolean = false,
     val mine: Boolean = false,
     val posts: List<Post> = emptyList(),
+    /** Уведомления группы выключены. */
+    val muted: Boolean = false,
 )
 
 /** Интересы в профиле — те же темы, без «Другое». */
@@ -193,4 +212,41 @@ data class ProfileInfo(
     val birthday: String = "",
     val website: String = "",
     val interests: List<String> = emptyList(),
+    /** Путь к своему фото; "" — аватар из букв. */
+    val avatar: String = "",
+)
+
+/** Кому видно или кому можно: всем, тем, на кого вы подписаны, никому. */
+enum class Audience(private val ru: String) {
+    Everyone("Все"),
+    Following("Мои подписки"),
+    Nobody("Никто"),
+    ;
+
+    val title: String get() = t(ru)
+}
+
+/** Настройки приватности. Пока сервера нет, хранятся на телефоне вместе с аккаунтом. */
+data class Privacy(
+    /** Кто видит город, день рождения, сайт и интересы. */
+    val profileInfo: Audience = Audience.Everyone,
+    /** Кто видит ваши подписки и подписчиков. */
+    val followLists: Audience = Audience.Everyone,
+    /** Кто может написать вам. */
+    val messages: Audience = Audience.Everyone,
+    /** Кто может комментировать ваши записи. */
+    val comments: Audience = Audience.Everyone,
+    /** Показывать другим, что вы в сети. */
+    val showOnline: Boolean = true,
+    /** Показывать день рождения. */
+    val showBirthday: Boolean = true,
+)
+
+/** Какие уведомления присылать. all = false выключает все разом. */
+data class Notifications(
+    val all: Boolean = true,
+    val messages: Boolean = true,
+    val reactions: Boolean = true,
+    val groups: Boolean = true,
+    val follows: Boolean = true,
 )

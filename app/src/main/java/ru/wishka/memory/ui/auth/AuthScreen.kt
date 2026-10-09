@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.auth
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -74,7 +76,7 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
             Spacer(Modifier.height(40.dp))
             Text("MEMORY", style = MaterialTheme.typography.displaySmall, color = Palette.Ink)
             Text(
-                "МОМЕНТЫ, КОТОРЫЕ ОСТАЮТСЯ",
+                t("МОМЕНТЫ, КОТОРЫЕ ОСТАЮТСЯ"),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Mist,
             )
@@ -91,7 +93,7 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
                             .fillMaxWidth()
                             .glass(RoundedCornerShape(50)),
                     ) {
-                        listOf(false to "Вход", true to "Регистрация").forEach { (mode, title) ->
+                        listOf(false to t("Вход"), true to t("Регистрация")).forEach { (mode, title) ->
                             val active = registering == mode
                             Box(
                                 modifier = Modifier
@@ -113,17 +115,17 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
                         }
                     }
 
-                    Field(login, { login = it.take(24) }, "Логин", keyboard = KeyboardType.Ascii)
-                    if (registering) Field(name, { name = it.take(40) }, "Имя — как вас видят другие")
-                    Field(password, { password = it.take(64) }, "Пароль", password = true)
-                    if (registering) Field(repeat, { repeat = it.take(64) }, "Пароль ещё раз", password = true)
+                    Field(login, { login = it.take(24) }, t("Логин"), keyboard = KeyboardType.Ascii)
+                    if (registering) Field(name, { name = it.take(40) }, t("Имя — как вас видят другие"))
+                    Field(password, { password = it.take(64) }, t("Пароль"), password = true)
+                    if (registering) Field(repeat, { repeat = it.take(64) }, t("Пароль ещё раз"), password = true)
 
                     state.error?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                     }
 
                     GlowButton(
-                        if (state.busy) "Подождите…" else if (registering) "Создать аккаунт" else "Войти",
+                        if (state.busy) t("Подождите…") else if (registering) t("Создать аккаунт") else t("Войти"),
                         enabled = !state.busy && login.isNotBlank() && password.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
@@ -133,11 +135,11 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
 
                     Text(
                         if (registering) {
-                            "Логин — латиница, цифры, точка и «_», от 3 символов. " +
-                                "Пароль — от 8 символов, с буквами и цифрами."
+                            t("Логин — латиница, цифры, точка и «_», от 3 символов. ") +
+                                t("Пароль — от 8 символов, с буквами и цифрами.")
                         } else {
-                            "Попробовать без регистрации: логин ${LocalAuth.DEMO_LOGIN}, " +
-                                "пароль ${LocalAuth.DEMO_PASSWORD}"
+                            tf("Попробовать без регистрации: логин %s, ", LocalAuth.DEMO_LOGIN) +
+                                tf("пароль %s", LocalAuth.DEMO_PASSWORD)
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Mist,
@@ -149,7 +151,7 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "Аккаунты пока хранятся только на этом телефоне.",
+                t("Аккаунты пока хранятся только на этом телефоне."),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Palette.Mist,
                 textAlign = TextAlign.Center,

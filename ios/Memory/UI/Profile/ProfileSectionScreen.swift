@@ -40,7 +40,7 @@ struct ProfileSectionScreen: View {
     private func content(_ state: UiState) -> some View {
         switch section {
         case .posts:
-            if state.myPosts.isEmpty { empty("Пока ни одной записи. Поделитесь первым моментом во вкладке «Лента».") }
+            if state.myPosts.isEmpty { empty(t("Пока ни одной записи. Поделитесь первым моментом во вкладке «Лента».")) }
             ForEach(state.myPosts) { post in
                 PostCard(
                     post: post,
@@ -50,34 +50,34 @@ struct ProfileSectionScreen: View {
                 )
             }
         case .followers:
-            if state.followers.isEmpty { empty("Пока на вас никто не подписан.") }
+            if state.followers.isEmpty { empty(t("Пока на вас никто не подписан.")) }
             ForEach(state.followers) { person in
                 PersonRow(
                     person: person,
                     following: state.following.contains(person.id),
-                    followLabel: "Подписаться в ответ",
+                    followLabel: t("Подписаться в ответ"),
                     onOpen: { model.openPerson(person.id) },
                     onToggle: { model.toggleFollow(person.id) }
                 )
             }
         case .following:
-            if state.followedPeople.isEmpty { empty("Вы пока ни на кого не подписаны. Подписаться можно в ленте — кнопкой у имени автора.") }
+            if state.followedPeople.isEmpty { empty(t("Вы пока ни на кого не подписаны. Подписаться можно в ленте — кнопкой у имени автора.")) }
             ForEach(state.followedPeople) { person in
                 PersonRow(
                     person: person,
                     following: true,
-                    followLabel: "Подписаться",
+                    followLabel: t("Подписаться"),
                     onOpen: { model.openPerson(person.id) },
                     onToggle: { model.toggleFollow(person.id) }
                 )
             }
         case .groups:
-            if state.myGroups.isEmpty { empty("Вы пока ни в одной группе. Найти группу можно во вкладке «Группы».") }
+            if state.myGroups.isEmpty { empty(t("Вы пока ни в одной группе. Найти группу можно во вкладке «Группы».")) }
             ForEach(state.myGroups) { group in
                 GroupLine(group: group) { model.openGroup(group.id) }
             }
         case .saved:
-            if state.savedPrisms.isEmpty { empty("Здесь будут PRISM, которые вы сохранили кнопкой «Сохранить».") }
+            if state.savedPrisms.isEmpty { empty(t("Здесь будут PRISM, которые вы сохранили кнопкой «Сохранить».")) }
             // Сохранённые ролики — плитками по две в ряд
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 16) {
                 ForEach(state.savedPrisms) { prism in
@@ -99,12 +99,13 @@ struct ProfileSectionScreen: View {
 }
 
 /// Человек в списке: аватар, имя, подписка. Нажатие — его страница.
-private struct PersonRow: View {
+struct PersonRow: View {
     let person: User
     let following: Bool
     let followLabel: String
     let onOpen: () -> Void
     let onToggle: () -> Void
+    var showButton: Bool = true
 
     var body: some View {
         GlassCard {
@@ -123,10 +124,12 @@ private struct PersonRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if following {
-                    GhostButton(title: "Вы подписаны", action: onToggle)
-                } else {
-                    GlowButton(title: followLabel, action: onToggle)
+                if showButton {
+                    if following {
+                        GhostButton(title: t("Вы подписаны"), action: onToggle)
+                    } else {
+                        GlowButton(title: followLabel, action: onToggle)
+                    }
                 }
             }
             .padding(12)
@@ -148,13 +151,13 @@ private struct GroupLine: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(group.name).textStyle(.title).lineLimit(1)
-                        Text("\(group.topic) · \(plural(group.members, "участник", "участника", "участников"))")
+                        Text("\(t(group.topic)) · \(plural(group.members, "участник", "участника", "участников"))")
                             .textStyle(.bodySmall, Palette.mist)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
                     if group.mine {
-                        Text("ВАША").textStyle(.label, Palette.lilac)
+                        Text(t("ВАША")).textStyle(.label, Palette.lilac)
                     }
                 }
                 .padding(12)

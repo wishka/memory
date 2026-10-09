@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.prism
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -45,6 +47,7 @@ import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.GhostButton
 import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.Glyph
+import ru.wishka.memory.ui.components.LikeHeart
 import ru.wishka.memory.ui.components.LineIcon
 import ru.wishka.memory.ui.components.compact
 import ru.wishka.memory.ui.theme.Palette
@@ -57,7 +60,7 @@ import ru.wishka.memory.ui.theme.Palette
  */
 @Composable
 fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
-    val prisms = state.prisms
+    val prisms = state.prisms.filter { it.author.id !in state.blocked }
     val context = LocalContext.current
     val pager = rememberPagerState(pageCount = { prisms.size })
     // Открыли из «Сохранённого» — сразу на нужный ролик
@@ -86,9 +89,9 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
 
 /** «Поделиться»: системное меню — мессенджеры, почта, копирование ссылки. */
 private fun sharePrism(context: android.content.Context, prism: Prism) {
-    val text = "${prism.caption}\n— ${prism.author.name} (@${prism.author.handle}) в Memory · PRISM"
+    val text = tf("%s\n— %s (@%s) в Memory · PRISM", prism.caption, prism.author.name, prism.author.handle)
     val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-    context.startActivity(Intent.createChooser(send, "Поделиться").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    context.startActivity(Intent.createChooser(send, t("Поделиться")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
 @Composable
@@ -184,10 +187,12 @@ private fun PrismPage(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            SideButton(if (prism.liked) LineIcon.HeartFilled else LineIcon.Heart, compact(prism.likes), onLike)
+            SideButton(LineIcon.Heart, compact(prism.likes), onLike) {
+                LikeHeart(prism.liked, Palette.Ink, size = 30.dp)
+            }
             SideButton(LineIcon.Comment, compact(prism.comments), onComments)
-            SideButton(LineIcon.Share, "Поделиться", onShare)
-            SideButton(if (prism.saved) LineIcon.BookmarkFilled else LineIcon.Bookmark, if (prism.saved) "В закладках" else "Сохранить", onSave)
+            SideButton(LineIcon.Share, t("Поделиться"), onShare)
+            SideButton(if (prism.saved) LineIcon.BookmarkFilled else LineIcon.Bookmark, if (prism.saved) t("В закладках") else t("Сохранить"), onSave)
         }
 
         // Автор, подпись и музыка
@@ -207,8 +212,8 @@ private fun PrismPage(
                     Text(prism.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
                 }
                 Spacer(Modifier.width(10.dp))
-                if (following == false) GlowButton("Подписаться", onClick = onFollow)
-                else if (following == true) GhostButton("Вы подписаны", onClick = onFollow)
+                if (following == false) GlowButton(t("Подписаться"), onClick = onFollow)
+                else if (following == true) GhostButton(t("Вы подписаны"), onClick = onFollow)
             }
             Text(prism.caption, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -227,7 +232,7 @@ private fun PrismPage(
 }
 
 @Composable
-private fun SideButton(icon: LineIcon, label: String, onClick: (() -> Unit)?) {
+private fun SideButton(icon: LineIcon, label: String, onClick: (() -> Unit)?, iconContent: (@Composable () -> Unit)? = null) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -235,7 +240,7 @@ private fun SideButton(icon: LineIcon, label: String, onClick: (() -> Unit)?) {
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(4.dp),
     ) {
-        Glyph(icon, Palette.Ink, size = 30.dp)
+        if (iconContent != null) iconContent() else Glyph(icon, Palette.Ink, size = 30.dp)
         Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.Ink, modifier = Modifier.padding(top = 2.dp))
     }
 }

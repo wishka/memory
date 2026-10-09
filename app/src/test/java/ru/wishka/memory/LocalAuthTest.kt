@@ -4,7 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import ru.wishka.memory.i18n.L10n
+import ru.wishka.memory.i18n.Lang
 import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.auth.AuthResult
 import ru.wishka.memory.data.auth.KeyValueStore
@@ -23,6 +26,12 @@ class LocalAuthTest {
     private var now = 1_000_000L
     private val store = MapStore()
     // Меньше итераций, чтобы тесты шли быстро; логика та же
+    @Before
+    fun russian() {
+        // Сообщения об ошибках сверяются по-русски, независимо от языка машины
+        L10n.choice = Lang.Ru
+    }
+
     private fun auth() = LocalAuth(store, clock = { now }, iterations = 1_000)
 
     private fun AuthResult.error() = (this as AuthResult.Error).message
@@ -98,5 +107,32 @@ class LocalAuthTest {
         assertEquals("Тверь", restored.info.city)
         assertEquals("Привет", restored.info.bio)
         assertEquals(listOf("Фото", "Книги"), restored.info.interests)
+    }
+
+    @Test
+    fun changePassword() {
+        auth().register("alex", "Алекс", "secret123", "secret123")
+        assertEquals("Текущий пароль не подходит", auth().changePassword("alex", "wrong123", "newpass99", "newpass99"))
+        assertEquals("Пароли не совпадают", auth().changePassword("alex", "secret123", "newpass99", "newpass98"))
+        assertEquals("Пароль — от 8 символов", auth().changePassword("alex", "secret123", "short1", "short1"))
+        assertNull(auth().changePassword("alex", "secret123", "newpass99", "newpass99"))
+        // Сессия осталась, старый пароль больше не подходит
+        assertEquals("alex", auth().current()?.username)
+        auth().logout()
+        assertTrue(auth().login("alex", "secret123") is AuthResult.Error)
+        assertTrue(auth().login("alex", "newpass99") is AuthResult.Ok)
+    }
+
+    @Test
+    fun deleteAccount() {
+        auth().register("alex", "Алекс", "secret123", "secret123")
+        auth().saveProfile("alex", ProfileInfo(city = "Тверь", avatar = "/tmp/a.jpg"))
+        assertEquals("/tmp/a.jpg", auth().current()!!.info.avatar)
+        assertEquals("Пароль не подходит", auth().deleteAccount("alex", "wrong123"))
+        assertNull(auth().deleteAccount("alex", "secret123"))
+        assertNull(auth().current())
+        assertTrue(auth().login("alex", "secret123") is AuthResult.Error)
+        // Логин снова свободен
+        assertTrue(auth().register("alex", "Алекс", "another12", "another12") is AuthResult.Ok)
     }
 }

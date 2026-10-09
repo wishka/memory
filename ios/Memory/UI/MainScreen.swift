@@ -6,7 +6,7 @@ import SwiftUI
 struct MainScreen: View {
     let model: AppModel
     let onSaveProfile: (String, ProfileInfo) -> Void
-    let onLogout: () -> Void
+    let account: AccountActions
 
     var body: some View {
         let state = model.state
@@ -15,7 +15,10 @@ struct MainScreen: View {
 
             if let chat = state.openChat {
                 // Переписка — во весь экран, панель вкладок прячется
-                ChatScreen(model: model, chat: chat, otherChats: state.chats.filter { $0.id != chat.id })
+                ChatScreen(
+                    model: model, chat: chat, otherChats: state.chats.filter { $0.id != chat.id },
+                    blocked: state.isBlocked(chat.peer.id)
+                )
                     .transition(.move(edge: .trailing))
                     .simultaneousGesture(backSwipe)
             } else {
@@ -54,6 +57,8 @@ struct MainScreen: View {
         .animation(.easeOut(duration: 0.25), value: state.openPersonId)
         .animation(.easeOut(duration: 0.25), value: state.openGroupId)
         .animation(.easeOut(duration: 0.2), value: state.profileSection)
+        .animation(.easeOut(duration: 0.2), value: state.settingsPage)
+        .animation(.easeOut(duration: 0.2), value: state.personSection)
     }
 
     private var commentsShown: Binding<Bool> {
@@ -82,19 +87,21 @@ struct MainScreen: View {
         if let id = state.commentsPostId, let post = state.findPost(id) {
             CommentsSheet(
                 total: post.comments,
-                comments: post.commentList,
+                comments: post.commentList.filter { !state.isBlocked($0.author.id) },
                 myId: state.me.id,
                 onSend: { model.addComment(id, $0) },
                 onDelete: { model.deleteComment(id, $0) },
+                onLike: { model.toggleCommentLike(id, $0) },
                 onAuthor: openAuthor
             )
         } else if let id = state.commentsPrismId, let prism = state.findPrism(id) {
             CommentsSheet(
                 total: prism.comments,
-                comments: prism.commentList,
+                comments: prism.commentList.filter { !state.isBlocked($0.author.id) },
                 myId: state.me.id,
                 onSend: { model.addPrismComment(id, $0) },
                 onDelete: { model.deletePrismComment(id, $0) },
+                onLike: { model.togglePrismCommentLike(id, $0) },
                 onAuthor: openAuthor
             )
         }
@@ -109,10 +116,12 @@ struct MainScreen: View {
         case .chats: ChatsScreen(model: model)
         case .groups: GroupsScreen(model: model)
         case .profile:
-            if let section = model.state.profileSection {
+            if let page = model.state.settingsPage {
+                SettingsScreen(model: model, page: page, account: account)
+            } else if let section = model.state.profileSection {
                 ProfileSectionScreen(model: model, section: section)
             } else {
-                ProfileScreen(model: model, onSaveProfile: onSaveProfile, onLogout: onLogout)
+                ProfileScreen(model: model, onSaveProfile: onSaveProfile)
             }
         }
     }
