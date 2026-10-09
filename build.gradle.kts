@@ -1,6 +1,16 @@
 // Версии плагинов — в одном месте; подключаются в модуле app.
+//
+// AGP 9 собирает Kotlin сам («встроенный Kotlin»): отдельный плагин
+// org.jetbrains.kotlin.android больше не нужен. Версию Kotlin задаёт
+// kotlin-gradle-plugin в buildscript ниже; плагин компилятора Compose
+// обязан быть той же версии — меняйте обе строки вместе.
+buildscript {
+    dependencies {
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.20")
+    }
+}
+
 plugins {
-    id("com.android.application") version "8.7.2" apply false
-    id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+    id("com.android.application") version "9.4.1" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
 }
