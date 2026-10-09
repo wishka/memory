@@ -1,6 +1,7 @@
 package ru.wishka.memory.ui.prism.create
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -125,13 +126,14 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
         recording?.stop()
     }
 
+    // Звук пишется, только если разрешение на микрофон уже выдано (granted)
+    @SuppressLint("MissingPermission")
     fun startRecording() {
         val target = File(File(context.filesDir, "media").apply { mkdirs() }, "${UUID.randomUUID()}.mp4")
         file = target
         recordedMs = 0
         paused = false
         val audio = if (granted(Manifest.permission.RECORD_AUDIO)) AudioConfig.create(true) else AudioConfig.AUDIO_DISABLED
-        @Suppress("MissingPermission")
         recording = controller.startRecording(
             FileOutputOptions.Builder(target).build(),
             audio,

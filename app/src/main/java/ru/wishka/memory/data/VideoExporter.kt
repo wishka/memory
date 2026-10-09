@@ -201,8 +201,8 @@ object VideoExporter {
 
     /** Громкость: 0 — тишина, 1 — как есть. Для моно и стерео. */
     fun volume(v: Float): AudioProcessor = ChannelMixingAudioProcessor().apply {
-        putChannelMixingMatrix(ChannelMixingMatrix.create(1, 1).scaleBy(v))
-        putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(v))
+        putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(1, 1).scaleBy(v))
+        putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(2, 2).scaleBy(v))
     }
 
     /** Постоянная скорость для всего ролика. */
