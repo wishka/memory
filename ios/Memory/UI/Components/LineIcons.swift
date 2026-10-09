@@ -6,6 +6,7 @@ import SwiftUI
 enum LineIcon {
     case feed, stories, prism, groups, pin, gift, link, music, calendar, exit
     case share, bookmark, bookmarkFilled, attach, camera, video, image, document, trash, play, close
+    case reply, forward, chevronDown
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
 }
 
@@ -97,6 +98,36 @@ struct Glyph: View {
             for k in 0..<3 {
                 strokePath(line(s, 0.56, 0.50, 0.94, 0.40 + CGFloat(k) * 0.12))
             }
+        case .reply:
+            // Изогнутая стрелка влево
+            var head = Path()
+            head.move(to: p(s, 0.40, 0.24))
+            head.addLine(to: p(s, 0.16, 0.46))
+            head.addLine(to: p(s, 0.40, 0.68))
+            strokePath(head)
+            var tail = Path()
+            tail.move(to: p(s, 0.16, 0.46))
+            tail.addLine(to: p(s, 0.58, 0.46))
+            tail.addCurve(to: p(s, 0.84, 0.80), control1: p(s, 0.80, 0.46), control2: p(s, 0.86, 0.62))
+            strokePath(tail)
+        case .forward:
+            // Изогнутая стрелка вправо
+            var head = Path()
+            head.move(to: p(s, 0.60, 0.24))
+            head.addLine(to: p(s, 0.84, 0.46))
+            head.addLine(to: p(s, 0.60, 0.68))
+            strokePath(head)
+            var tail = Path()
+            tail.move(to: p(s, 0.84, 0.46))
+            tail.addLine(to: p(s, 0.42, 0.46))
+            tail.addCurve(to: p(s, 0.16, 0.80), control1: p(s, 0.20, 0.46), control2: p(s, 0.14, 0.62))
+            strokePath(tail)
+        case .chevronDown:
+            var chevron = Path()
+            chevron.move(to: p(s, 0.26, 0.38))
+            chevron.addLine(to: p(s, 0.5, 0.62))
+            chevron.addLine(to: p(s, 0.74, 0.38))
+            strokePath(chevron)
         case .play:
             var play = Path()
             play.move(to: p(s, 0.34, 0.22))

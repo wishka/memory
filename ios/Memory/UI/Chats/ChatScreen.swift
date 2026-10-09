@@ -3,12 +3,19 @@ import SwiftUI
 
 /// Переписка: шапка с собеседником, сообщения и поле ввода над клавиатурой.
 /// Скрепка — фото, видео (из галереи или с камеры) и документы. Долгое
-/// нажатие на сообщение — удалить у себя или у обоих.
+/// нажатие на сообщение — ответить, переслать, поделиться или удалить у
+/// себя или у обоих.
 struct ChatScreen: View {
     let model: AppModel
     let chat: Chat
+    /// Куда можно переслать сообщение.
+    let otherChats: [Chat]
     @State private var text = ""
     @State private var pending: [Attachment] = []
+    /// На какое сообщение отвечаем; nil — обычное сообщение.
+    @State private var replyTo: ReplyRef?
+    /// Какое сообщение пересылаем: выбор переписки.
+    @State private var forwarding: Message?
     /// Документ, открытый в просмотре (QuickLook).
     @State private var preview: URL?
 
@@ -27,11 +34,15 @@ struct ChatScreen: View {
                             Bubble(
                                 message: message,
                                 peerName: chat.peer.firstName,
+                                onReply: { replyTo = model.replyRef(chat.id, message) },
+                                onForward: { forwarding = message },
+                                onQuote: { id in
+                                    // Нажатие на цитату — к исходному сообщению
+                                    withAnimation { proxy.scrollTo(id, anchor: .center) }
+                                },
                                 onOpen: open,
                                 onDelete: { forEveryone in
                                     model.deleteMessage(chat.id, message.id, forEveryone: forEveryone)
-                                    // Копии вложений больше не нужны
-                                    message.attachments.forEach(MediaFiles.delete)
                                 }
                             )
                             .id(message.id)
@@ -53,6 +64,9 @@ struct ChatScreen: View {
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
+            if let ref = replyTo {
+                ReplyBar(ref: ref) { replyTo = nil }
+            }
             PendingAttachments(items: pending) { item in
                 pending.removeAll { $0.id == item.id }
                 MediaFiles.delete(item)
@@ -61,6 +75,21 @@ struct ChatScreen: View {
             inputRow
         }
         .quickLookPreview($preview)
+        .confirmationDialog(
+            "Переслать",
+            isPresented: Binding(get: { forwarding != nil }, set: { if !$0 { forwarding = nil } }),
+            titleVisibility: .visible
+        ) {
+            ForEach(otherChats) { target in
+                Button(target.peer.name) {
+                    if let message = forwarding {
+                        model.forward(chat.id, message.id, to: target.id)
+                    }
+                    forwarding = nil
+                }
+            }
+            Button("Отмена", role: .cancel) { forwarding = nil }
+        }
     }
 
     private func open(_ attachment: Attachment) {
@@ -102,9 +131,10 @@ struct ChatScreen: View {
             GlassField(placeholder: "Сообщение", text: $text, limit: 2000, maxLines: 5)
                 .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
             Button {
-                model.send(chat.id, text, attachments: pending)
+                model.send(chat.id, text, attachments: pending, replyTo: replyTo)
                 text = ""
                 pending = []
+                replyTo = nil
             } label: {
                 Glyph(kind: .send, color: canSend ? Palette.ink : Palette.mist)
                     .frame(width: 50, height: 50)
@@ -123,13 +153,20 @@ struct ChatScreen: View {
     }
 }
 
-/// Сообщение: текст и вложения. Долгое нажатие — меню удаления:
-/// «у себя» (у собеседника останется) или «у меня и у <имя>».
+/// Сообщение: пометка «Переслано», цитата ответа, вложения и текст.
+/// Долгое нажатие — меню: ответить, переслать, поделиться, удалить «у
+/// себя» (у собеседника останется) или «у меня и у <имя>».
 private struct Bubble: View {
     let message: Message
     let peerName: String
+    let onReply: () -> Void
+    let onForward: () -> Void
+    let onQuote: (Int64) -> Void
     let onOpen: (Attachment) -> Void
     let onDelete: (Bool) -> Void
+
+    /// Файлы вложений — для «Поделиться».
+    private var files: [URL] { message.attachments.map(MediaFiles.url) }
 
     var body: some View {
         let mine = message.fromMe
@@ -145,6 +182,33 @@ private struct Bubble: View {
         HStack(spacing: 0) {
             if mine { Spacer(minLength: 0) }
             VStack(alignment: .trailing, spacing: 6) {
+                if let from = message.forwardedFrom {
+                    HStack(spacing: 6) {
+                        Glyph(kind: .forward, color: Palette.lilac, size: 14)
+                        Text("Переслано от \(from)").textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 2)
+                }
+                if let ref = message.replyTo {
+                    Button { onQuote(ref.messageId) } label: {
+                        HStack(spacing: 8) {
+                            LinearGradient(colors: [Palette.lilac, Palette.sky], startPoint: .top, endPoint: .bottom)
+                                .frame(width: 3)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(ref.author).textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+                                Text(ref.preview).textStyle(.bodySmall, Palette.inkRGB.opacity(0.75)).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .frame(height: 40)
+                        .padding(.trailing, 10)
+                        .background(Palette.voidRGB.opacity(0.3))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
                 if !visual.isEmpty {
                     MediaGrid(items: visual, onOpen: onOpen)
                 }
@@ -172,6 +236,21 @@ private struct Bubble: View {
             .modifier(GlassIf(enabled: !mine, shape: shape))
             .contentShape(.contextMenuPreview, shape)
             .contextMenu {
+                Button(action: onReply) {
+                    Label("Ответить", systemImage: "arrowshape.turn.up.left")
+                }
+                Button(action: onForward) {
+                    Label("Переслать", systemImage: "arrowshape.turn.up.right")
+                }
+                if files.isEmpty {
+                    ShareLink(item: message.text) {
+                        Label("Поделиться", systemImage: "square.and.arrow.up")
+                    }
+                } else {
+                    ShareLink(items: files, message: message.text.isEmpty ? nil : Text(message.text)) {
+                        Label("Поделиться", systemImage: "square.and.arrow.up")
+                    }
+                }
                 Button(role: .destructive) { onDelete(false) } label: {
                     Label("Удалить у себя", systemImage: "trash")
                 }
@@ -237,5 +316,33 @@ private struct TypingBubble: View {
             .glass(RoundedRectangle(cornerRadius: 20, style: .continuous))
             Spacer()
         }
+    }
+}
+
+/// Полоска «Ответ …» над полем ввода; крестик — передумать.
+private struct ReplyBar: View {
+    let ref: ReplyRef
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Glyph(kind: .reply, color: Palette.lilac, size: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Ответ: \(ref.author)").textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+                Text(ref.preview).textStyle(.bodySmall, Palette.mist).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button(action: onCancel) {
+                Glyph(kind: .close, color: Palette.mist, size: 18)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 12)
+        .padding(.vertical, 6)
+        .glass(radius: 16)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
     }
 }

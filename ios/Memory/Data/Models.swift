@@ -88,13 +88,25 @@ func minutesSince(_ createdAt: Date?, _ minutesAgo: Int, now: Date = Date()) -> 
     return max(0, Int(now.timeIntervalSince(createdAt) / 60))
 }
 
+/// На какое сообщение отвечают: номер, чьё оно и начало текста — для цитаты над ответом.
+struct ReplyRef: Equatable, Codable {
+    let messageId: Int64
+    let author: String
+    let preview: String
+}
+
 /// Сообщение; text может быть пустым, если отправлены только вложения.
+/// replyTo — ответ на другое сообщение; forwardedFrom — имя автора
+/// пересланного сообщения. Оба необязательные: старые сохранённые
+/// переписки читаются без них.
 struct Message: Identifiable, Equatable, Codable {
     let id: Int64
     let fromMe: Bool
     let text: String
     let time: String
     var attachments: [Attachment] = []
+    var replyTo: ReplyRef? = nil
+    var forwardedFrom: String? = nil
 }
 
 struct Chat: Identifiable, Equatable, Codable {
@@ -144,8 +156,15 @@ struct MemoryGroup: Identifiable, Equatable, Codable {
     var posts: [Post] = []
 }
 
-/// Темы групп — для создания и поиска.
-let groupTopics = ["Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт"]
+/// Темы групп — для создания и поиска, по алфавиту.
+let groupTopics = [
+    "Авто и мото", "Анимация и комиксы", "Архитектура", "Астрономия", "Бизнес", "Блогинг",
+    "Дизайн", "Дети и родители", "Дом и интерьер", "Еда и кулинария", "Животные", "Здоровье",
+    "Игры", "Иностранные языки", "Искусство", "История", "Кино", "Книги", "Красота и мода",
+    "Музыка", "Наука", "Образование", "Психология", "Природа", "Программирование", "Путешествия",
+    "Работа и карьера", "Рукоделие", "Сад и огород", "Спорт", "Танцы", "Театр", "Технологии",
+    "Фитнес", "Философия", "Финансы", "Фото", "Юмор", "Другое",
+]
 
 /// PRISM — короткое вертикальное видео. Пока сервера и загрузки видео нет,
 /// «кадр» рисуется анимацией (см. PrismArt) по seed — один и тот же ролик

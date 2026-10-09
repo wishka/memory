@@ -14,6 +14,17 @@ enum AppTab: String, CaseIterable, Identifiable {
     var title: String { rawValue }
 }
 
+/// Разделы профиля за счётчиками: записи, подписчики, подписки, группы, сохранённое.
+enum ProfileSection: String, CaseIterable {
+    case posts = "Записи"
+    case followers = "Подписчики"
+    case following = "Подписки"
+    case groups = "Группы"
+    case saved = "Сохранённое"
+
+    var title: String { rawValue }
+}
+
 /// Всё, что видно на экране. Те же поля и правила, что UiState на Android.
 struct UiState: Equatable {
     var tab: AppTab = .feed
@@ -34,6 +45,10 @@ struct UiState: Equatable {
     var commentsPrismId: Int64? = nil
     /// Фото или видео на весь экран; nil — не открыто.
     var viewing: Attachment? = nil
+    /// Раздел профиля поверх вкладки «Профиль»; nil — сам профиль.
+    var profileSection: ProfileSection? = nil
+    /// Переписка, из которой открыли страницу человека: «назад» вернёт в неё.
+    var returnToChatId: Int? = nil
     var groups: [MemoryGroup] = Demo.groups
     /// Страница человека поверх текущей вкладки; nil — закрыта.
     var openPersonId: Int? = nil
@@ -50,6 +65,8 @@ struct UiState: Equatable {
     /// «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте.
     var stories: [Post] { posts.filter { following.contains($0.author.id) } }
     var followedPeople: [User] { Demo.people.filter { following.contains($0.id) } }
+    /// Кто подписан на вас (пока — демо-люди).
+    var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) } }
     /// «Сохранённое» в профиле: PRISM в закладках.
     var savedPrisms: [Prism] { prisms.filter { $0.saved } }
     /// Запись по номеру — в ленте или в группе: для обсуждения.
@@ -144,20 +161,43 @@ final class AppModel {
         state.openChatId = tab == .chats ? state.openChatId : nil
         state.openGroupId = tab == .groups ? state.openGroupId : nil
         state.openPersonId = nil
+        state.returnToChatId = nil
+        // Нажатие на «Профиль» внизу всегда ведёт на сам профиль
+        state.profileSection = nil
         state.tab = tab
     }
 
-    /// Страница автора. Своё имя ведёт в «Профиль».
+    /// Раздел профиля: нажатие на «записи», «подписчики», «подписки», «группы» или «Сохранённое».
+    func openProfileSection(_ section: ProfileSection) {
+        state.tab = .profile
+        state.openPersonId = nil
+        state.profileSection = section
+    }
+
+    func closeProfileSection() {
+        state.profileSection = nil
+    }
+
+    /// Страница автора. Своё имя ведёт в «Профиль». Из переписки страница
+    /// открывается сразу поверх неё, а «назад» возвращает в переписку.
     func openPerson(_ userId: Int) {
         if userId == state.me.id {
             selectTab(.profile)
             return
+        }
+        if let chatId = state.openChatId {
+            state.returnToChatId = chatId
+            state.openChatId = nil
         }
         state.openPersonId = userId
     }
 
     func closePerson() {
         state.openPersonId = nil
+        if let chatId = state.returnToChatId {
+            state.openChatId = chatId
+            state.returnToChatId = nil
+        }
     }
 
     /// «Назад»: переписка → страница человека → группа → лента.
@@ -169,6 +209,7 @@ final class AppModel {
         if state.openChatId != nil { closeChat(); return true }
         if state.openPersonId != nil { closePerson(); return true }
         if state.openGroupId != nil { closeGroup(); return true }
+        if state.profileSection != nil { closeProfileSection(); return true }
         if state.tab != .feed { selectTab(.feed); return true }
         return false
     }
@@ -267,6 +308,8 @@ final class AppModel {
     func openChat(_ id: Int) {
         state.tab = .chats
         state.openChatId = id
+        // Страница человека остаётся под перепиской: «назад» вернёт на неё
+        state.returnToChatId = nil
         state.chats = state.chats.map { chat in
             var c = chat
             if c.id == id { c.unread = 0 }
@@ -292,12 +335,13 @@ final class AppModel {
 
     /// Отправка. В демо собеседник «печатает» и через пару секунд отвечает —
     /// чтобы переписку можно было почувствовать без сервера.
-    func send(_ chatId: Int, _ text: String, attachments: [Attachment] = []) {
+    func send(_ chatId: Int, _ text: String, attachments: [Attachment] = [], replyTo: ReplyRef? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty && attachments.isEmpty { return }
         append(chatId, Message(
             id: newId(), fromMe: true, text: trimmed, time: Self.now(),
-            attachments: Array(attachments.prefix(Self.maxMedia))
+            attachments: Array(attachments.prefix(Self.maxMedia)),
+            replyTo: replyTo
         ))
         guard demoReplies else { return }
         let delays = replyDelays
@@ -324,6 +368,27 @@ final class AppModel {
             return c
         }
         if forEveryone { deletedForEveryone.insert(messageId) }
+    }
+
+    /// Цитата для ответа на сообщение: автор и начало текста (или что приложено).
+    func replyRef(_ chatId: Int, _ message: Message) -> ReplyRef {
+        let peer = state.chats.first { $0.id == chatId }?.peer.name ?? ""
+        let author = message.fromMe ? state.me.name : peer
+        return ReplyRef(messageId: message.id, author: author, preview: String(previewOf(message).prefix(120)))
+    }
+
+    /// Переслать сообщение в другую переписку: текст и вложения уходят от
+    /// вашего имени с пометкой, чьё оно было. Открывается переписка-получатель.
+    func forward(_ fromChatId: Int, _ messageId: Int64, to toChatId: Int) {
+        guard let from = state.chats.first(where: { $0.id == fromChatId }),
+              let original = from.messages.first(where: { $0.id == messageId }),
+              state.chats.contains(where: { $0.id == toChatId }) else { return }
+        let author = original.forwardedFrom ?? (original.fromMe ? state.me.name : from.peer.name)
+        append(toChatId, Message(
+            id: newId(), fromMe: true, text: original.text, time: Self.now(),
+            attachments: original.attachments, forwardedFrom: author
+        ))
+        openChat(toChatId)
     }
 
     /// Какие сообщения удалены «у всех» — для будущей отправки на сервер.
@@ -399,8 +464,11 @@ final class AppModel {
 
     // MARK: - Группы
 
+    /// Группа поверх вкладки; из раздела профиля «назад» вернёт в него.
     func openGroup(_ groupId: Int) {
-        state.tab = .groups
+        if !(state.tab == .profile && state.profileSection != nil) {
+            state.tab = .groups
+        }
         state.openGroupId = groupId
         state.openPersonId = nil
     }
@@ -435,7 +503,7 @@ final class AppModel {
         let group = MemoryGroup(
             id: id, name: title,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
-            topic: cleanTopic.isEmpty ? groupTopics[0] : cleanTopic,
+            topic: cleanTopic.isEmpty ? (groupTopics.last ?? "Другое") : cleanTopic,
             members: 1, seed: 100 + id, joined: true, mine: true
         )
         state.groups.insert(group, at: 0)

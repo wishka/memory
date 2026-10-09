@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -26,7 +27,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +37,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -41,12 +45,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.Chat
 import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.data.MediaKind
 import ru.wishka.memory.data.Message
+import ru.wishka.memory.data.ReplyRef
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.components.AttachButton
 import ru.wishka.memory.ui.components.Avatar
@@ -65,10 +72,11 @@ import ru.wishka.memory.ui.theme.Palette
 /**
  * Переписка: шапка с собеседником, сообщения и поле ввода над клавиатурой.
  * Скрепка — фото, видео (из галереи или с камеры) и документы. Долгое
- * нажатие на сообщение — удалить у себя или у обоих.
+ * нажатие на сообщение — ответить, переслать, поделиться или удалить у
+ * себя или у обоих.
  */
 @Composable
-fun ChatScreen(vm: AppViewModel, chat: Chat) {
+fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
     val context = LocalContext.current
     var text by rememberSaveable(chat.id) { mutableStateOf("") }
     var pending by remember(chat.id) { mutableStateOf<List<Attachment>>(emptyList()) }
@@ -77,6 +85,12 @@ fun ChatScreen(vm: AppViewModel, chat: Chat) {
     // Новое сообщение — прокрутка вниз (список перевёрнут: низ — это 0)
     LaunchedEffect(chat.messages.size, chat.typing) { listState.animateScrollToItem(0) }
     val canSend = text.isNotBlank() || pending.isNotEmpty()
+    // На какое сообщение отвечаем; null — обычное сообщение
+    var replyTo by remember(chat.id) { mutableStateOf<ReplyRef?>(null) }
+    // Какое сообщение пересылаем: выбор переписки
+    var forwarding by remember(chat.id) { mutableStateOf<Message?>(null) }
+    val scope = rememberCoroutineScope()
+    val reversed = chat.messages.asReversed()
 
     Column(
         modifier = Modifier
@@ -133,10 +147,18 @@ fun ChatScreen(vm: AppViewModel, chat: Chat) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (chat.typing) item(key = "typing") { TypingBubble() }
-            items(chat.messages.asReversed(), key = { it.id }) { message ->
+            items(reversed, key = { it.id }) { message ->
                 Bubble(
                     message,
                     peerName = chat.peer.name.substringBefore(' '),
+                    onReply = { replyTo = vm.replyRef(chat.id, message) },
+                    onForward = { forwarding = message },
+                    onShare = { MediaFiles.share(context, message.text, message.attachments) },
+                    onQuote = { id ->
+                        // Нажатие на цитату — к исходному сообщению
+                        val index = reversed.indexOfFirst { it.id == id }
+                        if (index >= 0) scope.launch { listState.animateScrollToItem(index + if (chat.typing) 1 else 0) }
+                    },
                     onOpen = { att ->
                         if (att.kind == MediaKind.Document) {
                             if (!MediaFiles.open(context, att)) {
@@ -146,13 +168,13 @@ fun ChatScreen(vm: AppViewModel, chat: Chat) {
                             vm.openMedia(att)
                         }
                     },
-                    onDelete = { forEveryone ->
-                        vm.deleteMessage(chat.id, message.id, forEveryone)
-                        // Копии вложений больше не нужны
-                        message.attachments.forEach(MediaFiles::delete)
-                    },
+                    onDelete = { forEveryone -> vm.deleteMessage(chat.id, message.id, forEveryone) },
                 )
             }
+        }
+
+        replyTo?.let { ref ->
+            ReplyBar(ref, onCancel = { replyTo = null })
         }
 
         PendingAttachments(
@@ -188,23 +210,101 @@ fun ChatScreen(vm: AppViewModel, chat: Chat) {
                         else Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean))
                     )
                     .clickable(enabled = canSend) {
-                        vm.send(chat.id, text, pending)
+                        vm.send(chat.id, text, pending, replyTo)
                         text = ""
                         pending = emptyList()
+                        replyTo = null
                     },
                 contentAlignment = Alignment.Center,
             ) { Glyph(LineIcon.Send, if (!canSend) Palette.Mist else Palette.Ink) }
         }
     }
+
+    forwarding?.let { message ->
+        ForwardDialog(
+            chats = chats,
+            onPick = { target ->
+                forwarding = null
+                vm.forward(chat.id, message.id, target.id)
+            },
+            onDismiss = { forwarding = null },
+        )
+    }
+}
+
+/** Полоска «Ответ …» над полем ввода; крестик — передумать. */
+@Composable
+private fun ReplyBar(ref: ReplyRef, onCancel: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp)
+            .glass(RoundedCornerShape(16.dp))
+            .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Glyph(LineIcon.Reply, Palette.Lilac, size = 20.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Ответ: ${ref.author}", style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
+            Text(ref.preview, style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Box(
+            modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp) }
+    }
+}
+
+/** Куда переслать: список переписок. */
+@Composable
+private fun ForwardDialog(chats: List<Chat>, onPick: (Chat) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Palette.Night,
+        title = { Text("Переслать", style = MaterialTheme.typography.headlineSmall, color = Palette.Ink) },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
+                items(chats, key = { it.id }) { c ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onPick(c) }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Avatar(c.peer, size = 40.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text(c.peer.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена", color = Palette.Lilac) }
+        },
+    )
 }
 
 /**
- * Сообщение: текст и вложения. Долгое нажатие — меню удаления:
- * «у себя» (у собеседника останется) или «у меня и у <имя>».
+ * Сообщение: пометка «Переслано», цитата ответа, вложения и текст.
+ * Долгое нажатие — меню: ответить, переслать, поделиться, удалить «у
+ * себя» (у собеседника останется) или «у меня и у <имя>».
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(message: Message, peerName: String, onOpen: (Attachment) -> Unit, onDelete: (Boolean) -> Unit) {
+private fun Bubble(
+    message: Message,
+    peerName: String,
+    onReply: () -> Unit,
+    onForward: () -> Unit,
+    onShare: () -> Unit,
+    onQuote: (Long) -> Unit,
+    onOpen: (Attachment) -> Unit,
+    onDelete: (Boolean) -> Unit,
+) {
     val mine = message.fromMe
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -230,6 +330,33 @@ private fun Bubble(message: Message, peerName: String, onOpen: (Attachment) -> U
                     .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                message.forwardedFrom?.let { from ->
+                    Row(
+                        modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Glyph(LineIcon.Forward, Palette.Lilac, size = 14.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Переслано от $from", style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
+                    }
+                }
+                message.replyTo?.let { ref ->
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Palette.Void.copy(alpha = 0.3f))
+                            .clickable { onQuote(ref.messageId) }
+                            .padding(end = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.width(3.dp).height(38.dp).background(Brush.verticalGradient(listOf(Palette.Lilac, Palette.Sky))))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.padding(vertical = 4.dp)) {
+                            Text(ref.author, style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
+                            Text(ref.preview, style = MaterialTheme.typography.bodyMedium, color = Palette.Ink.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
                 val visual = message.attachments.filter { it.kind != MediaKind.Document }
                 val documents = message.attachments.filter { it.kind == MediaKind.Document }
                 if (visual.isNotEmpty()) {
@@ -251,6 +378,18 @@ private fun Bubble(message: Message, peerName: String, onOpen: (Attachment) -> U
                 }
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                MenuRow(LineIcon.Reply, "Ответить") {
+                    menu = false
+                    onReply()
+                }
+                MenuRow(LineIcon.Forward, "Переслать") {
+                    menu = false
+                    onForward()
+                }
+                MenuRow(LineIcon.Share, "Поделиться") {
+                    menu = false
+                    onShare()
+                }
                 MenuRow(LineIcon.Trash, "Удалить у себя") {
                     menu = false
                     onDelete(false)

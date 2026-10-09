@@ -43,6 +43,9 @@ object Demo {
     /** Изначальные подписки: Вера, Алина и София. */
     val following = setOf(2, 4, 6)
 
+    /** Кто подписан на вас: Вера, Марк, Алина и Тимур. */
+    val followers = setOf(2, 3, 4, 5)
+
     fun person(id: Int): User? = if (id == me.id) me else people.firstOrNull { it.id == id }
 
     val posts = listOf(

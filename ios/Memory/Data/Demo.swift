@@ -41,6 +41,9 @@ enum Demo {
     /// Изначальные подписки: Вера, Алина и София.
     static let following: Set<Int> = [2, 4, 6]
 
+    /// Кто подписан на вас: Вера, Марк, Алина и Тимур.
+    static let followers: Set<Int> = [2, 3, 4, 5]
+
     static func person(_ id: Int) -> User? {
         id == me.id ? me : people.first { $0.id == id }
     }

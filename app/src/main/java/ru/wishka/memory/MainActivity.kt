@@ -57,6 +57,7 @@ import ru.wishka.memory.ui.components.BottomBar
 import ru.wishka.memory.ui.components.CosmicBackground
 import ru.wishka.memory.ui.feed.FeedScreen
 import ru.wishka.memory.ui.profile.ProfileScreen
+import ru.wishka.memory.ui.profile.ProfileSectionScreen
 import ru.wishka.memory.ui.splash.AtomSplash
 import ru.wishka.memory.ui.theme.MemoryTheme
 
@@ -140,7 +141,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
     // «Назад»: просмотр фото → обсуждение → переписка → страница человека
     // → группа → лента → выход
     val canGoBack = state.viewing != null || state.commentsPostId != null || state.commentsPrismId != null ||
-        state.openChatId != null || state.openPersonId != null ||
+        state.openChatId != null || state.openPersonId != null || state.profileSection != null ||
         state.openGroupId != null || state.tab != Tab.Feed
     BackHandler(enabled = canGoBack) { vm.back() }
 
@@ -157,7 +158,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         val openPerson = state.openPerson
         val openGroup = state.openGroup
         if (openChat != null) {
-            ChatScreen(vm, openChat)
+            ChatScreen(vm, openChat, state.chats.filter { it.id != openChat.id })
         } else {
         when {
             // Страница человека и группы — поверх вкладки, панель вкладок остаётся
@@ -174,7 +175,11 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     Tab.Prism -> PrismScreen(vm, state, padding)
                     Tab.Chats -> ChatsScreen(vm, state, padding)
                     Tab.Groups -> GroupsScreen(vm, state, padding)
-                    Tab.Profile -> ProfileScreen(vm, state, padding, version, onSaveProfile, onLogout)
+                    Tab.Profile -> {
+                        val section = state.profileSection
+                        if (section != null) ProfileSectionScreen(vm, state, section, padding)
+                        else ProfileScreen(vm, state, padding, version, onSaveProfile, onLogout)
+                    }
                 }
             }
         }
