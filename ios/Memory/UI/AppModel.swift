@@ -22,6 +22,7 @@ enum ProfileSection: String, CaseIterable {
     case following = "Подписки"
     case groups = "Группы"
     case saved = "Сохранённое"
+    case music = "Моя музыка"
 
     var title: String { t(rawValue) }
 }
@@ -52,6 +53,11 @@ struct UiState: Equatable {
     var privacy = Privacy()
     /// Чёрный список: их записи, комментарии и сообщения не видны.
     var blocked: Set<Int> = []
+    /// «Моя музыка»: треки и плейлисты — только на этом телефоне.
+    var tracks: [MusicTrack] = []
+    var playlists: [Playlist] = []
+    /// Создание своего PRISM — камера, редактор, публикация — поверх всего.
+    var creatingPrism = false
     /// Настройки поверх вкладки «Профиль»; nil — закрыты.
     var settingsPage: SettingsPage? = nil
     /// Раздел чужого профиля (записи, подписчики, подписки) поверх его страницы.
@@ -115,6 +121,8 @@ struct UiState: Equatable {
     var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) } }
     /// «Сохранённое» в профиле: PRISM в закладках.
     var savedPrisms: [Prism] { prisms.filter { $0.saved } }
+    func track(_ id: String) -> MusicTrack? { tracks.first { $0.id == id } }
+    func playlistTracks(_ playlist: Playlist) -> [MusicTrack] { playlist.trackIds.compactMap { track($0) } }
     /// Запись по номеру — в ленте или в группе: для обсуждения.
     func findPost(_ id: Int64) -> Post? {
         if let post = posts.first(where: { $0.id == id }) { return post }
@@ -169,6 +177,8 @@ struct Snapshot: Codable, Equatable {
     var notify: Notifications? = nil
     var privacy: Privacy? = nil
     var blocked: Set<Int>? = nil
+    var tracks: [MusicTrack]? = nil
+    var playlists: [Playlist]? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -280,6 +290,7 @@ final class AppModel {
     /// true — обработано внутри приложения.
     @discardableResult
     func back() -> Bool {
+        if state.creatingPrism { closePrismCreator(); return true }
         if state.viewing != nil { closeMedia(); return true }
         if state.commentsPostId != nil || state.commentsPrismId != nil { closeComments(); return true }
         if state.openChatId != nil { closeChat(); return true }
@@ -599,6 +610,35 @@ final class AppModel {
         state.prismStartId = prismId
     }
 
+    /// Свой PRISM: камера → редактор → публикация.
+    func openPrismCreator() { state.creatingPrism = true }
+
+    func closePrismCreator() { state.creatingPrism = false }
+
+    /// Опубликовать свой ролик: готовое видео из редактора, обложка,
+    /// подпись и что звучит. Ролик встаёт первым во вкладке PRISM.
+    func publishPrism(video: Attachment, cover: Attachment?, caption: String, music: String, durationMs: Double) {
+        let id = newId()
+        let text = String(caption.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
+        let sound = music.trimmingCharacters(in: .whitespaces)
+        let prism = Prism(
+            id: id, author: state.me, caption: text,
+            music: sound.isEmpty ? tf("Оригинальный звук · %s", state.me.name) : sound,
+            seed: Int(id % 97), likes: 0, comments: 0,
+            durationMs: max(1000, durationMs), video: video, cover: cover, createdAt: clock()
+        )
+        state.prisms.insert(prism, at: 0)
+        state.creatingPrism = false
+        selectTab(.prism)
+        state.prismStartId = id
+    }
+
+    /// Удалить свой ролик. Файлы удаляет экран — модель о файлах не знает.
+    func deletePrism(_ prismId: Int64) {
+        let meId = state.me.id
+        state.prisms.removeAll { $0.id == prismId && $0.author.id == meId }
+    }
+
     func consumePrismStart() {
         state.prismStartId = nil
     }
@@ -607,6 +647,74 @@ final class AppModel {
         state.prisms = state.prisms.map { prism in
             var p = prism
             if p.id == prismId { change(&p) }
+            return p
+        }
+    }
+
+    // MARK: - Моя музыка
+
+    /// Новые треки — в начало списка; уже загруженные (тот же файл) не повторяются.
+    func addTracks(_ tracks: [MusicTrack]) {
+        let known = Set(state.tracks.map(\.fileName))
+        state.tracks = tracks.filter { !known.contains($0.fileName) } + state.tracks
+    }
+
+    /// Удалить трек: он уходит и из всех плейлистов.
+    func deleteTrack(_ trackId: String) {
+        state.tracks.removeAll { $0.id == trackId }
+        state.playlists = state.playlists.map { p in
+            var p = p
+            p.trackIds.removeAll { $0 == trackId }
+            return p
+        }
+    }
+
+    /// Новый плейлист; ответ — его номер, nil — пустое название.
+    @discardableResult
+    func createPlaylist(_ name: String) -> Int64? {
+        let title = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        if title.isEmpty { return nil }
+        let id = newId()
+        state.playlists.append(Playlist(id: id, name: title))
+        return id
+    }
+
+    func renamePlaylist(_ playlistId: Int64, _ name: String) {
+        let title = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        if title.isEmpty { return }
+        updatePlaylist(playlistId) { $0.name = title }
+    }
+
+    func deletePlaylist(_ playlistId: Int64) {
+        state.playlists.removeAll { $0.id == playlistId }
+    }
+
+    /// Добавить трек в плейлист; уже добавленный не повторяется.
+    func addToPlaylist(_ playlistId: Int64, _ trackId: String) {
+        guard state.track(trackId) != nil else { return }
+        updatePlaylist(playlistId) { p in
+            if !p.trackIds.contains(trackId) { p.trackIds.append(trackId) }
+        }
+    }
+
+    func removeFromPlaylist(_ playlistId: Int64, _ trackId: String) {
+        updatePlaylist(playlistId) { $0.trackIds.removeAll { $0 == trackId } }
+    }
+
+    /// Сдвинуть трек в плейлисте на шаг вверх (-1) или вниз (+1).
+    func moveInPlaylist(_ playlistId: Int64, _ trackId: String, step: Int) {
+        updatePlaylist(playlistId) { p in
+            guard let i = p.trackIds.firstIndex(of: trackId) else { return }
+            let j = i + step
+            guard p.trackIds.indices.contains(j) else { return }
+            p.trackIds.swapAt(i, j)
+        }
+    }
+
+    private func updatePlaylist(_ playlistId: Int64, _ change: (inout Playlist) -> Void) {
+        state.playlists = state.playlists.map { p in
+            var p = p
+            if p.id == playlistId { change(&p) }
             return p
         }
     }
@@ -777,7 +885,8 @@ final class AppModel {
         Snapshot(
             posts: state.posts, chats: state.chats, groups: state.groups, prisms: state.prisms,
             following: state.following, notifications: state.notifications.all, nextId: nextId,
-            notify: state.notifications, privacy: state.privacy, blocked: state.blocked
+            notify: state.notifications, privacy: state.privacy, blocked: state.blocked,
+            tracks: state.tracks, playlists: state.playlists
         )
     }
 
@@ -799,6 +908,8 @@ final class AppModel {
         s.notifications = snapshot.notify ?? Notifications(all: snapshot.notifications)
         s.privacy = snapshot.privacy ?? Privacy()
         s.blocked = (snapshot.blocked ?? []).subtracting([s.me.id])
+        s.tracks = snapshot.tracks ?? []
+        s.playlists = snapshot.playlists ?? []
         s.applyMe(s.me)
         state = s
     }

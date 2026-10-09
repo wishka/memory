@@ -94,20 +94,13 @@ struct ChatScreen: View {
             inputRow
         }
         .quickLookPreview($preview)
-        .confirmationDialog(
-            t("Переслать"),
-            isPresented: Binding(get: { forwarding != nil }, set: { if !$0 { forwarding = nil } }),
-            titleVisibility: .visible
-        ) {
-            ForEach(otherChats) { target in
-                Button(target.peer.name) {
-                    if let message = forwarding {
-                        model.forward(chat.id, message.id, to: target.id)
-                    }
-                    forwarding = nil
+        // Переслать: выбор переписки — шторкой в стиле приложения
+        .glassActions(item: $forwarding, title: { _ in t("Переслать") }, cancel: true) { message in
+            otherChats.map { target in
+                GlassAction(icon: .forward, title: target.peer.name) {
+                    model.forward(chat.id, message.id, to: target.id)
                 }
             }
-            Button(t("Отмена"), role: .cancel) { forwarding = nil }
         }
     }
 
@@ -204,6 +197,7 @@ private struct Bubble: View {
     let onQuote: (Int64) -> Void
     let onOpen: (Attachment) -> Void
     let onDelete: (Bool) -> Void
+    @State private var menu = false
 
     var body: some View {
         let mine = message.fromMe
@@ -271,24 +265,17 @@ private struct Bubble: View {
                 }
             }
             .modifier(GlassIf(enabled: !mine, shape: shape))
-            .contentShape(.contextMenuPreview, shape)
-            .contextMenu {
-                Button(action: onReply) {
-                    Label(t("Ответить"), systemImage: "arrowshape.turn.up.left")
-                }
-                Button(action: onForward) {
-                    Label(t("Переслать"), systemImage: "arrowshape.turn.up.right")
-                }
-                Button(action: onPin) {
-                    Label(pinned ? t("Открепить") : t("Закрепить"), systemImage: pinned ? "pin.slash" : "pin")
-                }
-                Button(role: .destructive) { onDelete(false) } label: {
-                    Label(t("Удалить у себя"), systemImage: "trash")
-                }
-                Button(role: .destructive) { onDelete(true) } label: {
-                    Label(t("Удалить у всех"), systemImage: "trash.fill")
-                }
-            }
+            .contentShape(shape)
+            // Долгое нажатие — меню сообщения шторкой
+            .onLongPressGesture(minimumDuration: 0.4) { menu = true }
+            .sensoryFeedback(.impact(weight: .medium), trigger: menu)
+            .glassActions($menu, actions: [
+                GlassAction(icon: .reply, title: t("Ответить"), action: onReply),
+                GlassAction(icon: .forward, title: t("Переслать"), action: onForward),
+                GlassAction(icon: .pushpin, title: pinned ? t("Открепить") : t("Закрепить"), action: onPin),
+                GlassAction(icon: .trash, title: t("Удалить у себя"), destructive: true) { onDelete(false) },
+                GlassAction(icon: .trash, title: t("Удалить у всех"), destructive: true) { onDelete(true) },
+            ])
             // Пузырь не шире 290: длинное сообщение переносится
             .frame(maxWidth: 290, alignment: mine ? .trailing : .leading)
             if !mine { Spacer(minLength: 0) }

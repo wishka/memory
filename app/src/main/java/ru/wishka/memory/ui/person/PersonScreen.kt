@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.User
+import ru.wishka.memory.ui.components.MemoryMenu
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.components.MenuRow
@@ -97,7 +97,7 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                             .clickable { menu = true },
                         contentAlignment = Alignment.Center,
                     ) { Glyph(LineIcon.More, Palette.Ink) }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
                         if (blocked) {
                             MenuRow(LineIcon.Block, t("Разблокировать")) { menu = false; vm.unblock(person.id) }
                         } else {

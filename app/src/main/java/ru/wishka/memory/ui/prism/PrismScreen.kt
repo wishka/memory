@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,7 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.data.Prism
+import ru.wishka.memory.ui.components.glass
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
@@ -70,10 +74,14 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
         if (index >= 0) pager.scrollToPage(index)
         vm.consumePrismStart()
     }
+    var confirmDelete by remember { mutableStateOf<Prism?>(null) }
+    Box(Modifier.fillMaxSize()) {
     VerticalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
         val prism = prisms[page]
         PrismPage(
             prism = prism,
+            mine = prism.author.id == state.me.id && prism.video != null,
+            onDelete = { confirmDelete = prism },
             active = pager.currentPage == page,
             following = if (prism.author.id == state.me.id) null else prism.author.id in state.following,
             contentPadding = contentPadding,
@@ -83,6 +91,37 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
             onComments = { vm.openPrismComments(prism.id) },
             onShare = { sharePrism(context, prism) },
             onSave = { vm.togglePrismSave(prism.id) },
+        )
+    }
+
+    // «+» — снять или выбрать свой ролик
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(top = contentPadding.calculateTopPadding() + 22.dp, end = 12.dp)
+            .size(44.dp)
+            .clip(CircleShape)
+            .glass(CircleShape, strong = true)
+            .clickable { vm.openPrismCreator() },
+        contentAlignment = Alignment.Center,
+    ) { Glyph(LineIcon.Plus, Palette.Ink, size = 22.dp) }
+    }
+
+    confirmDelete?.let { prism ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            containerColor = Palette.Night,
+            title = { Text(t("Удалить ролик?"), style = MaterialTheme.typography.titleMedium, color = Palette.Ink) },
+            text = { Text(t("Ролик, его обложка и комментарии удалятся. Отменить будет нельзя."), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = null
+                    vm.deletePrism(prism.id)
+                    prism.video?.let { MediaFiles.delete(it) }
+                    prism.cover?.let { MediaFiles.delete(it) }
+                }) { Text(t("Удалить"), color = Palette.Lilac) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text(t("Отмена"), color = Palette.Mist) } },
         )
     }
 }
@@ -97,6 +136,8 @@ private fun sharePrism(context: android.content.Context, prism: Prism) {
 @Composable
 private fun PrismPage(
     prism: Prism,
+    mine: Boolean,
+    onDelete: () -> Unit,
     active: Boolean,
     following: Boolean?,
     contentPadding: PaddingValues,
@@ -112,7 +153,8 @@ private fun PrismPage(
     // Пролистали на другой ролик — этот начнётся сначала, когда вернётесь
     LaunchedEffect(active) { if (!active) { time = 0L; paused = false } }
     LaunchedEffect(active, paused) {
-        if (!active || paused) return@LaunchedEffect
+        // Своё видео ведёт время само (PrismVideo)
+        if (!active || paused || prism.video != null) return@LaunchedEffect
         var last = withFrameMillis { it }
         while (true) {
             val now = withFrameMillis { it }
@@ -131,7 +173,16 @@ private fun PrismPage(
                 )
             },
     ) {
-        PrismArt(prism.seed, time, Modifier.fillMaxSize())
+        val video = prism.video
+        var videoLength by remember(prism.id) { mutableLongStateOf(prism.durationMs.toLong()) }
+        if (video != null) {
+            PrismVideo(video.path, playing = active && !paused, modifier = Modifier.fillMaxSize()) { position, length ->
+                time = position
+                videoLength = length
+            }
+        } else {
+            PrismArt(prism.seed, time, Modifier.fillMaxSize())
+        }
 
         // Затемнение снизу, чтобы подпись читалась на любом кадре
         Box(
@@ -155,7 +206,7 @@ private fun PrismPage(
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(time.toFloat() / prism.durationMs)
+                        .fillMaxWidth((time.toFloat() / (if (video != null) videoLength else prism.durationMs.toLong())).coerceIn(0f, 1f))
                         .height(2.dp)
                         .background(Brush.horizontalGradient(listOf(Palette.Lilac, Palette.Sky))),
                 )
@@ -193,6 +244,7 @@ private fun PrismPage(
             SideButton(LineIcon.Comment, compact(prism.comments), onComments)
             SideButton(LineIcon.Share, t("Поделиться"), onShare)
             SideButton(if (prism.saved) LineIcon.BookmarkFilled else LineIcon.Bookmark, if (prism.saved) t("В закладках") else t("Сохранить"), onSave)
+            if (mine) SideButton(LineIcon.Trash, t("Удалить"), onDelete)
         }
 
         // Автор, подпись и музыка

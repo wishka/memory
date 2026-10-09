@@ -30,7 +30,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -287,7 +286,7 @@ fun AttachButton(picker: MediaPicker, documents: Boolean, modifier: Modifier = M
                 .clickable { open = true },
             contentAlignment = Alignment.Center,
         ) { Glyph(LineIcon.Attach, Palette.Lilac, size = 22.dp) }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        MemoryMenu(expanded = open, onDismiss = { open = false }) {
             MenuRow(LineIcon.Image, t("Фото или видео из галереи")) { open = false; picker.pickMedia() }
             MenuRow(LineIcon.Camera, t("Снять фото")) { open = false; picker.takePhoto() }
             MenuRow(LineIcon.Video, t("Снять видео")) { open = false; picker.recordVideo() }
@@ -298,12 +297,14 @@ fun AttachButton(picker: MediaPicker, documents: Boolean, modifier: Modifier = M
 
 @Composable
 fun MenuRow(icon: LineIcon, title: String, color: Color = Palette.Ink, onClick: () -> Unit) {
+    // Значок — сиреневый, текст — светлый; color — для «опасных» пунктов
+    val accent = color != Palette.Ink
     DropdownMenuItem(
         text = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Glyph(icon, color, size = 20.dp)
+                Glyph(icon, if (accent) color else Palette.Lilac, size = 20.dp)
                 Spacer(Modifier.width(12.dp))
-                Text(title, style = MaterialTheme.typography.bodyLarge, color = color)
+                Text(title, style = MaterialTheme.typography.bodyLarge, color = if (accent) color else Palette.Ink)
             }
         },
         onClick = onClick,

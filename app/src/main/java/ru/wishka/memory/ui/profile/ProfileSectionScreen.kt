@@ -40,6 +40,7 @@ import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.Glyph
 import ru.wishka.memory.ui.components.LineIcon
 import ru.wishka.memory.ui.components.Nebula
+import ru.wishka.memory.ui.components.MediaTile
 import ru.wishka.memory.ui.components.ScreenTitle
 import ru.wishka.memory.ui.components.glass
 import ru.wishka.memory.ui.feed.PostCard
@@ -131,6 +132,8 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                     }
                 }
             }
+            // «Моя музыка» — свой экран (MusicScreen)
+            ProfileSection.Music -> Unit
         }
     }
 }
@@ -141,6 +144,7 @@ private fun subtitle(state: UiState, section: ProfileSection): String = when (se
     ProfileSection.Following -> plural(state.followedPeople.size, "подписка", "подписки", "подписок")
     ProfileSection.Groups -> plural(state.myGroups.size, "группа", "группы", "групп")
     ProfileSection.Saved -> plural(state.savedPrisms.size, "ролик", "ролика", "роликов")
+    ProfileSection.Music -> plural(state.tracks.size, "трек", "трека", "треков")
 }
 
 @Composable
@@ -214,7 +218,9 @@ private fun GroupRow(group: Group, onOpen: () -> Unit) {
 private fun SavedTile(prism: Prism, modifier: Modifier, onClick: () -> Unit) {
     Column(modifier = modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick)) {
         Box(contentAlignment = Alignment.Center) {
-            PrismArt(prism.seed, 1_500L, Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(18.dp)))
+            val cover = prism.cover
+            if (cover != null) MediaTile(cover, Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(18.dp)), maxSide = 480)
+            else PrismArt(prism.seed, 1_500L, Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(18.dp)))
             Glyph(LineIcon.Play, Palette.Ink, size = 30.dp)
         }
         Text(

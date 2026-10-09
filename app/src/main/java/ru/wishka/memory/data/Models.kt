@@ -203,7 +203,39 @@ data class Prism(
     val durationMs: Int = 9_000,
     val saved: Boolean = false,
     val commentList: List<Comment> = emptyList(),
+    /** Свой ролик: готовое видео после редактора; null — демо, «кадр» рисует PrismArt. */
+    val video: Attachment? = null,
+    /** Обложка своего ролика — кадр, выбранный в редакторе. */
+    val cover: Attachment? = null,
+    val createdAt: Long = 0,
 )
+
+/**
+ * Трек в «Моей музыке». Файл — копия в памяти приложения (path), его
+ * видит и слушает только владелец: пока сервера нет, это личная
+ * библиотека на телефоне.
+ */
+data class MusicTrack(
+    val id: String,
+    val title: String,
+    val artist: String,
+    val path: String,
+    val durationMs: Long = 0,
+    val addedAt: Long = 0,
+)
+
+/** Плейлист: название и треки по порядку. */
+data class Playlist(
+    val id: Long,
+    val name: String,
+    val trackIds: List<String> = emptyList(),
+)
+
+/** «3:07» — длительность трека или ролика. */
+fun durationTitle(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    return "${total / 60}:${(total % 60).toString().padStart(2, '0')}"
+}
 
 /** То, что человек рассказывает о себе в профиле. Сохраняется вместе с аккаунтом. */
 data class ProfileInfo(

@@ -18,21 +18,21 @@ struct EditableAvatar: View {
     /// подряд SwiftUI показать не даёт.
     @State private var captured: UIImage?
 
+    @State private var showMenu = false
+
+    private var actions: [GlassAction] {
+        var items = [GlassAction(icon: .image, title: t("Выбрать из галереи")) { showGallery = true }]
+        if CameraPicker.isAvailable {
+            items.append(GlassAction(icon: .camera, title: t("Сделать фото")) { showCamera = true })
+        }
+        if user.hasAvatar {
+            items.append(GlassAction(icon: .trash, title: t("Убрать фото"), destructive: true, action: onRemove))
+        }
+        return items
+    }
+
     var body: some View {
-        Menu {
-            Button { showGallery = true } label: {
-                Label(t("Выбрать из галереи"), systemImage: "photo")
-            }
-            Button { showCamera = true } label: {
-                Label(t("Сделать фото"), systemImage: "camera")
-            }
-            .disabled(!CameraPicker.isAvailable)
-            if user.hasAvatar {
-                Button(role: .destructive, action: onRemove) {
-                    Label(t("Убрать фото"), systemImage: "trash")
-                }
-            }
-        } label: {
+        Button { showMenu = true } label: {
             ZStack(alignment: .bottomTrailing) {
                 Avatar(user: user, size: 104, ring: true)
                 // Значок камеры: аватар можно сменить
@@ -41,6 +41,8 @@ struct EditableAvatar: View {
                     .glass(Circle(), strong: true)
             }
         }
+        .buttonStyle(.plain)
+        .glassActions($showMenu, actions: actions)
         .photosPicker(isPresented: $showGallery, selection: $galleryItem, matching: .images)
         .onChange(of: galleryItem) { _, item in
             guard let item else { return }

@@ -232,22 +232,21 @@ struct AttachButton: View {
     @State private var showFiles = false
     @State private var loading = false
     @State private var failed = false
+    @State private var showMenu = false
+
+    private var actions: [GlassAction] {
+        var items = [GlassAction(icon: .image, title: t("Фото или видео из галереи")) { showGallery = true }]
+        if CameraPicker.isAvailable {
+            items.append(GlassAction(icon: .camera, title: t("Снять фото или видео")) { showCamera = true })
+        }
+        if documents {
+            items.append(GlassAction(icon: .document, title: t("Документ")) { showFiles = true })
+        }
+        return items
+    }
 
     var body: some View {
-        Menu {
-            Button { showGallery = true } label: {
-                Label(t("Фото или видео из галереи"), systemImage: "photo.on.rectangle")
-            }
-            Button { showCamera = true } label: {
-                Label(t("Снять фото или видео"), systemImage: "camera")
-            }
-            .disabled(!CameraPicker.isAvailable)
-            if documents {
-                Button { showFiles = true } label: {
-                    Label(t("Документ"), systemImage: "doc")
-                }
-            }
-        } label: {
+        Button { showMenu = true } label: {
             ZStack {
                 if loading {
                     ProgressView().tint(Palette.lilac)
@@ -258,7 +257,9 @@ struct AttachButton: View {
             .frame(width: size, height: size)
             .glass(Circle())
         }
+        .buttonStyle(.plain)
         .disabled(loading)
+        .glassActions($showMenu, actions: actions)
         .photosPicker(
             isPresented: $showGallery,
             selection: $galleryItems,

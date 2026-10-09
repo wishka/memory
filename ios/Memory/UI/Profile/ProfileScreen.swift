@@ -80,13 +80,23 @@ struct ProfileScreen: View {
                     .cardPadding()
 
                     GlassCard {
-                        Button { model.openProfileSection(.saved) } label: {
-                            SettingRow(icon: .bookmark, title: t("Сохранённое")) {
-                                Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)
+                        VStack(spacing: 0) {
+                            Button { model.openProfileSection(.saved) } label: {
+                                SettingRow(icon: .bookmark, title: t("Сохранённое")) {
+                                    Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)
+                                }
+                                .contentShape(Rectangle())
                             }
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            FadeLine().padding(.horizontal, 16)
+                            Button { model.openProfileSection(.music) } label: {
+                                SettingRow(icon: .music, title: t("Моя музыка")) {
+                                    Text("\(state.tracks.count)").textStyle(.bodySmall, Palette.mist)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                     .cardPadding()
                 }

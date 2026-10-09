@@ -9,6 +9,7 @@ enum LineIcon {
     case reply, forward, chevronDown, pushpin
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
     case gear, shield, lock, block, textSize, globe, bellOff, more, eye, check
+    case flash, flip, scissors, speed, crop, filter, sliders, text, sticker, volume, rotate, mirror, pause
 }
 
 struct Glyph: View {
@@ -467,6 +468,102 @@ struct Glyph: View {
             check.addLine(to: p(s, 0.42, 0.72))
             check.addLine(to: p(s, 0.8, 0.3))
             strokePath(check)
+        case .flash:
+            var bolt = Path()
+            bolt.move(to: p(s, 0.56, 0.12))
+            bolt.addLine(to: p(s, 0.26, 0.56))
+            bolt.addLine(to: p(s, 0.48, 0.56))
+            bolt.addLine(to: p(s, 0.42, 0.88))
+            bolt.addLine(to: p(s, 0.74, 0.42))
+            bolt.addLine(to: p(s, 0.52, 0.42))
+            bolt.closeSubpath()
+            strokePath(bolt)
+        case .flip:
+            // Две стрелки по кругу — сменить камеру
+            var arcs = Path()
+            arcs.addArc(center: p(s, 0.5, 0.5), radius: s * 0.32, startAngle: .degrees(200), endAngle: .degrees(340), clockwise: false)
+            var lower = Path()
+            lower.addArc(center: p(s, 0.5, 0.5), radius: s * 0.32, startAngle: .degrees(20), endAngle: .degrees(160), clockwise: false)
+            strokePath(arcs)
+            strokePath(lower)
+            var a1 = Path()
+            a1.move(to: p(s, 0.70, 0.14)); a1.addLine(to: p(s, 0.76, 0.30)); a1.addLine(to: p(s, 0.60, 0.32))
+            var a2 = Path()
+            a2.move(to: p(s, 0.30, 0.86)); a2.addLine(to: p(s, 0.24, 0.70)); a2.addLine(to: p(s, 0.40, 0.68))
+            strokePath(a1)
+            strokePath(a2)
+        case .scissors:
+            strokePath(circle(s, 0.28, 0.74, 0.11))
+            strokePath(circle(s, 0.72, 0.74, 0.11))
+            strokePath(line(s, 0.36, 0.66, 0.68, 0.16))
+            strokePath(line(s, 0.64, 0.66, 0.32, 0.16))
+        case .speed:
+            var dial = Path()
+            dial.addArc(center: p(s, 0.5, 0.56), radius: s * 0.36, startAngle: .degrees(160), endAngle: .degrees(20), clockwise: false)
+            strokePath(dial)
+            strokePath(line(s, 0.5, 0.56, 0.68, 0.38))
+            fillPath(circle(s, 0.5, 0.56, 0.04))
+        case .crop:
+            var a = Path()
+            a.move(to: p(s, 0.28, 0.12)); a.addLine(to: p(s, 0.28, 0.72)); a.addLine(to: p(s, 0.88, 0.72))
+            var b = Path()
+            b.move(to: p(s, 0.12, 0.28)); b.addLine(to: p(s, 0.72, 0.28)); b.addLine(to: p(s, 0.72, 0.88))
+            strokePath(a)
+            strokePath(b)
+        case .filter:
+            strokePath(circle(s, 0.38, 0.4, 0.2))
+            strokePath(circle(s, 0.62, 0.4, 0.2))
+            strokePath(circle(s, 0.5, 0.62, 0.2))
+        case .sliders:
+            for (i, k) in [0.34, 0.62, 0.46].enumerated() {
+                let y = 0.26 + CGFloat(i) * 0.24
+                strokePath(line(s, 0.14, y, 0.86, y))
+                fillPath(circle(s, CGFloat(k), y, 0.07))
+            }
+        case .text:
+            strokePath(line(s, 0.2, 0.22, 0.8, 0.22))
+            strokePath(line(s, 0.5, 0.22, 0.5, 0.82))
+            strokePath(line(s, 0.38, 0.82, 0.62, 0.82))
+        case .sticker:
+            var note = Path()
+            note.move(to: p(s, 0.2, 0.2)); note.addLine(to: p(s, 0.8, 0.2)); note.addLine(to: p(s, 0.8, 0.58))
+            note.addLine(to: p(s, 0.58, 0.8)); note.addLine(to: p(s, 0.2, 0.8)); note.closeSubpath()
+            strokePath(note)
+            var fold = Path()
+            fold.move(to: p(s, 0.8, 0.58)); fold.addLine(to: p(s, 0.58, 0.58)); fold.addLine(to: p(s, 0.58, 0.8))
+            strokePath(fold)
+            strokePath(diamond(s, 0.42, 0.42, 0.08))
+        case .volume:
+            var speaker = Path()
+            speaker.move(to: p(s, 0.14, 0.4)); speaker.addLine(to: p(s, 0.3, 0.4)); speaker.addLine(to: p(s, 0.5, 0.22))
+            speaker.addLine(to: p(s, 0.5, 0.78)); speaker.addLine(to: p(s, 0.3, 0.6)); speaker.addLine(to: p(s, 0.14, 0.6))
+            speaker.closeSubpath()
+            strokePath(speaker)
+            var w1 = Path()
+            w1.addArc(center: p(s, 0.54, 0.5), radius: s * 0.12, startAngle: .degrees(-45), endAngle: .degrees(45), clockwise: false)
+            var w2 = Path()
+            w2.addArc(center: p(s, 0.54, 0.5), radius: s * 0.26, startAngle: .degrees(-50), endAngle: .degrees(50), clockwise: false)
+            strokePath(w1)
+            strokePath(w2)
+        case .rotate:
+            var ring = Path()
+            ring.addArc(center: p(s, 0.5, 0.52), radius: s * 0.32, startAngle: .degrees(-60), endAngle: .degrees(230), clockwise: false)
+            strokePath(ring)
+            var head = Path()
+            head.move(to: p(s, 0.66, 0.12)); head.addLine(to: p(s, 0.68, 0.3)); head.addLine(to: p(s, 0.5, 0.28))
+            strokePath(head)
+        case .mirror:
+            strokePath(line(s, 0.5, 0.12, 0.5, 0.88))
+            var l = Path()
+            l.move(to: p(s, 0.4, 0.24)); l.addLine(to: p(s, 0.4, 0.76)); l.addLine(to: p(s, 0.14, 0.76)); l.closeSubpath()
+            var r = Path()
+            r.move(to: p(s, 0.6, 0.24)); r.addLine(to: p(s, 0.6, 0.76)); r.addLine(to: p(s, 0.86, 0.76)); r.closeSubpath()
+            strokePath(l)
+            strokePath(r)
+        case .pause:
+            let bar = StrokeStyle(lineWidth: 2.4, lineCap: .round)
+            context.stroke(line(s, 0.36, 0.24, 0.36, 0.76), with: shading, style: bar)
+            context.stroke(line(s, 0.64, 0.24, 0.64, 0.76), with: shading, style: bar)
         case .info:
             strokePath(diamond(s, 0.5, 0.5, 0.34))
             strokePath(line(s, 0.5, 0.46, 0.5, 0.64))

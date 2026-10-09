@@ -7,6 +7,7 @@ import SwiftUI
 struct PrismScreen: View {
     let model: AppModel
     @State private var current: Int64?
+    @State private var confirmDelete: Prism?
 
     var body: some View {
         let state = model.state
@@ -25,7 +26,9 @@ struct PrismScreen: View {
                             onAuthor: { model.openPerson(prism.author.id) },
                             onFollow: { model.toggleFollow(prism.author.id) },
                             onComments: { model.openPrismComments(prism.id) },
-                            onSave: { model.togglePrismSave(prism.id) }
+                            onSave: { model.togglePrismSave(prism.id) },
+                            mine: prism.author.id == state.me.id && prism.video != nil,
+                            onDelete: { confirmDelete = prism }
                         )
                         // Ролик — ровно во весь экран: так листание «страницами» встаёт точно
                         .containerRelativeFrame([.horizontal, .vertical])
@@ -40,6 +43,24 @@ struct PrismScreen: View {
             // Открыли из «Сохранённого» — сразу на нужный ролик
             .onAppear { jumpToStart() }
             .onChange(of: state.prismStartId) { _, _ in jumpToStart() }
+            // «+» — снять или выбрать свой ролик
+            .overlay(alignment: .topTrailing) {
+                RoundGlyphButton(icon: .plus, iconSize: 22, strong: true) { model.openPrismCreator() }
+                    .padding(.top, geo.safeAreaInsets.top + 8)
+                    .padding(.trailing, 12)
+            }
+        }
+        .glassActions(
+            item: $confirmDelete,
+            title: { _ in t("Удалить ролик?") },
+            message: { _ in t("Ролик, его обложка и комментарии удалятся. Отменить будет нельзя.") },
+            cancel: true
+        ) { prism in
+            [GlassAction(icon: .trash, title: t("Удалить"), destructive: true) {
+                model.deletePrism(prism.id)
+                if let video = prism.video { MediaFiles.delete(video) }
+                if let cover = prism.cover { MediaFiles.delete(cover) }
+            }]
         }
     }
 
@@ -65,8 +86,12 @@ private struct PrismPage: View {
     let onFollow: () -> Void
     let onComments: () -> Void
     let onSave: () -> Void
+    let mine: Bool
+    let onDelete: () -> Void
 
     @State private var paused = false
+    /// Ход своего видео 0…1.
+    @State private var videoProgress: Double = 0
     /// Сколько ролик уже проиграл до текущего запуска, мс.
     @State private var elapsed: Double = 0
     /// Когда ролик запущен; nil — стоит.
@@ -81,10 +106,15 @@ private struct PrismPage: View {
 
     var body: some View {
         let spec = PrismSpec(seed: prism.seed)
-        TimelineView(.animation(minimumInterval: nil, paused: !playing)) { timeline in
+        // Своё видео ведёт время само — часы для рисованного кадра не нужны
+        TimelineView(.animation(minimumInterval: nil, paused: !playing || prism.video != nil)) { timeline in
             let ms = timeMs(timeline.date)
             ZStack {
-                PrismArt(spec: spec, timeMs: ms)
+                if let video = prism.video {
+                    PrismVideo(url: MediaFiles.url(video), playing: playing) { videoProgress = $0 }
+                } else {
+                    PrismArt(spec: spec, timeMs: ms)
+                }
 
                 // Затемнение снизу, чтобы подпись читалась на любом кадре
                 LinearGradient(
@@ -96,7 +126,7 @@ private struct PrismPage: View {
                 )
 
                 VStack(alignment: .leading, spacing: 10) {
-                    progress(ms)
+                    progress(prism.video != nil ? videoProgress * prism.durationMs : ms)
                     Text("PRISM").textStyle(.label)
                     Spacer()
                     HStack(alignment: .bottom, spacing: 12) {
@@ -211,6 +241,10 @@ private struct PrismPage: View {
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.selection, trigger: prism.saved)
+            if mine {
+                Button(action: onDelete) { sideLabel(.trash, t("Удалить")) }
+                    .buttonStyle(.plain)
+            }
         }
     }
 

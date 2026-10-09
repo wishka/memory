@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
@@ -38,6 +37,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.Chat
+import ru.wishka.memory.ui.components.MemoryMenu
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.messagePreview
 import ru.wishka.memory.ui.UiState
@@ -167,7 +167,7 @@ private fun ChatRow(chat: Chat, blocked: Boolean, vm: AppViewModel, onClick: () 
             }
         }
     }
-    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+    MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
         MenuRow(LineIcon.Pushpin, if (chat.onTop) t("Открепить") else t("Закрепить")) {
             menu = false
             vm.toggleChatOnTop(chat.id)
