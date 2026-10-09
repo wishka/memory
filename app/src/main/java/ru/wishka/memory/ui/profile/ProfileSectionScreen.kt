@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.profile
 
+import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,7 +80,7 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
 
         when (section) {
             ProfileSection.Posts -> {
-                if (state.myPosts.isEmpty()) item { Empty("Пока ни одной записи. Поделитесь первым моментом во вкладке «Лента».") }
+                if (state.myPosts.isEmpty()) item { Empty(t("Пока ни одной записи. Поделитесь первым моментом во вкладке «Лента».")) }
                 items(state.myPosts, key = { it.id }) { post ->
                     PostCard(
                         post,
@@ -90,35 +91,35 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                 }
             }
             ProfileSection.Followers -> {
-                if (state.followers.isEmpty()) item { Empty("Пока на вас никто не подписан.") }
+                if (state.followers.isEmpty()) item { Empty(t("Пока на вас никто не подписан.")) }
                 items(state.followers, key = { it.id }) { person ->
                     PersonRow(
                         person,
                         following = person.id in state.following,
-                        followLabel = "Подписаться в ответ",
+                        followLabel = t("Подписаться в ответ"),
                         onOpen = { vm.openPerson(person.id) },
                         onToggle = { vm.toggleFollow(person.id) },
                     )
                 }
             }
             ProfileSection.Following -> {
-                if (state.followedPeople.isEmpty()) item { Empty("Вы пока ни на кого не подписаны. Подписаться можно в ленте — кнопкой у имени автора.") }
+                if (state.followedPeople.isEmpty()) item { Empty(t("Вы пока ни на кого не подписаны. Подписаться можно в ленте — кнопкой у имени автора.")) }
                 items(state.followedPeople, key = { it.id }) { person ->
                     PersonRow(
                         person,
                         following = true,
-                        followLabel = "Подписаться",
+                        followLabel = t("Подписаться"),
                         onOpen = { vm.openPerson(person.id) },
                         onToggle = { vm.toggleFollow(person.id) },
                     )
                 }
             }
             ProfileSection.Groups -> {
-                if (state.myGroups.isEmpty()) item { Empty("Вы пока ни в одной группе. Найти группу можно во вкладке «Группы».") }
+                if (state.myGroups.isEmpty()) item { Empty(t("Вы пока ни в одной группе. Найти группу можно во вкладке «Группы».")) }
                 items(state.myGroups, key = { it.id }) { group -> GroupRow(group) { vm.openGroup(group.id) } }
             }
             ProfileSection.Saved -> {
-                if (state.savedPrisms.isEmpty()) item { Empty("Здесь будут PRISM, которые вы сохранили кнопкой «Сохранить».") }
+                if (state.savedPrisms.isEmpty()) item { Empty(t("Здесь будут PRISM, которые вы сохранили кнопкой «Сохранить».")) }
                 // Сохранённые ролики — плитками по две в ряд
                 items(state.savedPrisms.chunked(2), key = { row -> row.first().id }) { row ->
                     Row(
@@ -143,7 +144,7 @@ private fun subtitle(state: UiState, section: ProfileSection): String = when (se
 }
 
 @Composable
-private fun Empty(text: String) {
+fun Empty(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,
@@ -154,7 +155,7 @@ private fun Empty(text: String) {
 
 /** Человек в списке: аватар, имя, подписка. Нажатие — его страница. */
 @Composable
-private fun PersonRow(person: User, following: Boolean, followLabel: String, onOpen: () -> Unit, onToggle: () -> Unit) {
+fun PersonRow(person: User, following: Boolean, followLabel: String, onOpen: () -> Unit, onToggle: () -> Unit, showButton: Boolean = true) {
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -175,9 +176,11 @@ private fun PersonRow(person: User, following: Boolean, followLabel: String, onO
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            if (following) GhostButton("Вы подписаны", onClick = onToggle)
-            else GlowButton(followLabel, onClick = onToggle)
+            if (showButton) {
+                Spacer(Modifier.width(8.dp))
+                if (following) GhostButton(t("Вы подписаны"), onClick = onToggle)
+                else GlowButton(followLabel, onClick = onToggle)
+            }
         }
     }
 }
@@ -197,12 +200,12 @@ private fun GroupRow(group: Group, onOpen: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(group.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "${group.topic} · ${plural(group.members, "участник", "участника", "участников")}",
+                    "${t(group.topic)} · ${plural(group.members, "участник", "участника", "участников")}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                 )
             }
-            if (group.mine) Text("ВАША", style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
+            if (group.mine) Text(t("ВАША"), style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
         }
     }
 }

@@ -121,13 +121,29 @@ fun Avatar(user: User, size: Dp = 44.dp, ring: Boolean = false, showOnline: Bool
                 .background(avatarBrush(user.hue)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                user.initials,
-                color = Palette.Ink,
-                fontFamily = Inter,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = (size.value * 0.34f).sp,
-            )
+            // Своё фото — поверх градиента; пока читается, видны буквы
+            val photo = if (user.avatar.isNotEmpty()) {
+                rememberThumbnail(
+                    ru.wishka.memory.data.Attachment(user.avatar, ru.wishka.memory.data.MediaKind.Photo, user.avatar),
+                    maxSide = 512,
+                )
+            } else null
+            if (photo != null) {
+                androidx.compose.foundation.Image(
+                    photo,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                )
+            } else {
+                Text(
+                    user.initials,
+                    color = Palette.Ink,
+                    fontFamily = Inter,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = (size.value * 0.34f).sp,
+                )
+            }
         }
         if (showOnline && user.online) {
             Box(

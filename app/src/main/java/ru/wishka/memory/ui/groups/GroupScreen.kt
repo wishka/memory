@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.groups
 
+import ru.wishka.memory.i18n.tf
+import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,9 +15,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -76,7 +80,7 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                 Column(modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 20.dp, vertical = 12.dp)) {
                     Text(group.name.uppercase(), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink)
                     Text(
-                        "${group.topic.uppercase()} · ${plural(group.members, "участник", "участника", "участников").uppercase()}",
+                        "${t(group.topic).uppercase()} · ${plural(group.members, "участник", "участника", "участников").uppercase()}",
                         style = MaterialTheme.typography.labelSmall,
                         color = Palette.Mist,
                     )
@@ -91,19 +95,37 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     when {
-                        group.mine -> GhostButton("Удалить группу", onClick = { confirmDelete = true })
-                        group.joined -> GhostButton("Выйти из группы", onClick = { vm.toggleGroup(group.id) })
-                        else -> GlowButton("Вступить", onClick = { vm.toggleGroup(group.id) })
+                        group.mine -> GhostButton(t("Удалить группу"), onClick = { confirmDelete = true })
+                        group.joined -> GhostButton(t("Выйти из группы"), onClick = { vm.toggleGroup(group.id) })
+                        else -> GlowButton(t("Вступить"), onClick = { vm.toggleGroup(group.id) })
+                    }
+                    // Уведомления группы: колокольчик включает и выключает
+                    if (group.joined) {
+                        Row(
+                            modifier = Modifier
+                                .glass(RoundedCornerShape(50), strong = !group.muted)
+                                .clickable { vm.toggleGroupMute(group.id) }
+                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Glyph(if (group.muted) LineIcon.BellOff else LineIcon.Bell, Palette.Lilac, size = 18.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (group.muted) t("БЕЗ ЗВУКА") else t("УВЕДОМЛЕНИЯ"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (group.muted) Palette.Mist else Palette.Ink,
+                            )
+                        }
                     }
                 }
                 if (confirmDelete) {
                     GlassCard {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("Удалить «${group.name}» вместе с записями? Отменить будет нельзя.",
+                            Text(tf("Удалить «%s» вместе с записями? Отменить будет нельзя.", group.name),
                                 style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                GhostButton("Отмена", onClick = { confirmDelete = false })
-                                GlowButton("Удалить", onClick = { vm.deleteGroup(group.id) })
+                                GhostButton(t("Отмена"), onClick = { confirmDelete = false })
+                                GlowButton(t("Удалить"), onClick = { vm.deleteGroup(group.id) })
                             }
                         }
                     }
@@ -115,12 +137,12 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column {
-                        GlassField(text, { text = it.take(2000) }, "Написать в группу")
+                        GlassField(text, { text = it.take(2000) }, t("Написать в группу"))
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(end = 12.dp, bottom = 12.dp),
                             horizontalArrangement = Arrangement.End,
                         ) {
-                            GlowButton("Опубликовать", enabled = text.isNotBlank(), onClick = {
+                            GlowButton(t("Опубликовать"), enabled = text.isNotBlank(), onClick = {
                                 vm.postInGroup(group.id, text)
                                 text = ""
                             })
@@ -131,7 +153,7 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
         } else {
             item {
                 Text(
-                    "Вступите, чтобы писать в группу.",
+                    t("Вступите, чтобы писать в группу."),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.padding(horizontal = 24.dp),
@@ -141,13 +163,13 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
 
         item {
             Text(
-                if (group.posts.isEmpty()) "ЗАПИСЕЙ ПОКА НЕТ" else "ЗАПИСИ · ${group.posts.size}",
+                if (group.posts.isEmpty()) t("ЗАПИСЕЙ ПОКА НЕТ") else tf("ЗАПИСИ · %s", group.posts.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Mist,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
         }
-        items(group.posts, key = { it.id }) { post ->
+        items(group.posts.filter { it.author.id !in state.blocked }, key = { it.id }) { post ->
             PostCard(
                 post,
                 onLike = { vm.toggleGroupPostLike(group.id, post.id) },

@@ -1,5 +1,7 @@
 package ru.wishka.memory.data.auth
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import ru.wishka.memory.data.ProfileInfo
 
 /**
@@ -47,11 +49,11 @@ class LocalAuth(
         val login = normalize(username)
         validateLogin(login)?.let { return AuthResult.Error(it) }
         val name = displayName.trim()
-        if (name.isEmpty()) return AuthResult.Error("Укажите имя")
-        if (name.length > 40) return AuthResult.Error("Имя длиннее 40 символов")
+        if (name.isEmpty()) return AuthResult.Error(t("Укажите имя"))
+        if (name.length > 40) return AuthResult.Error(t("Имя длиннее 40 символов"))
         validatePassword(password)?.let { return AuthResult.Error(it) }
-        if (password != repeat) return AuthResult.Error("Пароли не совпадают")
-        if (store.get(key(login, "hash")) != null) return AuthResult.Error("Логин @$login уже занят")
+        if (password != repeat) return AuthResult.Error(t("Пароли не совпадают"))
+        if (store.get(key(login, "hash")) != null) return AuthResult.Error(tf("Логин @%s уже занят", login))
 
         val salt = PasswordHasher.newSalt()
         store.put(key(login, "salt"), salt.toHex())
@@ -63,13 +65,13 @@ class LocalAuth(
 
     fun login(username: String, password: String): AuthResult {
         val login = normalize(username)
-        if (login.isEmpty() || password.isEmpty()) return AuthResult.Error("Введите логин и пароль")
+        if (login.isEmpty() || password.isEmpty()) return AuthResult.Error(t("Введите логин и пароль"))
 
         val lockedUntil = store.get(key(login, "locked"))?.toLongOrNull() ?: 0L
         val now = clock()
         if (now < lockedUntil) {
             val sec = ((lockedUntil - now) / 1000).coerceAtLeast(1)
-            return AuthResult.Error("Слишком много попыток. Попробуйте через $sec с")
+            return AuthResult.Error(tf("Слишком много попыток. Попробуйте через %s с", sec))
         }
 
         val hash = store.get(key(login, "hash"))
@@ -81,7 +83,7 @@ class LocalAuth(
             PasswordHasher.verify(password, salt.fromHex(), hash.fromHex(), iter)
         if (!ok) {
             if (hash != null) registerFailure(login, now)
-            return AuthResult.Error("Неверный логин или пароль")
+            return AuthResult.Error(t("Неверный логин или пароль"))
         }
         store.remove(key(login, "fails"))
         store.remove(key(login, "locked"))
@@ -107,6 +109,47 @@ class LocalAuth(
         store.put(key(login, "p.birthday"), info.birthday.trim().take(20))
         store.put(key(login, "p.website"), info.website.trim().take(80))
         store.put(key(login, "p.interests"), info.interests.joinToString("|"))
+        store.put(key(login, "p.avatar"), info.avatar)
+    }
+
+    /**
+     * Сменить пароль: нужен текущий. null — готово, иначе текст ошибки.
+     * Сессия остаётся: человек не выходит из профиля.
+     */
+    fun changePassword(username: String, current: String, new: String, repeat: String): String? {
+        val login = normalize(username)
+        if (current.isEmpty()) return t("Введите текущий пароль")
+        if (!checkPassword(login, current)) return t("Текущий пароль не подходит")
+        validatePassword(new)?.let { return it }
+        if (new != repeat) return t("Пароли не совпадают")
+        if (new == current) return t("Новый пароль совпадает с текущим")
+        val salt = PasswordHasher.newSalt()
+        store.put(key(login, "salt"), salt.toHex())
+        store.put(key(login, "hash"), PasswordHasher.hash(new, salt, iterations).toHex())
+        store.put(key(login, "iter"), iterations.toString())
+        return null
+    }
+
+    /**
+     * Удалить аккаунт с этого телефона — после проверки пароля. Сессия
+     * завершается. null — удалён, иначе текст ошибки.
+     */
+    fun deleteAccount(username: String, password: String): String? {
+        val login = normalize(username)
+        if (password.isEmpty()) return t("Введите пароль")
+        if (!checkPassword(login, password)) return t("Пароль не подходит")
+        for (field in listOf("salt", "hash", "iter", "name", "fails", "locked", "p.bio", "p.city", "p.birthday", "p.website", "p.interests", "p.avatar")) {
+            store.remove(key(login, field))
+        }
+        if (store.get(SESSION_USER) == login) logout()
+        return null
+    }
+
+    private fun checkPassword(login: String, password: String): Boolean {
+        val hash = store.get(key(login, "hash")) ?: return false
+        val salt = store.get(key(login, "salt")) ?: return false
+        val iter = store.get(key(login, "iter"))?.toIntOrNull() ?: PasswordHasher.ITERATIONS
+        return PasswordHasher.verify(password, salt.fromHex(), hash.fromHex(), iter)
     }
 
     /** Демо-аккаунт для первого знакомства с приложением; ничего не делает, если он уже есть. */
@@ -116,7 +159,7 @@ class LocalAuth(
         store.put(key(DEMO_LOGIN, "salt"), salt.toHex())
         store.put(key(DEMO_LOGIN, "hash"), PasswordHasher.hash(DEMO_PASSWORD, salt, iterations).toHex())
         store.put(key(DEMO_LOGIN, "iter"), iterations.toString())
-        store.put(key(DEMO_LOGIN, "name"), "Гость Memory")
+        store.put(key(DEMO_LOGIN, "name"), t("Гость Memory"))
     }
 
     private fun startSession(login: String): AuthResult {
@@ -133,6 +176,7 @@ class LocalAuth(
             birthday = store.get(key(login, "p.birthday")).orEmpty(),
             website = store.get(key(login, "p.website")).orEmpty(),
             interests = store.get(key(login, "p.interests")).orEmpty().split('|').filter { it.isNotBlank() },
+            avatar = store.get(key(login, "p.avatar")).orEmpty(),
         )
         return Account(login, store.get(key(login, "name")) ?: login, info)
     }
@@ -161,15 +205,15 @@ class LocalAuth(
         fun normalize(username: String): String = username.trim().removePrefix("@").lowercase()
 
         fun validateLogin(login: String): String? = when {
-            login.length < 3 -> "Логин — от 3 символов"
-            login.length > 20 -> "Логин — не длиннее 20 символов"
-            !LOGIN_RE.matches(login) -> "Логин: латинские буквы, цифры, точка и подчёркивание"
+            login.length < 3 -> t("Логин — от 3 символов")
+            login.length > 20 -> t("Логин — не длиннее 20 символов")
+            !LOGIN_RE.matches(login) -> t("Логин: латинские буквы, цифры, точка и подчёркивание")
             else -> null
         }
 
         fun validatePassword(password: String): String? = when {
-            password.length < 8 -> "Пароль — от 8 символов"
-            password.none { it.isLetter() } || password.none { it.isDigit() } -> "В пароле нужны буквы и цифры"
+            password.length < 8 -> t("Пароль — от 8 символов")
+            password.none { it.isLetter() } || password.none { it.isDigit() } -> t("В пароле нужны буквы и цифры")
             else -> null
         }
 

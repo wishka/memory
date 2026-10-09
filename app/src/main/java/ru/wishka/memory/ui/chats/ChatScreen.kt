@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.chats
 
+import ru.wishka.memory.i18n.t
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -55,11 +56,13 @@ import ru.wishka.memory.data.MediaKind
 import ru.wishka.memory.data.Message
 import ru.wishka.memory.data.ReplyRef
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.i18n.tf
 import ru.wishka.memory.ui.messagePreview
 import ru.wishka.memory.ui.components.AttachButton
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.DocumentRow
 import ru.wishka.memory.ui.components.FadeLine
+import ru.wishka.memory.ui.components.GhostButton
 import ru.wishka.memory.ui.components.GlassField
 import ru.wishka.memory.ui.components.Glyph
 import ru.wishka.memory.ui.components.LineIcon
@@ -77,7 +80,7 @@ import ru.wishka.memory.ui.theme.Palette
  * себя или у всех. Закреплённое сообщение — полоской под шапкой.
  */
 @Composable
-fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
+fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean = false) {
     val context = LocalContext.current
     var text by rememberSaveable(chat.id) { mutableStateOf("") }
     var pending by remember(chat.id) { mutableStateOf<List<Attachment>>(emptyList()) }
@@ -126,8 +129,8 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
                     Text(chat.peer.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
                     Text(
                         when {
-                            chat.typing -> "печатает…"
-                            chat.peer.online -> "в сети"
+                            chat.typing -> t("печатает…")
+                            chat.peer.online -> t("в сети")
                             else -> "@${chat.peer.handle}"
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -175,7 +178,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
                     onOpen = { att ->
                         if (att.kind == MediaKind.Document) {
                             if (!MediaFiles.open(context, att)) {
-                                Toast.makeText(context, "Нет приложения, чтобы открыть файл", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, t("Нет приложения, чтобы открыть файл"), Toast.LENGTH_SHORT).show()
                             }
                         } else {
                             vm.openMedia(att)
@@ -199,7 +202,25 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
             modifier = Modifier.padding(top = 8.dp),
         )
 
-        Row(
+        // Заблокированному не пишем: вместо поля — напоминание и кнопка
+        if (blocked) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+                    .glass(RoundedCornerShape(24.dp))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    tf("Вы заблокировали %s", chat.peer.name),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Mist,
+                    modifier = Modifier.weight(1f),
+                )
+                GhostButton(t("Разблокировать"), onClick = { vm.unblock(chat.peer.id) })
+            }
+        } else Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
@@ -208,7 +229,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>) {
         ) {
             AttachButton(picker, documents = true, size = 50.dp)
             GlassField(
-                text, { text = it.take(2000) }, "Сообщение",
+                text, { text = it.take(2000) }, t("Сообщение"),
                 maxLines = 5,
                 modifier = Modifier
                     .weight(1f)
@@ -258,7 +279,7 @@ private fun PinnedBar(message: Message, onOpen: () -> Unit, onUnpin: () -> Unit)
         Glyph(LineIcon.Pushpin, Palette.Lilac, size = 20.dp)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text("Закреплённое сообщение", style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
+            Text(t("Закреплённое сообщение"), style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
             Text(messagePreview(message), style = MaterialTheme.typography.bodyMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Box(
@@ -283,7 +304,7 @@ private fun ReplyBar(ref: ReplyRef, onCancel: () -> Unit) {
         Glyph(LineIcon.Reply, Palette.Lilac, size = 20.dp)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text("Ответ: ${ref.author}", style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
+            Text(tf("Ответ: %s", ref.author), style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
             Text(ref.preview, style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Box(
@@ -299,7 +320,7 @@ private fun ForwardDialog(chats: List<Chat>, onPick: (Chat) -> Unit, onDismiss: 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Palette.Night,
-        title = { Text("Переслать", style = MaterialTheme.typography.headlineSmall, color = Palette.Ink) },
+        title = { Text(t("Переслать"), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink) },
         text = {
             LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
                 items(chats, key = { it.id }) { c ->
@@ -320,7 +341,7 @@ private fun ForwardDialog(chats: List<Chat>, onPick: (Chat) -> Unit, onDismiss: 
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена", color = Palette.Lilac) }
+            TextButton(onClick = onDismiss) { Text(t("Отмена"), color = Palette.Lilac) }
         },
     )
 }
@@ -375,7 +396,7 @@ private fun Bubble(
                     ) {
                         Glyph(LineIcon.Forward, Palette.Lilac, size = 14.dp)
                         Spacer(Modifier.width(6.dp))
-                        Text("Переслано от $from", style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
+                        Text(tf("Переслано от %s", from), style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
                     }
                 }
                 message.replyTo?.let { ref ->
@@ -416,23 +437,23 @@ private fun Bubble(
                 }
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                MenuRow(LineIcon.Reply, "Ответить") {
+                MenuRow(LineIcon.Reply, t("Ответить")) {
                     menu = false
                     onReply()
                 }
-                MenuRow(LineIcon.Forward, "Переслать") {
+                MenuRow(LineIcon.Forward, t("Переслать")) {
                     menu = false
                     onForward()
                 }
-                MenuRow(LineIcon.Pushpin, if (pinned) "Открепить" else "Закрепить") {
+                MenuRow(LineIcon.Pushpin, if (pinned) t("Открепить") else t("Закрепить")) {
                     menu = false
                     onPin()
                 }
-                MenuRow(LineIcon.Trash, "Удалить у себя") {
+                MenuRow(LineIcon.Trash, t("Удалить у себя")) {
                     menu = false
                     onDelete(false)
                 }
-                MenuRow(LineIcon.Trash, "Удалить у всех", color = Palette.Lilac) {
+                MenuRow(LineIcon.Trash, t("Удалить у всех"), color = Palette.Lilac) {
                     menu = false
                     onDelete(true)
                 }

@@ -17,8 +17,8 @@ struct StoriesScreen: View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 ScreenTitle(
-                    title: "Истории",
-                    subtitle: state.following.isEmpty ? "Пока ни одной подписки" : "Подписки: \(state.following.count)"
+                    title: t("Истории"),
+                    subtitle: state.following.isEmpty ? t("Пока ни одной подписки") : tf("Подписки: %s", state.following.count)
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
@@ -44,11 +44,11 @@ struct StoriesScreen: View {
                     GlassCard {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(state.following.isEmpty
-                                 ? "Здесь будут записи людей, на которых вы подписаны. Подписаться можно прямо в ленте — кнопкой у имени автора."
-                                 : "У ваших подписок пока нет записей.")
+                                 ? t("Здесь будут записи людей, на которых вы подписаны. Подписаться можно прямо в ленте — кнопкой у имени автора.")
+                                 : t("У ваших подписок пока нет записей."))
                                 .textStyle(.body)
                                 .fixedSize(horizontal: false, vertical: true)
-                            GlowButton(title: "Открыть ленту") { model.selectTab(.feed) }
+                            GlowButton(title: t("Открыть ленту")) { model.selectTab(.feed) }
                         }
                         .padding(20)
                     }
@@ -101,6 +101,6 @@ private struct StoryRing: View {
         .onTapGesture(perform: onTap)
         .onLongPressGesture(perform: onLongPress)
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Долгое нажатие — страница человека")
+        .accessibilityHint(t("Долгое нажатие — страница человека"))
     }
 }

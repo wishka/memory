@@ -19,6 +19,11 @@ struct User: Identifiable, Equatable, Codable {
     var joined: String = ""
     var followers: Int = 0
     var followingCount: Int = 0
+    /// Своё фото вместо букв: имя файла круглой обрезки в папке вложений;
+    /// nil или "" — буквы. Необязательное: старые сохранения читаются без него.
+    var avatar: String? = nil
+
+    var hasAvatar: Bool { !(avatar ?? "").isEmpty }
 
     var initials: String {
         let letters = name.split(separator: " ").prefix(2).compactMap { $0.first }.map { String($0).uppercased() }
@@ -59,6 +64,19 @@ struct Comment: Identifiable, Equatable, Codable {
     var text: String
     var minutesAgo: Int = 0
     var createdAt: Date? = nil
+    /// Лайки комментария. Хранятся необязательными — старые сохранения
+    /// читаются без них; снаружи — likes и liked.
+    var likeCount: Int? = nil
+    var likedByMe: Bool? = nil
+
+    var likes: Int {
+        get { likeCount ?? 0 }
+        set { likeCount = newValue }
+    }
+    var liked: Bool {
+        get { likedByMe ?? false }
+        set { likedByMe = newValue }
+    }
 }
 
 /// Запись в ленте. artSeed != nil — к записи приложена процедурная
@@ -111,6 +129,7 @@ struct Message: Identifiable, Equatable, Codable {
 
 /// Переписка. pinnedId — закреплённое сообщение: видно полоской вверху
 /// (необязательное — старые сохранённые переписки читаются без него).
+/// onTop — сама переписка закреплена вверху списка; muted — без звука.
 struct Chat: Identifiable, Equatable, Codable {
     let id: Int
     var peer: User
@@ -118,6 +137,17 @@ struct Chat: Identifiable, Equatable, Codable {
     var unread: Int = 0
     var typing: Bool = false
     var pinnedId: Int64? = nil
+    var onTopFlag: Bool? = nil
+    var mutedFlag: Bool? = nil
+
+    var onTop: Bool {
+        get { onTopFlag ?? false }
+        set { onTopFlag = newValue }
+    }
+    var muted: Bool {
+        get { mutedFlag ?? false }
+        set { mutedFlag = newValue }
+    }
 
     var last: Message? { messages.last }
     var pinned: Message? { pinnedId.flatMap { id in messages.first { $0.id == id } } }
@@ -125,15 +155,17 @@ struct Chat: Identifiable, Equatable, Codable {
 
 /// «5 мин», «2 ч», «вчера», «3 дн» — время записи в ленте.
 func agoTitle(_ minutes: Int) -> String {
-    if minutes < 1 { return "сейчас" }
-    if minutes < 60 { return "\(minutes) мин" }
-    if minutes < 60 * 24 { return "\(minutes / 60) ч" }
-    if minutes < 60 * 48 { return "вчера" }
-    return "\(minutes / (60 * 24)) дн"
+    if minutes < 1 { return t("сейчас") }
+    if minutes < 60 { return tf("%s мин", minutes) }
+    if minutes < 60 * 24 { return tf("%s ч", minutes / 60) }
+    if minutes < 60 * 48 { return t("вчера") }
+    return tf("%s дн", minutes / (60 * 24))
 }
 
-/// Русское склонение: plural(5, "запись", "записи", "записей") → «5 записей».
+/// Склонение: plural(5, "запись", "записи", "записей") → «5 записей».
+/// По-английски — «1 post» / «5 posts»: формы берутся из словаря.
 func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
+    if L10n.shared.english { return "\(n) \(t(n == 1 ? one : many))" }
     let mod10 = n % 10
     let mod100 = n % 100
     let word: String
@@ -158,6 +190,13 @@ struct MemoryGroup: Identifiable, Equatable, Codable {
     var joined: Bool = false
     var mine: Bool = false
     var posts: [Post] = []
+    /// Уведомления группы выключены; необязательное — для старых сохранений.
+    var mutedFlag: Bool? = nil
+
+    var muted: Bool {
+        get { mutedFlag ?? false }
+        set { mutedFlag = newValue }
+    }
 }
 
 /// Интересы в профиле — те же темы, без «Другое».
@@ -199,6 +238,42 @@ struct ProfileInfo: Equatable {
     var birthday: String = ""
     var website: String = ""
     var interests: [String] = []
+    /// Имя файла своего фото; "" — аватар из букв.
+    var avatar: String = ""
+}
+
+/// Кому видно или кому можно: всем, тем, на кого вы подписаны, никому.
+enum Audience: String, Codable, CaseIterable {
+    case everyone = "Все"
+    case following = "Мои подписки"
+    case nobody = "Никто"
+
+    var title: String { t(rawValue) }
+}
+
+/// Настройки приватности. Пока сервера нет, хранятся на телефоне вместе с аккаунтом.
+struct Privacy: Equatable, Codable {
+    /// Кто видит город, день рождения, сайт и интересы.
+    var profileInfo: Audience = .everyone
+    /// Кто видит ваши подписки и подписчиков.
+    var followLists: Audience = .everyone
+    /// Кто может написать вам.
+    var messages: Audience = .everyone
+    /// Кто может комментировать ваши записи.
+    var comments: Audience = .everyone
+    /// Показывать другим, что вы в сети.
+    var showOnline: Bool = true
+    /// Показывать день рождения.
+    var showBirthday: Bool = true
+}
+
+/// Какие уведомления присылать. all = false выключает все разом.
+struct Notifications: Equatable, Codable {
+    var all: Bool = true
+    var messages: Bool = true
+    var reactions: Bool = true
+    var groups: Bool = true
+    var follows: Bool = true
 }
 
 /// Повторяемый генератор случайных чисел: одна и та же картинка по

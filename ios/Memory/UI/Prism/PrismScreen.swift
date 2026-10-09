@@ -10,13 +10,15 @@ struct PrismScreen: View {
 
     var body: some View {
         let state = model.state
+        // Ролики тех, кто в чёрном списке, не показываются
+        let prisms = state.prisms.filter { !state.isBlocked($0.author.id) }
         GeometryReader { geo in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
-                    ForEach(state.prisms) { prism in
+                    ForEach(prisms) { prism in
                         PrismPage(
                             prism: prism,
-                            active: (current ?? state.prisms.first?.id) == prism.id,
+                            active: (current ?? prisms.first?.id) == prism.id,
                             following: prism.author.id == state.me.id ? nil : state.following.contains(prism.author.id),
                             safeTop: geo.safeAreaInsets.top,
                             onLike: { model.togglePrismLike(prism.id) },
@@ -50,7 +52,7 @@ struct PrismScreen: View {
 
 /// Текст для «Поделиться»: подпись, автор и где это смотреть.
 func shareText(_ prism: Prism) -> String {
-    "\(prism.caption)\n— \(prism.author.name) (@\(prism.author.handle)) в Memory · PRISM"
+    tf("%s\n— %s (@%s) в Memory · PRISM", prism.caption, prism.author.name, prism.author.handle)
 }
 
 private struct PrismPage: View {
@@ -80,9 +82,9 @@ private struct PrismPage: View {
     var body: some View {
         let spec = PrismSpec(seed: prism.seed)
         TimelineView(.animation(minimumInterval: nil, paused: !playing)) { timeline in
-            let t = timeMs(timeline.date)
+            let ms = timeMs(timeline.date)
             ZStack {
-                PrismArt(spec: spec, timeMs: t)
+                PrismArt(spec: spec, timeMs: ms)
 
                 // Затемнение снизу, чтобы подпись читалась на любом кадре
                 LinearGradient(
@@ -94,7 +96,7 @@ private struct PrismPage: View {
                 )
 
                 VStack(alignment: .leading, spacing: 10) {
-                    progress(t)
+                    progress(ms)
                     Text("PRISM").textStyle(.label)
                     Spacer()
                     HStack(alignment: .bottom, spacing: 12) {
@@ -170,9 +172,9 @@ private struct PrismPage: View {
                 .buttonStyle(.plain)
                 if let following {
                     if following {
-                        GhostButton(title: "Вы подписаны", action: onFollow)
+                        GhostButton(title: t("Вы подписаны"), action: onFollow)
                     } else {
-                        GlowButton(title: "Подписаться", action: onFollow)
+                        GlowButton(title: t("Подписаться"), action: onFollow)
                     }
                 }
             }
@@ -187,7 +189,12 @@ private struct PrismPage: View {
     private var sideButtons: some View {
         VStack(spacing: 18) {
             Button(action: onLike) {
-                sideLabel(prism.liked ? .heartFilled : .heart, compact(prism.likes))
+                VStack(spacing: 2) {
+                    LikeHeart(liked: prism.liked, color: Palette.ink, size: 30)
+                    Text(compact(prism.likes)).textStyle(.label).lineLimit(1).fixedSize()
+                }
+                .padding(4)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.impact(weight: .light), trigger: prism.liked)
@@ -196,11 +203,11 @@ private struct PrismPage: View {
             }
             .buttonStyle(.plain)
             ShareLink(item: shareText(prism)) {
-                sideLabel(.share, "Поделиться")
+                sideLabel(.share, t("Поделиться"))
             }
             .buttonStyle(.plain)
             Button(action: onSave) {
-                sideLabel(prism.saved ? .bookmarkFilled : .bookmark, prism.saved ? "В закладках" : "Сохранить")
+                sideLabel(prism.saved ? .bookmarkFilled : .bookmark, prism.saved ? t("В закладках") : t("Сохранить"))
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.selection, trigger: prism.saved)

@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.profile
 
+import ru.wishka.memory.i18n.tf
+import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -53,6 +56,9 @@ import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.Glyph
 import ru.wishka.memory.ui.components.InterestChips
 import ru.wishka.memory.ui.components.LineIcon
+import ru.wishka.memory.ui.components.MenuRow
+import ru.wishka.memory.ui.components.Chip
+import ru.wishka.memory.ui.components.StaggerIn
 import ru.wishka.memory.ui.components.Nebula
 import ru.wishka.memory.ui.components.ScreenTitle
 import ru.wishka.memory.ui.components.Stat
@@ -64,22 +70,38 @@ import ru.wishka.memory.ui.theme.Palette
 
 
 /**
- * Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе,
- * интересы, группы и подписки, настройки и свои записи.
+ * Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе и
+ * «Сохранённое». Настройки — за шестерёнкой вверху, рядом с карандашом.
+ * Нажатие на аватар — сменить или убрать фото.
  */
 @Composable
 fun ProfileScreen(
     vm: AppViewModel,
     state: UiState,
     contentPadding: PaddingValues,
-    version: String,
     /** Имя и сведения — ещё и в сохранённый аккаунт, чтобы пережили перезапуск. */
     onSaveProfile: (String, ProfileInfo) -> Unit,
-    onLogout: () -> Unit,
 ) {
     var editing by rememberSaveable { mutableStateOf(false) }
     val me = state.me
     val hasInfo = me.city.isNotBlank() || me.birthday.isNotBlank() || me.website.isNotBlank() || me.interests.isNotEmpty()
+
+    // Новый аватар: выбранное фото → обрезка по кругу → в профиль и в аккаунт
+    var cropping by rememberSaveable { mutableStateOf<String?>(null) }
+    var avatarMenu by remember { mutableStateOf(false) }
+    val picker = rememberAvatarPicker { path -> cropping = path }
+    fun applyAvatar(path: String) {
+        val old = me.avatar
+        vm.setAvatar(path)
+        onSaveProfile(me.name, vm.profileInfo())
+        if (old.isNotEmpty() && old != path) java.io.File(old).delete()
+    }
+    cropping?.let { source ->
+        AvatarCropper(source) { result ->
+            cropping = null
+            if (result != null) applyAvatar(result)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -92,18 +114,11 @@ fun ProfileScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                ScreenTitle("Профиль", "@${me.handle}", Modifier.weight(1f))
-                if (!editing) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .glass(CircleShape)
-                            .clickable { editing = true },
-                        contentAlignment = Alignment.Center,
-                    ) { Glyph(LineIcon.Edit, Palette.Lilac, size = 20.dp) }
-                }
+                ScreenTitle(t("Профиль"), "@${me.handle}", Modifier.weight(1f))
+                RoundIconButton(LineIcon.Gear) { vm.openSettings() }
+                if (!editing) RoundIconButton(LineIcon.Edit) { editing = true }
             }
         }
 
@@ -116,7 +131,39 @@ fun ProfileScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Avatar(me, size = 104.dp, ring = true)
+                    Box {
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { avatarMenu = true },
+                        ) { Avatar(me, size = 104.dp, ring = true) }
+                        // Значок камеры: аватар можно сменить
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .glass(CircleShape, strong = true)
+                                .clickable { avatarMenu = true },
+                            contentAlignment = Alignment.Center,
+                        ) { Glyph(LineIcon.Camera, Palette.Ink, size = 16.dp) }
+                        DropdownMenu(
+                            expanded = avatarMenu,
+                            onDismissRequest = { avatarMenu = false },
+                        ) {
+                            MenuRow(LineIcon.Image, t("Выбрать из галереи")) { avatarMenu = false; picker.pickPhoto() }
+                            MenuRow(LineIcon.Camera, t("Сделать фото")) { avatarMenu = false; picker.takePhoto() }
+                            if (me.avatar.isNotEmpty()) {
+                                MenuRow(LineIcon.Trash, t("Убрать фото"), color = Palette.Lilac) {
+                                    avatarMenu = false
+                                    val old = me.avatar
+                                    vm.setAvatar("")
+                                    onSaveProfile(me.name, vm.profileInfo())
+                                    java.io.File(old).delete()
+                                }
+                            }
+                        }
+                    }
                     if (editing) {
                         EditForm(
                             user = me,
@@ -136,10 +183,10 @@ fun ProfileScreen(
                         FadeLine()
                         // Счётчики — кнопки: каждый открывает свой раздел
                         Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                            StatButton(state.myPosts.size, "записи", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Posts) }
-                            StatButton(state.followers.size, "подписчики", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Followers) }
-                            StatButton(state.following.size, "подписки", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Following) }
-                            StatButton(state.myGroups.size, "группы", Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Groups) }
+                            StatButton(state.myPosts.size, t("записи"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Posts) }
+                            StatButton(state.followers.size, t("подписчики"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Followers) }
+                            StatButton(state.following.size, t("подписки"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Following) }
+                            StatButton(state.myGroups.size, t("группы"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Groups) }
                         }
                     }
                 }
@@ -150,51 +197,26 @@ fun ProfileScreen(
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("О СЕБЕ", style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
+                        Text(t("О СЕБЕ"), style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
                         if (hasInfo || me.joined.isNotBlank()) UserInfo(me)
                         InterestChips(me.interests)
                         if (!hasInfo) {
                             Text(
-                                "Добавьте город, день рождения, сайт и интересы — так вас проще найти.",
+                                t("Добавьте город, день рождения, сайт и интересы — так вас проще найти."),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Palette.Mist,
                             )
-                            GhostButton("Заполнить", onClick = { editing = true })
+                            GhostButton(t("Заполнить"), onClick = { editing = true })
                         }
                     }
                 }
             }
-        }
-
-        item {
-            GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-                Column {
+            item {
+                GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Saved) }) {
-                        SettingRow(LineIcon.Bookmark, "Сохранённое") {
+                        SettingRow(LineIcon.Bookmark, t("Сохранённое")) {
                             Text("${state.savedPrisms.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
                         }
-                    }
-                    FadeLine(Modifier.padding(horizontal = 16.dp))
-                    SettingRow(LineIcon.Bell, "Уведомления") {
-                        Switch(
-                            checked = state.notifications,
-                            onCheckedChange = vm::setNotifications,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Palette.Ink,
-                                checkedTrackColor = Palette.Orchid,
-                                uncheckedThumbColor = Palette.Mist,
-                                uncheckedTrackColor = Palette.Plum,
-                                uncheckedBorderColor = Palette.Line,
-                            ),
-                        )
-                    }
-                    FadeLine(Modifier.padding(horizontal = 16.dp))
-                    SettingRow(LineIcon.Info, "О приложении") {
-                        Text("Memory $version", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
-                    }
-                    FadeLine(Modifier.padding(horizontal = 16.dp))
-                    Box(Modifier.clickable(onClick = onLogout)) {
-                        SettingRow(LineIcon.Exit, "Выйти") {}
                     }
                 }
             }
@@ -204,9 +226,22 @@ fun ProfileScreen(
     }
 }
 
+/** Круглая стеклянная кнопка со значком — шестерёнка, карандаш, «назад». */
+@Composable
+fun RoundIconButton(icon: LineIcon, color: androidx.compose.ui.graphics.Color = Palette.Lilac, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .glass(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Glyph(icon, color, size = 20.dp) }
+}
+
 /** Счётчик профиля, который можно нажать. */
 @Composable
-private fun StatButton(value: Int, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun StatButton(value: Int, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
@@ -230,7 +265,7 @@ private fun SectionTitle(text: String) {
 
 
 @Composable
-private fun SettingRow(icon: LineIcon, title: String, trailing: @Composable () -> Unit) {
+fun SettingRow(icon: LineIcon, title: String, trailing: @Composable () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -255,42 +290,35 @@ private fun EditForm(user: User, onSave: (String, ProfileInfo) -> Unit, onCancel
     var interests by remember { mutableStateOf(user.interests) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Field(name, { name = it.take(40) }, "Имя")
-        Field(bio, { bio = it.take(160) }, "О себе", singleLine = false)
+        Field(name, { name = it.take(40) }, t("Имя"))
+        Field(bio, { bio = it.take(160) }, t("О себе"), singleLine = false)
         Text(
             plural(160 - bio.length, "символ остался", "символа осталось", "символов осталось"),
             style = MaterialTheme.typography.bodyMedium,
             color = Palette.Mist,
         )
-        Field(city, { city = it.take(40) }, "Город")
-        Field(birthday, { birthday = it.take(20) }, "День рождения, например 14 марта")
-        Field(website, { website = it.take(80) }, "Сайт или соцсеть")
+        Field(city, { city = it.take(40) }, t("Город"))
+        Field(birthday, { birthday = it.take(20) }, t("День рождения, например 14 марта"))
+        Field(website, { website = it.take(80) }, t("Сайт или соцсеть"))
         // Интересов много — список раскрывается по нажатию на «Интересы»
         var showInterests by rememberSaveable { mutableStateOf(false) }
         DisclosurePill(
-            if (interests.isEmpty()) "Интересы" else "Интересы · ${interests.size}",
+            if (interests.isEmpty()) t("Интересы") else tf("Интересы · %s", interests.size),
             open = showInterests,
             active = interests.isNotEmpty(),
             onClick = { showInterests = !showInterests },
         )
         if (showInterests) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            INTERESTS.forEach { tag ->
+            // Интересы раскрываются по одному, с небольшой задержкой
+            INTERESTS.forEachIndexed { i, tag ->
                 val on = tag in interests
-                Text(
-                    tag,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (on) Palette.Ink else Palette.Lilac,
-                    modifier = Modifier
-                        .glass(RoundedCornerShape(50), strong = on)
-                        .clickable { interests = if (on) interests - tag else interests + tag }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
+                StaggerIn(i) { Chip(t(tag), active = on) { interests = if (on) interests - tag else interests + tag } }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GhostButton("Отмена", onClick = onCancel)
-            GlowButton("Сохранить", enabled = name.isNotBlank(), onClick = {
-                onSave(name.trim(), ProfileInfo(bio.trim(), city.trim(), birthday.trim(), website.trim(), interests))
+            GhostButton(t("Отмена"), onClick = onCancel)
+            GlowButton(t("Сохранить"), enabled = name.isNotBlank(), onClick = {
+                onSave(name.trim(), ProfileInfo(bio.trim(), city.trim(), birthday.trim(), website.trim(), interests, user.avatar))
             })
         }
     }

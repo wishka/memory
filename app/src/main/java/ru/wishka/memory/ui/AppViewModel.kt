@@ -18,28 +18,54 @@ import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.Comment
 import ru.wishka.memory.data.ReplyRef
 import ru.wishka.memory.data.Message
+import ru.wishka.memory.data.Notifications
 import ru.wishka.memory.data.Post
+import ru.wishka.memory.data.Privacy
 import ru.wishka.memory.data.User
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 /** Разделы профиля за счётчиками: записи, подписчики, подписки, группы, сохранённое. */
-enum class ProfileSection(val title: String) {
+enum class ProfileSection(private val ru: String) {
     Posts("Записи"),
     Followers("Подписчики"),
     Following("Подписки"),
     Groups("Группы"),
     Saved("Сохранённое"),
+    ;
+
+    /** Название на выбранном языке. */
+    val title: String get() = t(ru)
+}
+
+/** Страницы настроек за шестерёнкой в профиле. Main — сам список настроек. */
+enum class SettingsPage(private val ru: String) {
+    Main("Настройки"),
+    Security("Безопасность"),
+    Privacy("Приватность"),
+    Blacklist("Чёрный список"),
+    Notifications("Уведомления"),
+    TextSize("Размер текста"),
+    Language("Язык"),
+    About("О приложении"),
+    ;
+
+    val title: String get() = t(ru)
 }
 
 /** Вкладки нижней панели — в порядке слева направо. */
-enum class Tab(val title: String) {
+enum class Tab(private val ru: String) {
     Feed("Лента"),
     Stories("Истории"),
     Prism("PRISM"),
     Chats("Чаты"),
     Groups("Группы"),
     Profile("Профиль"),
+    ;
+
+    val title: String get() = t(ru)
 }
 
 data class UiState(
@@ -49,7 +75,14 @@ data class UiState(
     val chats: List<Chat> = Demo.chats,
     /** Открытая переписка поверх вкладки «Чаты»; null — список чатов. */
     val openChatId: Int? = null,
-    val notifications: Boolean = true,
+    val notifications: Notifications = Notifications(),
+    val privacy: Privacy = Privacy(),
+    /** Чёрный список: их записи, комментарии и сообщения не видны. */
+    val blocked: Set<Int> = emptySet(),
+    /** Настройки поверх вкладки «Профиль»; null — закрыты. */
+    val settingsPage: SettingsPage? = null,
+    /** Раздел чужого профиля (записи, подписчики, подписки) поверх его страницы. */
+    val personSection: ProfileSection? = null,
     /** На кого подписан человек: их записи — во вкладке «Истории». */
     val following: Set<Int> = Demo.following,
     val prisms: List<Prism> = Demo.prisms,
@@ -76,10 +109,28 @@ data class UiState(
     val myGroups: List<Group> get() = groups.filter { it.joined }
     fun postsOf(userId: Int): List<Post> = posts.filter { it.author.id == userId }
     val openChat: Chat? get() = chats.firstOrNull { it.id == openChatId }
-    val unreadTotal: Int get() = chats.sumOf { it.unread }
+    /** Счётчик на вкладке «Чаты»: переписки без звука не считаются. */
+    val unreadTotal: Int get() = chats.filterNot { it.muted }.sumOf { it.unread }
+    /** Список чатов: закреплённые сверху, остальные — по последнему сообщению. */
+    val chatList: List<Chat> get() = chats.sortedByDescending { it.onTop }
+    /** Лента без записей тех, кто в чёрном списке. */
+    val feed: List<Post> get() = posts.filter { it.author.id !in blocked }
+    val blockedPeople: List<User> get() = Demo.people.filter { it.id in blocked }
+    fun isBlocked(userId: Int): Boolean = userId in blocked
+    /**
+     * Подписчики другого человека. Сервера нет, поэтому видны только
+     * знакомые по демо-данным — и вы, если подписаны.
+     */
+    fun followersOf(user: User): List<User> =
+        (if (user.id in following) listOf(me) else emptyList()) +
+            Demo.people.filter { it.id != user.id && it.id !in blocked && (it.id + user.id) % 2 == 1 }
+    /** На кого подписан другой человек — тоже из знакомых; вы — если он подписан на вас. */
+    fun followingOf(user: User): List<User> =
+        (if (user.id in Demo.followers) listOf(me) else emptyList()) +
+            Demo.people.filter { it.id != user.id && it.id !in blocked && (it.id + user.id) % 2 == 0 }
     val myPosts: List<Post> get() = posts.filter { it.author.id == me.id }
     /** «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте. */
-    val stories: List<Post> get() = posts.filter { it.author.id in following }
+    val stories: List<Post> get() = posts.filter { it.author.id in following && it.author.id !in blocked }
     val followedPeople: List<User> get() = Demo.people.filter { it.id in following }
     /** Кто подписан на вас (пока — демо-люди). */
     val followers: List<User> get() = Demo.people.filter { it.id in Demo.followers }
@@ -119,9 +170,11 @@ class AppViewModel(
                 openChatId = if (tab == Tab.Chats) it.openChatId else null,
                 openGroupId = if (tab == Tab.Groups) it.openGroupId else null,
                 openPersonId = null,
+                personSection = null,
                 returnToChatId = null,
                 // Нажатие на «Профиль» внизу всегда ведёт на сам профиль
                 profileSection = null,
+                settingsPage = null,
             )
         }
     }
@@ -135,6 +188,25 @@ class AppViewModel(
         _state.update { it.copy(profileSection = null) }
     }
 
+    /** Настройки: шестерёнка в профиле открывает список, пункт списка — свою страницу. */
+    fun openSettings(page: SettingsPage = SettingsPage.Main) {
+        _state.update { it.copy(tab = Tab.Profile, settingsPage = page, profileSection = null, openPersonId = null) }
+    }
+
+    /** «Назад» в настройках: со страницы — в список, из списка — в профиль. */
+    fun settingsBack() {
+        _state.update { it.copy(settingsPage = if (it.settingsPage == SettingsPage.Main) null else SettingsPage.Main) }
+    }
+
+    /** Записи, подписчики или подписки другого человека — нажатием на счётчик на его странице. */
+    fun openPersonSection(section: ProfileSection) {
+        _state.update { it.copy(personSection = section) }
+    }
+
+    fun closePersonSection() {
+        _state.update { it.copy(personSection = null) }
+    }
+
     /**
      * Страница автора. Своё имя ведёт в «Профиль». Из переписки страница
      * открывается сразу поверх неё, а «назад» возвращает в переписку.
@@ -145,13 +217,13 @@ class AppViewModel(
             return
         }
         _state.update {
-            if (it.openChatId != null) it.copy(openPersonId = userId, returnToChatId = it.openChatId, openChatId = null)
-            else it.copy(openPersonId = userId)
+            if (it.openChatId != null) it.copy(openPersonId = userId, personSection = null, returnToChatId = it.openChatId, openChatId = null)
+            else it.copy(openPersonId = userId, personSection = null)
         }
     }
 
     fun closePerson() {
-        _state.update { it.copy(openPersonId = null, openChatId = it.returnToChatId ?: it.openChatId, returnToChatId = null) }
+        _state.update { it.copy(openPersonId = null, personSection = null, openChatId = it.returnToChatId ?: it.openChatId, returnToChatId = null) }
     }
 
     /**
@@ -164,8 +236,10 @@ class AppViewModel(
             s.viewing != null -> { closeMedia(); true }
             s.commentsPostId != null || s.commentsPrismId != null -> { closeComments(); true }
             s.openChatId != null -> { closeChat(); true }
+            s.personSection != null && s.openPersonId != null -> { closePersonSection(); true }
             s.openPersonId != null -> { closePerson(); true }
             s.openGroupId != null -> { closeGroup(); true }
+            s.settingsPage != null -> { settingsBack(); true }
             s.profileSection != null -> { closeProfileSection(); true }
             s.tab != Tab.Feed -> { selectTab(Tab.Feed); true }
             else -> false
@@ -216,6 +290,17 @@ class AppViewModel(
             s.copy(
                 posts = s.posts.map { it.without() },
                 groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.without() }) },
+            )
+        }
+    }
+
+    /** «Нравится» комментарию к записи — в ленте или в группе. */
+    fun toggleCommentLike(postId: Long, commentId: Long) {
+        _state.update { s ->
+            fun Post.flip() = if (id != postId) this else copy(commentList = commentList.map { it.flipLike(commentId) })
+            s.copy(
+                posts = s.posts.map { it.flip() },
+                groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.flip() }) },
             )
         }
     }
@@ -334,6 +419,37 @@ class AppViewModel(
         _state.update { s -> s.copy(chats = s.chats.map { if (it.id == chatId) it.copy(pinnedId = null) else it }) }
     }
 
+    // ---- Меню переписки в списке чатов (долгое нажатие) ----
+
+    /** Закрепить переписку вверху списка; повторно — открепить. */
+    fun toggleChatOnTop(chatId: Int) = updateChat(chatId) { it.copy(onTop = !it.onTop) }
+
+    /** Без звука: уведомлений нет, непрочитанные не попадают в счётчик на вкладке. */
+    fun toggleChatMute(chatId: Int) = updateChat(chatId) { it.copy(muted = !it.muted) }
+
+    fun markRead(chatId: Int) = updateChat(chatId) { it.copy(unread = 0) }
+
+    /** Отметить непрочитанной — чтобы вернуться к переписке позже. */
+    fun markUnread(chatId: Int) = updateChat(chatId) { it.copy(unread = maxOf(it.unread, 1)) }
+
+    /** Очистить историю: сообщения уходят, сама переписка остаётся в списке. */
+    fun clearHistory(chatId: Int) = updateChat(chatId) { it.copy(messages = emptyList(), pinnedId = null, unread = 0) }
+
+    /** Удалить переписку целиком; открытая — закрывается. */
+    fun deleteChat(chatId: Int) {
+        _state.update { s ->
+            s.copy(
+                chats = s.chats.filterNot { it.id == chatId },
+                openChatId = s.openChatId?.takeIf { it != chatId },
+                returnToChatId = s.returnToChatId?.takeIf { it != chatId },
+            )
+        }
+    }
+
+    private fun updateChat(chatId: Int, change: (Chat) -> Chat) {
+        _state.update { s -> s.copy(chats = s.chats.map { if (it.id == chatId) change(it) else it }) }
+    }
+
     /** Цитата для ответа на сообщение: автор и начало текста (или что приложено). */
     fun replyRef(chatId: Int, message: Message): ReplyRef {
         val chat = _state.value.chats.firstOrNull { it.id == chatId }
@@ -382,6 +498,10 @@ class AppViewModel(
     }
 
     // ==================== PRISM ====================
+
+    fun togglePrismCommentLike(prismId: Long, commentId: Long) {
+        updatePrism(prismId) { p -> p.copy(commentList = p.commentList.map { it.flipLike(commentId) }) }
+    }
 
     fun togglePrismLike(prismId: Long) {
         updatePrism(prismId) { it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1) }
@@ -449,12 +569,17 @@ class AppViewModel(
         }
     }
 
+    /** Отключить или включить уведомления группы. */
+    fun toggleGroupMute(groupId: Int) {
+        _state.update { s -> s.copy(groups = s.groups.map { if (it.id == groupId) it.copy(muted = !it.muted) else it }) }
+    }
+
     /** Новая группа: создатель сразу в ней. Ошибка — текст для экрана, null — успех. */
     fun createGroup(name: String, description: String, topic: String): String? {
         val title = name.trim()
-        if (title.length < 3) return "Название — от 3 символов"
-        if (title.length > 40) return "Название — не длиннее 40 символов"
-        if (_state.value.groups.any { it.name.equals(title, ignoreCase = true) }) return "Группа «$title» уже есть"
+        if (title.length < 3) return t("Название — от 3 символов")
+        if (title.length > 40) return t("Название — не длиннее 40 символов")
+        if (_state.value.groups.any { it.name.equals(title, ignoreCase = true) }) return tf("Группа «%s» уже есть", title)
         val id = (_state.value.groups.maxOfOrNull { it.id } ?: 0) + 1
         val group = Group(
             id, title, description.trim(), topic.ifBlank { GROUP_TOPICS.last() },
@@ -504,7 +629,7 @@ class AppViewModel(
             val me = s.me.copy(
                 name = displayName, handle = username,
                 bio = info.bio, city = info.city, birthday = info.birthday,
-                website = info.website, interests = info.interests,
+                website = info.website, interests = info.interests, avatar = info.avatar,
             )
             s.withMe(me)
         }
@@ -525,21 +650,49 @@ class AppViewModel(
                 birthday = info.birthday.trim(),
                 website = info.website.trim(),
                 interests = info.interests,
+                avatar = info.avatar,
             )
             // Свои записи в ленте показывают новое имя
             s.withMe(me)
         }
     }
 
-    fun setNotifications(enabled: Boolean) {
-        _state.update { it.copy(notifications = enabled) }
+    /** Своё фото в профиле; "" — вернуть аватар из букв. */
+    fun setAvatar(path: String) {
+        _state.update { s -> s.withMe(s.me.copy(avatar = path)) }
+    }
+
+    /** Сведения профиля как есть сейчас — чтобы сохранить их в аккаунт. */
+    fun profileInfo(): ProfileInfo = _state.value.me.let {
+        ProfileInfo(it.bio, it.city, it.birthday, it.website, it.interests, it.avatar)
+    }
+
+    fun setNotifications(notifications: Notifications) {
+        _state.update { it.copy(notifications = notifications) }
+    }
+
+    fun setPrivacy(privacy: Privacy) {
+        _state.update { it.copy(privacy = privacy) }
+    }
+
+    /**
+     * В чёрный список: записи, комментарии и сообщения человека больше не
+     * видны, подписка на него снимается. Своя страница не блокируется.
+     */
+    fun block(userId: Int) {
+        if (userId == _state.value.me.id) return
+        _state.update { s -> s.copy(blocked = s.blocked + userId, following = s.following - userId) }
+    }
+
+    fun unblock(userId: Int) {
+        _state.update { s -> s.copy(blocked = s.blocked - userId) }
     }
 
     // ==================== СОХРАНЕНИЕ ====================
 
     /** То, что сохраняется на телефоне между запусками (см. StateStore). */
     fun snapshot(): Snapshot = _state.value.let {
-        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId)
+        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked)
     }
 
     /**
@@ -556,6 +709,8 @@ class AppViewModel(
                 prisms = snapshot.prisms,
                 following = snapshot.following - s.me.id,
                 notifications = snapshot.notifications,
+                privacy = snapshot.privacy,
+                blocked = snapshot.blocked - s.me.id,
             ).withMe(s.me)
         }
     }
@@ -574,8 +729,8 @@ fun messagePreview(message: Message): String {
     val a = message.attachments
     return when {
         a.isEmpty() -> ""
-        a.all { it.kind == ru.wishka.memory.data.MediaKind.Photo } -> if (a.size == 1) "Фото" else "${a.size} фото"
-        a.all { it.kind == ru.wishka.memory.data.MediaKind.Video } -> if (a.size == 1) "Видео" else "${a.size} видео"
+        a.all { it.kind == ru.wishka.memory.data.MediaKind.Photo } -> if (a.size == 1) t("Фото") else tf("%s фото", a.size)
+        a.all { it.kind == ru.wishka.memory.data.MediaKind.Video } -> if (a.size == 1) t("Видео") else tf("%s видео", a.size)
         a.all { it.kind == ru.wishka.memory.data.MediaKind.Document } ->
             a.singleOrNull()?.name?.ifEmpty { null } ?: ru.wishka.memory.data.plural(a.size, "файл", "файла", "файлов")
         else -> ru.wishka.memory.data.plural(a.size, "вложение", "вложения", "вложений")
@@ -589,9 +744,15 @@ data class Snapshot(
     val groups: List<Group>,
     val prisms: List<Prism>,
     val following: Set<Int>,
-    val notifications: Boolean,
+    val notifications: Notifications,
     val nextId: Long,
+    val privacy: Privacy = Privacy(),
+    val blocked: Set<Int> = emptySet(),
 )
+
+/** Переключить «нравится» у комментария с номером commentId. */
+private fun Comment.flipLike(commentId: Long): Comment =
+    if (id != commentId) this else copy(liked = !liked, likes = (likes + if (liked) -1 else 1).coerceAtLeast(0))
 
 /** Новое имя и сведения — во всех своих записях и комментариях. */
 private fun UiState.withMe(me: User): UiState {

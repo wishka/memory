@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.components
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -37,11 +39,19 @@ fun Stat(value: Int, label: String, modifier: Modifier = Modifier) {
 }
 
 /** 1284 → «1,2 тыс.»: длинные числа не распирают колонку. */
-fun compact(n: Int): String = when {
-    n >= 1_000_000 -> String.format(java.util.Locale("ru"), "%.1f млн", n / 1_000_000f)
-    n >= 10_000 -> "${n / 1000} тыс."
-    n >= 1_000 -> String.format(java.util.Locale("ru"), "%.1f тыс.", n / 1000f)
-    else -> n.toString()
+fun compact(n: Int): String {
+    if (ru.wishka.memory.i18n.L10n.english) return when {
+        n >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", n / 1_000_000f)
+        n >= 10_000 -> "${n / 1000}K"
+        n >= 1_000 -> String.format(java.util.Locale.US, "%.1fK", n / 1000f)
+        else -> n.toString()
+    }
+    return when {
+        n >= 1_000_000 -> String.format(java.util.Locale("ru"), t("%.1f млн"), n / 1_000_000f)
+        n >= 10_000 -> tf("%s тыс.", n / 1000)
+        n >= 1_000 -> String.format(java.util.Locale("ru"), t("%.1f тыс."), n / 1000f)
+        else -> n.toString()
+    }
 }
 
 /** Строка сведения: значок, подпись и значение. Пустое значение не показывается. */
@@ -65,10 +75,10 @@ fun InfoRow(icon: LineIcon, label: String, value: String) {
 @Composable
 fun UserInfo(user: User) {
     Column {
-        InfoRow(LineIcon.Pin, "Город", user.city)
-        InfoRow(LineIcon.Gift, "День рождения", user.birthday)
-        InfoRow(LineIcon.Link, "Сайт", user.website)
-        InfoRow(LineIcon.Calendar, "В Memory с", user.joined)
+        InfoRow(LineIcon.Pin, t("Город"), user.city)
+        InfoRow(LineIcon.Gift, t("День рождения"), user.birthday)
+        InfoRow(LineIcon.Link, t("Сайт"), user.website)
+        InfoRow(LineIcon.Calendar, t("В Memory с"), user.joined)
     }
 }
 
@@ -84,7 +94,7 @@ fun InterestChips(interests: List<String>, modifier: Modifier = Modifier) {
     ) {
         interests.forEach {
             Text(
-                it,
+                ru.wishka.memory.i18n.t(it),
                 style = MaterialTheme.typography.labelLarge,
                 color = Palette.Lilac,
                 modifier = Modifier

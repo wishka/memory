@@ -9,7 +9,7 @@ struct FeedScreen: View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 HStack(alignment: .center) {
-                    ScreenTitle(title: "Лента", subtitle: "Моменты, которые остаются")
+                    ScreenTitle(title: t("Лента"), subtitle: t("Моменты, которые остаются"))
                     Spacer()
                     // Кристалл из значка приложения — знак Memory в шапке
                     Image("MemoryCrystal")
@@ -22,7 +22,7 @@ struct FeedScreen: View {
 
                 Composer { text, media in model.publish(text, media: media) }
 
-                ForEach(state.posts) { post in
+                ForEach(state.feed) { post in
                     PostCard(
                         post: post,
                         onLike: { model.toggleLike(post.id) },
@@ -54,13 +54,13 @@ private struct Composer: View {
 
     private var hint: String {
         if !media.isEmpty { return plural(media.count, "вложение", "вложения", "вложений") }
-        return text.isEmpty ? "Видят ваши подписчики" : "\(text.count) / 2000"
+        return text.isEmpty ? t("Видят ваши подписчики") : "\(text.count) / 2000"
     }
 
     var body: some View {
         GlassCard {
             VStack(spacing: 0) {
-                GlassField(placeholder: "Чем хочется поделиться?", text: $text, limit: 2000)
+                GlassField(placeholder: t("Чем хочется поделиться?"), text: $text, limit: 2000)
                 PendingAttachments(items: media) { item in
                     media.removeAll { $0.id == item.id }
                     MediaFiles.delete(item)
@@ -72,7 +72,7 @@ private struct Composer: View {
                     }
                     Text(hint).textStyle(.bodySmall, Palette.mist).lineLimit(1)
                     Spacer()
-                    GlowButton(title: "Поделиться", enabled: canPublish) {
+                    GlowButton(title: t("Поделиться"), enabled: canPublish) {
                         onPublish(text, media)
                         text = ""
                         media = []
@@ -108,9 +108,9 @@ struct PostCard: View {
                     Spacer(minLength: 0)
                     if let following {
                         if following {
-                            GhostButton(title: "Вы подписаны", action: onFollow)
+                            GhostButton(title: t("Вы подписаны"), action: onFollow)
                         } else {
-                            GlowButton(title: "Подписаться", action: onFollow)
+                            GlowButton(title: t("Подписаться"), action: onFollow)
                         }
                     }
                 }
@@ -129,7 +129,7 @@ struct PostCard: View {
                 HStack(spacing: 14) {
                     Button(action: onLike) {
                         HStack(spacing: 6) {
-                            Glyph(kind: post.liked ? .heartFilled : .heart, color: post.liked ? Palette.lilac : Palette.mist, size: 22)
+                            LikeHeart(liked: post.liked, color: post.liked ? Palette.lilac : Palette.mist, size: 22)
                             Text("\(post.likes)").textStyle(.labelLarge, post.liked ? Palette.lilac : Palette.mist)
                         }
                         .padding(.horizontal, 6)

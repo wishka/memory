@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.components
 
+import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +56,7 @@ fun CommentsSheet(
     myId: Int,
     onSend: (String) -> Unit,
     onDelete: (Long) -> Unit,
+    onLike: (Long) -> Unit,
     onAuthor: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -78,7 +80,7 @@ fun CommentsSheet(
             )
             if (comments.isEmpty()) {
                 Text(
-                    "Пока никто не написал. Будьте первым.",
+                    t("Пока никто не написал. Будьте первым."),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.padding(20.dp),
@@ -91,7 +93,13 @@ fun CommentsSheet(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 items(comments, key = { it.id }) { c ->
-                    CommentRow(c, mine = c.author.id == myId, onDelete = { onDelete(c.id) }, onAuthor = { onAuthor(c.author.id) })
+                    CommentRow(
+                        c,
+                        mine = c.author.id == myId,
+                        onDelete = { onDelete(c.id) },
+                        onLike = { onLike(c.id) },
+                        onAuthor = { onAuthor(c.author.id) },
+                    )
                 }
             }
             FadeLine()
@@ -101,7 +109,7 @@ fun CommentsSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 GlassField(
-                    text, { text = it.take(1000) }, "Комментарий",
+                    text, { text = it.take(1000) }, t("Комментарий"),
                     maxLines = 4,
                     modifier = Modifier.weight(1f).glass(RoundedCornerShape(22.dp)),
                 )
@@ -125,7 +133,7 @@ fun CommentsSheet(
 }
 
 @Composable
-private fun CommentRow(comment: Comment, mine: Boolean, onDelete: () -> Unit, onAuthor: () -> Unit) {
+private fun CommentRow(comment: Comment, mine: Boolean, onDelete: () -> Unit, onLike: () -> Unit, onAuthor: () -> Unit) {
     Row(verticalAlignment = Alignment.Top) {
         Box(Modifier.clip(CircleShape).clickable(onClick = onAuthor)) { Avatar(comment.author, size = 34.dp) }
         Spacer(Modifier.width(10.dp))
@@ -146,6 +154,23 @@ private fun CommentRow(comment: Comment, mine: Boolean, onDelete: () -> Unit, on
                 modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onDelete),
                 contentAlignment = Alignment.Center,
             ) { Glyph(LineIcon.Trash, Palette.Mist, size = 18.dp) }
+        }
+        // «Нравится» комментарию: сердце и число под ним
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onLike)
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            LikeHeart(comment.liked, if (comment.liked) Palette.Lilac else Palette.Mist, size = 18.dp)
+            if (comment.likes > 0) {
+                Text(
+                    "${comment.likes}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (comment.liked) Palette.Lilac else Palette.Mist,
+                )
+            }
         }
     }
 }

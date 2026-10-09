@@ -24,34 +24,34 @@ struct AuthScreen: View {
                 VStack(spacing: 0) {
                     Spacer(minLength: 40)
                     Text("MEMORY").textStyle(.display)
-                    Text("МОМЕНТЫ, КОТОРЫЕ ОСТАЮТСЯ").textStyle(.label, Palette.mist)
+                    Text(t("МОМЕНТЫ, КОТОРЫЕ ОСТАЮТСЯ")).textStyle(.label, Palette.mist)
                     Spacer().frame(height: 28)
 
                     GlassCard {
                         VStack(spacing: 12) {
                             modeSwitch
-                            GlassField(placeholder: "Логин", text: $login, limit: 24, singleLine: true, keyboard: .asciiCapable, plain: true)
+                            GlassField(placeholder: t("Логин"), text: $login, limit: 24, singleLine: true, keyboard: .asciiCapable, plain: true)
                                 .glass(radius: 16)
                                 .focused($focus, equals: .login)
                                 .submitLabel(.next)
                                 .onSubmit { focus = registering ? .name : .password }
                                 .textContentType(.username)
                             if registering {
-                                GlassField(placeholder: "Имя — как вас видят другие", text: $name, limit: 40, singleLine: true)
+                                GlassField(placeholder: t("Имя — как вас видят другие"), text: $name, limit: 40, singleLine: true)
                                     .glass(radius: 16)
                                     .focused($focus, equals: .name)
                                     .submitLabel(.next)
                                     .onSubmit { focus = .password }
                                     .textContentType(.name)
                             }
-                            GlassField(placeholder: "Пароль", text: $password, limit: 64, secure: true, plain: true)
+                            GlassField(placeholder: t("Пароль"), text: $password, limit: 64, secure: true, plain: true)
                                 .glass(radius: 16)
                                 .focused($focus, equals: .password)
                                 .submitLabel(registering ? .next : .go)
                                 .onSubmit { if registering { focus = .repeated } else { submit() } }
                                 .textContentType(registering ? .newPassword : .password)
                             if registering {
-                                GlassField(placeholder: "Пароль ещё раз", text: $repeated, limit: 64, secure: true, plain: true)
+                                GlassField(placeholder: t("Пароль ещё раз"), text: $repeated, limit: 64, secure: true, plain: true)
                                     .glass(radius: 16)
                                     .focused($focus, equals: .repeated)
                                     .submitLabel(.go)
@@ -67,15 +67,15 @@ struct AuthScreen: View {
                             }
 
                             GlowButton(
-                                title: auth.busy ? "Подождите…" : registering ? "Создать аккаунт" : "Войти",
+                                title: auth.busy ? t("Подождите…") : registering ? t("Создать аккаунт") : t("Войти"),
                                 enabled: !auth.busy && !login.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty,
                                 fullWidth: true,
                                 action: submit
                             )
 
                             Text(registering
-                                 ? "Логин — латиница, цифры, точка и «_», от 3 символов. Пароль — от 8 символов, с буквами и цифрами."
-                                 : "Попробовать без регистрации: логин \(LocalAuth.demoLogin), пароль \(LocalAuth.demoPassword)")
+                                 ? t("Логин — латиница, цифры, точка и «_», от 3 символов. Пароль — от 8 символов, с буквами и цифрами.")
+                                 : tf("Попробовать без регистрации: логин %s, пароль %s", LocalAuth.demoLogin, LocalAuth.demoPassword))
                                 .textStyle(.bodySmall, Palette.mist)
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -84,7 +84,7 @@ struct AuthScreen: View {
                         .padding(18)
                     }
 
-                    Text("Аккаунты пока хранятся только на этом iPhone.")
+                    Text(t("Аккаунты пока хранятся только на этом iPhone."))
                         .textStyle(.bodySmall, Palette.mist)
                         .multilineTextAlignment(.center)
                         .padding(.top, 16)
@@ -107,7 +107,7 @@ struct AuthScreen: View {
                     withAnimation(.easeOut(duration: 0.2)) { registering = mode }
                     auth.clearError()
                 } label: {
-                    Text((mode ? "Регистрация" : "Вход").uppercased())
+                    Text((mode ? t("Регистрация") : t("Вход")).uppercased())
                         .textStyle(.label, active ? Palette.lilac : Palette.mist)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)

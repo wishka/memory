@@ -47,27 +47,42 @@ enum TextStyle {
     /// Подписи вкладок и мелкие метки — капслоком с разрядкой.
     case label
 
-    var font: Font {
+    /// Кегль без учёта настройки «Размер текста».
+    var baseSize: CGFloat {
         switch self {
-        case .display: return .custom(Fonts.unboundedExtraLight, size: 30)
-        case .headline: return .custom(Fonts.unboundedExtraLight, size: 22)
-        case .title: return .custom(Fonts.interSemiBold, size: 16)
-        case .body: return .custom(Fonts.interRegular, size: 16)
-        case .bodySmall: return .custom(Fonts.interRegular, size: 14)
-        case .labelLarge: return .custom(Fonts.interMedium, size: 14)
-        case .label: return .custom(Fonts.interMedium, size: 10)
+        case .display: return 30
+        case .headline: return 22
+        case .title: return 16
+        case .body: return 16
+        case .bodySmall: return 14
+        case .labelLarge: return 14
+        case .label: return 10
+        }
+    }
+
+    /// Шрифт с учётом «Размера текста» из настроек: при смене размера
+    /// экраны перерисовываются сами — L10n наблюдаемый.
+    var font: Font {
+        let size = baseSize * CGFloat(L10n.shared.textScale)
+        switch self {
+        case .display, .headline: return .custom(Fonts.unboundedExtraLight, size: size)
+        case .title: return .custom(Fonts.interSemiBold, size: size)
+        case .body, .bodySmall: return .custom(Fonts.interRegular, size: size)
+        case .labelLarge, .label: return .custom(Fonts.interMedium, size: size)
         }
     }
 
     /// Разрядка в пунктах: на Android она в долях кегля (em).
     var tracking: CGFloat {
+        let em: CGFloat
         switch self {
-        case .display: return 30 * 0.06
-        case .headline: return 22 * 0.04
-        case .labelLarge: return 14 * 0.02
-        case .label: return 10 * 0.14
-        default: return 0
+        case .display: em = 0.06
+        case .headline: em = 0.04
+        case .labelLarge: em = 0.02
+        case .label: em = 0.14
+        default: em = 0
         }
+        return baseSize * CGFloat(L10n.shared.textScale) * em
     }
 
     /// Межстрочный интервал сверх обычного.

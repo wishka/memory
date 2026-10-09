@@ -12,11 +12,26 @@ import ru.wishka.memory.data.minutesSince
 import ru.wishka.memory.data.sizeTitle
 import ru.wishka.memory.data.agoTitle
 import ru.wishka.memory.data.plural
+import ru.wishka.memory.data.Audience
+import ru.wishka.memory.data.Notifications
+import ru.wishka.memory.data.Privacy
+import ru.wishka.memory.i18n.L10n
+import ru.wishka.memory.i18n.Lang
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.ProfileSection
+import ru.wishka.memory.ui.SettingsPage
 import ru.wishka.memory.ui.Tab
+import ru.wishka.memory.ui.profile.CropGeometry
+import androidx.compose.ui.geometry.Offset
+import org.junit.Before
 
 class AppViewModelTest {
+
+    @Before
+    fun russian() {
+        // Строки в проверках — русские, независимо от языка машины
+        L10n.choice = Lang.Ru
+    }
 
     @Test
     fun likeTogglesCount() {
@@ -350,5 +365,149 @@ class AppViewModelTest {
         // Время своей записи считается от момента публикации
         assertEquals(3, minutesSince(createdAt = 0, minutesAgo = 3, now = 999))
         assertEquals(5, minutesSince(createdAt = 60_000, minutesAgo = 0, now = 6 * 60_000))
+    }
+
+    @Test
+    fun commentLikes() {
+        val vm = AppViewModel()
+        val post = vm.state.value.posts.first { it.commentList.isNotEmpty() }
+        val comment = post.commentList.first()
+        vm.toggleCommentLike(post.id, comment.id)
+        val liked = vm.state.value.findPost(post.id)!!.commentList.first { it.id == comment.id }
+        assertTrue(liked.liked)
+        assertEquals(comment.likes + 1, liked.likes)
+        vm.toggleCommentLike(post.id, comment.id)
+        assertEquals(comment.likes, vm.state.value.findPost(post.id)!!.commentList.first { it.id == comment.id }.likes)
+        // И у PRISM
+        val prism = vm.state.value.prisms.first { it.commentList.isNotEmpty() }
+        val pc = prism.commentList.first()
+        vm.togglePrismCommentLike(prism.id, pc.id)
+        assertTrue(vm.state.value.findPrism(prism.id)!!.commentList.first { it.id == pc.id }.liked)
+    }
+
+    @Test
+    fun settingsNavigation() {
+        val vm = AppViewModel()
+        vm.openSettings()
+        assertEquals(Tab.Profile, vm.state.value.tab)
+        assertEquals(SettingsPage.Main, vm.state.value.settingsPage)
+        vm.openSettings(SettingsPage.Privacy)
+        // «Назад»: со страницы — в список, из списка — в профиль
+        assertTrue(vm.back())
+        assertEquals(SettingsPage.Main, vm.state.value.settingsPage)
+        assertTrue(vm.back())
+        assertNull(vm.state.value.settingsPage)
+        // Вкладка внизу закрывает настройки
+        vm.openSettings(SettingsPage.Language)
+        vm.selectTab(Tab.Profile)
+        assertNull(vm.state.value.settingsPage)
+    }
+
+    @Test
+    fun personSections() {
+        val vm = AppViewModel()
+        val person = vm.state.value.posts.first { it.author.id != vm.state.value.me.id }.author
+        vm.openPerson(person.id)
+        vm.openPersonSection(ProfileSection.Followers)
+        assertEquals(ProfileSection.Followers, vm.state.value.personSection)
+        // «Назад» сначала закрывает раздел, потом страницу
+        assertTrue(vm.back())
+        assertNull(vm.state.value.personSection)
+        assertEquals(person.id, vm.state.value.openPersonId)
+        // Подписались — вы среди его подписчиков
+        if (person.id !in vm.state.value.following) vm.toggleFollow(person.id)
+        assertTrue(vm.state.value.followersOf(person).any { it.id == vm.state.value.me.id })
+        assertTrue(vm.state.value.followersOf(person).none { it.id == person.id })
+    }
+
+    @Test
+    fun blockHidesPostsAndUnfollows() {
+        val vm = AppViewModel()
+        val author = vm.state.value.stories.first().author
+        vm.block(author.id)
+        val s = vm.state.value
+        assertTrue(s.isBlocked(author.id))
+        assertFalse(author.id in s.following)
+        assertTrue(s.feed.none { it.author.id == author.id })
+        assertTrue(s.stories.none { it.author.id == author.id })
+        assertEquals(listOf(author.id), s.blockedPeople.map { it.id })
+        vm.unblock(author.id)
+        assertTrue(vm.state.value.feed.any { it.author.id == author.id })
+        // Себя заблокировать нельзя
+        vm.block(vm.state.value.me.id)
+        assertTrue(vm.state.value.blocked.isEmpty())
+    }
+
+    @Test
+    fun chatListMenu() {
+        val vm = AppViewModel()
+        val chats = vm.state.value.chats
+        val last = chats.last()
+        vm.toggleChatOnTop(last.id)
+        assertEquals(last.id, vm.state.value.chatList.first().id)
+        // Без звука — не в счётчике вкладки
+        val unread = chats.first { it.unread > 0 }
+        val before = vm.state.value.unreadTotal
+        vm.toggleChatMute(unread.id)
+        assertEquals(before - unread.unread, vm.state.value.unreadTotal)
+        vm.markRead(unread.id)
+        assertEquals(0, vm.state.value.chats.first { it.id == unread.id }.unread)
+        vm.markUnread(unread.id)
+        assertEquals(1, vm.state.value.chats.first { it.id == unread.id }.unread)
+        vm.clearHistory(last.id)
+        assertTrue(vm.state.value.chats.first { it.id == last.id }.messages.isEmpty())
+        vm.openChat(last.id)
+        vm.deleteChat(last.id)
+        assertTrue(vm.state.value.chats.none { it.id == last.id })
+        assertNull(vm.state.value.openChatId)
+    }
+
+    @Test
+    fun groupMuteAndSettingsSurviveSnapshot() {
+        val vm = AppViewModel()
+        val group = vm.state.value.groups.first()
+        vm.toggleGroupMute(group.id)
+        vm.setPrivacy(Privacy(messages = Audience.Following, showOnline = false))
+        vm.setNotifications(Notifications(all = false))
+        vm.block(vm.state.value.stories.first().author.id)
+        vm.setAvatar("/tmp/a.jpg")
+        val snapshot = vm.snapshot()
+        val other = AppViewModel()
+        other.restore(snapshot)
+        val s = other.state.value
+        assertTrue(s.groups.first { it.id == group.id }.muted)
+        assertEquals(Audience.Following, s.privacy.messages)
+        assertFalse(s.privacy.showOnline)
+        assertFalse(s.notifications.all)
+        assertEquals(1, s.blocked.size)
+        assertEquals("/tmp/a.jpg", vm.profileInfo().avatar)
+    }
+
+    @Test
+    fun cropKeepsCircleCovered() {
+        // Фото 2000 × 1000, круг 500 px: при zoom 1 квадрат — вся высота
+        val g = CropGeometry(2000, 1000, 500f)
+        val (x, y, side) = g.sourceSquare(1f, Offset(0f, 0f))
+        assertEquals(1000, side)
+        assertEquals(500, x)
+        assertEquals(0, y)
+        // Сдвиг дальше края не уводит квадрат за фото
+        val (x2, _, _) = g.sourceSquare(1f, Offset(10_000f, 0f))
+        assertEquals(0, x2)
+        // Увеличение вдвое — квадрат вдвое меньше
+        assertEquals(500, g.sourceSquare(2f, Offset(0f, 0f)).third)
+    }
+
+    @Test
+    fun englishTexts() {
+        L10n.choice = Lang.En
+        try {
+            assertEquals("5 min", agoTitle(5))
+            assertEquals("1 post", plural(1, "запись", "записи", "записей"))
+            assertEquals("21 posts", plural(21, "запись", "записи", "записей"))
+            assertEquals("2.0 MB", sizeTitle(2L * 1024 * 1024))
+        } finally {
+            L10n.choice = Lang.Ru
+        }
     }
 }

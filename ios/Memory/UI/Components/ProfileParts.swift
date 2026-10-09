@@ -20,10 +20,17 @@ struct Stat: View {
 
 /// 1284 → «1,3 тыс.»: длинные числа не распирают колонку.
 func compact(_ n: Int) -> String {
+    if L10n.shared.english {
+        let us = Locale(identifier: "en_US")
+        if n >= 1_000_000 { return String(format: "%.1fM", locale: us, Double(n) / 1_000_000) }
+        if n >= 10_000 { return "\(n / 1000)K" }
+        if n >= 1_000 { return String(format: "%.1fK", locale: us, Double(n) / 1000) }
+        return String(n)
+    }
     let ru = Locale(identifier: "ru_RU")
-    if n >= 1_000_000 { return String(format: "%.1f млн", locale: ru, Double(n) / 1_000_000) }
-    if n >= 10_000 { return "\(n / 1000) тыс." }
-    if n >= 1_000 { return String(format: "%.1f тыс.", locale: ru, Double(n) / 1000) }
+    if n >= 1_000_000 { return String(format: t("%.1f млн"), locale: ru, Double(n) / 1_000_000) }
+    if n >= 10_000 { return tf("%s тыс.", n / 1000) }
+    if n >= 1_000 { return String(format: t("%.1f тыс."), locale: ru, Double(n) / 1000) }
     return String(n)
 }
 
@@ -53,10 +60,10 @@ struct UserInfo: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            InfoRow(icon: .pin, label: "Город", value: user.city)
-            InfoRow(icon: .gift, label: "День рождения", value: user.birthday)
-            InfoRow(icon: .link, label: "Сайт", value: user.website)
-            InfoRow(icon: .calendar, label: "В Memory с", value: user.joined)
+            InfoRow(icon: .pin, label: t("Город"), value: user.city)
+            InfoRow(icon: .gift, label: t("День рождения"), value: user.birthday)
+            InfoRow(icon: .link, label: t("Сайт"), value: user.website)
+            InfoRow(icon: .calendar, label: t("В Memory с"), value: user.joined)
         }
     }
 }
@@ -68,7 +75,7 @@ struct InterestChips: View {
     var body: some View {
         if !interests.isEmpty {
             FlowLayout(spacing: 8) {
-                ForEach(interests, id: \.self) { Chip(text: $0) }
+                ForEach(interests, id: \.self) { Chip(text: t($0)) }
             }
         }
     }

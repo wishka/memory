@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.auth
 
+import ru.wishka.memory.i18n.t
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -62,6 +63,20 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         auth.rename(account.username, displayName)
         auth.saveProfile(account.username, info)
         _state.update { it.copy(account = account.copy(displayName = displayName.trim(), info = info)) }
+    }
+
+    /** Смена пароля в «Безопасности». Ответ — текст ошибки или null; пароль проверяется не в главном потоке. */
+    suspend fun changePassword(current: String, new: String, repeat: String): String? {
+        val account = _state.value.account ?: return t("Вы не вошли")
+        return withContext(Dispatchers.Default) { auth.changePassword(account.username, current, new, repeat) }
+    }
+
+    /** Удалить аккаунт с телефона. null — удалён и выполнен выход. */
+    suspend fun deleteAccount(password: String): String? {
+        val account = _state.value.account ?: return t("Вы не вошли")
+        val error = withContext(Dispatchers.Default) { auth.deleteAccount(account.username, password) }
+        if (error == null) _state.update { it.copy(account = null, error = null) }
+        return error
     }
 
     fun clearError() {

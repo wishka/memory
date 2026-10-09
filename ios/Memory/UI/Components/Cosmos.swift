@@ -101,6 +101,12 @@ struct Avatar: View {
                 Text(user.initials)
                     .font(.custom(Fonts.interSemiBold, size: size * 0.34))
                     .foregroundStyle(Palette.ink)
+                // Своё фото — поверх градиента; пока читается, видны буквы
+                if let file = user.avatar, !file.isEmpty {
+                    MediaThumbnail(attachment: Attachment(id: file, kind: .photo, fileName: file), maxPixel: 512, placeholder: false)
+                        .clipShape(Circle())
+                        .padding(ring ? 5 : 0)
+                }
                 if ring {
                     Circle().strokeBorder(
                         AngularGradient(colors: [Palette.lilac, Palette.sky, Palette.orchid, Palette.lilac], center: .center),

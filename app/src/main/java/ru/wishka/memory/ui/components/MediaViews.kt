@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.components
 
+import ru.wishka.memory.i18n.t
 import android.net.Uri
 import android.widget.MediaController
 import android.widget.Toast
@@ -146,7 +147,7 @@ fun DocumentRow(attachment: Attachment, modifier: Modifier = Modifier, onClick: 
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f, fill = false)) {
             Text(
-                attachment.name.ifEmpty { "Документ" },
+                attachment.name.ifEmpty { t("Документ") },
                 style = MaterialTheme.typography.bodyMedium,
                 color = Palette.Ink,
                 maxLines = 1,
@@ -226,7 +227,7 @@ fun rememberMediaPicker(onPicked: (List<Attachment>) -> Unit): MediaPicker {
         scope.launch {
             val items = withContext(Dispatchers.IO) { uris.mapNotNull { MediaFiles.import(context, it, kind) } }
             if (items.size < uris.size) {
-                Toast.makeText(context, "Не все файлы удалось добавить (до 200 МБ)", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, t("Не все файлы удалось добавить (до 200 МБ)"), Toast.LENGTH_SHORT).show()
             }
             if (items.isNotEmpty()) onPicked(items)
         }
@@ -257,7 +258,7 @@ fun rememberMediaPicker(onPicked: (List<Attachment>) -> Unit): MediaPicker {
         } catch (e: Exception) {
             file.delete()
             capturePath = null
-            Toast.makeText(context, "Камера недоступна", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, t("Камера недоступна"), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -287,10 +288,10 @@ fun AttachButton(picker: MediaPicker, documents: Boolean, modifier: Modifier = M
             contentAlignment = Alignment.Center,
         ) { Glyph(LineIcon.Attach, Palette.Lilac, size = 22.dp) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            MenuRow(LineIcon.Image, "Фото или видео из галереи") { open = false; picker.pickMedia() }
-            MenuRow(LineIcon.Camera, "Снять фото") { open = false; picker.takePhoto() }
-            MenuRow(LineIcon.Video, "Снять видео") { open = false; picker.recordVideo() }
-            if (documents) MenuRow(LineIcon.Document, "Документ") { open = false; picker.pickDocuments() }
+            MenuRow(LineIcon.Image, t("Фото или видео из галереи")) { open = false; picker.pickMedia() }
+            MenuRow(LineIcon.Camera, t("Снять фото")) { open = false; picker.takePhoto() }
+            MenuRow(LineIcon.Video, t("Снять видео")) { open = false; picker.recordVideo() }
+            if (documents) MenuRow(LineIcon.Document, t("Документ")) { open = false; picker.pickDocuments() }
         }
     }
 }

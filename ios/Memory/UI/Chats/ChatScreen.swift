@@ -10,6 +10,8 @@ struct ChatScreen: View {
     let chat: Chat
     /// Куда можно переслать сообщение.
     let otherChats: [Chat]
+    /// Собеседник в чёрном списке: вместо поля ввода — напоминание.
+    var blocked: Bool = false
     @State private var text = ""
     @State private var pending: [Attachment] = []
     /// На какое сообщение отвечаем; nil — обычное сообщение.
@@ -93,7 +95,7 @@ struct ChatScreen: View {
         }
         .quickLookPreview($preview)
         .confirmationDialog(
-            "Переслать",
+            t("Переслать"),
             isPresented: Binding(get: { forwarding != nil }, set: { if !$0 { forwarding = nil } }),
             titleVisibility: .visible
         ) {
@@ -105,7 +107,7 @@ struct ChatScreen: View {
                     forwarding = nil
                 }
             }
-            Button("Отмена", role: .cancel) { forwarding = nil }
+            Button(t("Отмена"), role: .cancel) { forwarding = nil }
         }
     }
 
@@ -128,7 +130,7 @@ struct ChatScreen: View {
                     Avatar(user: chat.peer, size: 40, showOnline: true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(chat.peer.name).textStyle(.title).lineLimit(1)
-                        Text(chat.typing ? "печатает…" : chat.peer.online ? "в сети" : "@\(chat.peer.handle)")
+                        Text(chat.typing ? t("печатает…") : chat.peer.online ? t("в сети") : "@\(chat.peer.handle)")
                             .textStyle(.bodySmall, chat.typing || chat.peer.online ? Palette.lilac : Palette.mist)
                     }
                 }
@@ -140,12 +142,31 @@ struct ChatScreen: View {
         .padding(.vertical, 8)
     }
 
+    @ViewBuilder
     private var inputRow: some View {
+        if blocked {
+            // Заблокированному не пишем: напоминание и кнопка
+            HStack(spacing: 10) {
+                Text(tf("Вы заблокировали %s", chat.peer.name))
+                    .textStyle(.bodySmall, Palette.mist)
+                Spacer(minLength: 8)
+                GhostButton(title: t("Разблокировать")) { model.unblock(chat.peer.id) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .padding(12)
+        } else {
+            messageRow
+        }
+    }
+
+    private var messageRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
             AttachButton(documents: true, size: 50) { picked in
                 pending = Array((pending + picked).prefix(AppModel.maxMedia))
             }
-            GlassField(placeholder: "Сообщение", text: $text, limit: 2000, maxLines: 5)
+            GlassField(placeholder: t("Сообщение"), text: $text, limit: 2000, maxLines: 5)
                 .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
             Button {
                 model.send(chat.id, text, attachments: pending, replyTo: replyTo)
@@ -201,7 +222,7 @@ private struct Bubble: View {
                 if let from = message.forwardedFrom {
                     HStack(spacing: 6) {
                         Glyph(kind: .forward, color: Palette.lilac, size: 14)
-                        Text("Переслано от \(from)").textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+                        Text(tf("Переслано от %s", from)).textStyle(.labelLarge, Palette.lilac).lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
@@ -253,19 +274,19 @@ private struct Bubble: View {
             .contentShape(.contextMenuPreview, shape)
             .contextMenu {
                 Button(action: onReply) {
-                    Label("Ответить", systemImage: "arrowshape.turn.up.left")
+                    Label(t("Ответить"), systemImage: "arrowshape.turn.up.left")
                 }
                 Button(action: onForward) {
-                    Label("Переслать", systemImage: "arrowshape.turn.up.right")
+                    Label(t("Переслать"), systemImage: "arrowshape.turn.up.right")
                 }
                 Button(action: onPin) {
-                    Label(pinned ? "Открепить" : "Закрепить", systemImage: pinned ? "pin.slash" : "pin")
+                    Label(pinned ? t("Открепить") : t("Закрепить"), systemImage: pinned ? "pin.slash" : "pin")
                 }
                 Button(role: .destructive) { onDelete(false) } label: {
-                    Label("Удалить у себя", systemImage: "trash")
+                    Label(t("Удалить у себя"), systemImage: "trash")
                 }
                 Button(role: .destructive) { onDelete(true) } label: {
-                    Label("Удалить у всех", systemImage: "trash.fill")
+                    Label(t("Удалить у всех"), systemImage: "trash.fill")
                 }
             }
             // Пузырь не шире 290: длинное сообщение переносится
@@ -338,7 +359,7 @@ private struct ReplyBar: View {
         HStack(spacing: 10) {
             Glyph(kind: .reply, color: Palette.lilac, size: 20)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Ответ: \(ref.author)").textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+                Text(tf("Ответ: %s", ref.author)).textStyle(.labelLarge, Palette.lilac).lineLimit(1)
                 Text(ref.preview).textStyle(.bodySmall, Palette.mist).lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -370,7 +391,7 @@ private struct PinnedBar: View {
                     HStack(spacing: 10) {
                         Glyph(kind: .pushpin, color: Palette.lilac, size: 20)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Закреплённое сообщение").textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+                            Text(t("Закреплённое сообщение")).textStyle(.labelLarge, Palette.lilac).lineLimit(1)
                             Text(previewOf(message)).textStyle(.bodySmall).lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -384,7 +405,7 @@ private struct PinnedBar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Открепить")
+                .accessibilityLabel(t("Открепить"))
             }
             .padding(.leading, 16)
             .padding(.trailing, 6)

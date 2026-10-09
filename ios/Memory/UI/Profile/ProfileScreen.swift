@@ -1,22 +1,13 @@
 import SwiftUI
 
 /// Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе
-/// и настройки. Записи, подписчики, подписки, группы и сохранённое — на
-/// своих страницах: их открывают счётчики и строка «Сохранённое».
+/// и «Сохранённое». Настройки — за шестерёнкой вверху, рядом с карандашом.
+/// Нажатие на аватар — сменить или убрать фото.
 struct ProfileScreen: View {
     let model: AppModel
     /// Имя и сведения — ещё и в сохранённый аккаунт, чтобы пережили перезапуск.
     let onSaveProfile: (String, ProfileInfo) -> Void
-    let onLogout: () -> Void
     @State private var editing = false
-    @State private var confirmLogout = false
-
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? ""
-        let build = info?["CFBundleVersion"] as? String ?? ""
-        return build.isEmpty ? short : "\(short) (\(build))"
-    }
 
     var body: some View {
         let state = model.state
@@ -25,9 +16,10 @@ struct ProfileScreen: View {
 
         ScrollView {
             LazyVStack(spacing: 14) {
-                HStack {
-                    ScreenTitle(title: "Профиль", subtitle: "@\(me.handle)")
+                HStack(spacing: 10) {
+                    ScreenTitle(title: t("Профиль"), subtitle: "@\(me.handle)")
                     Spacer()
+                    RoundGlyphButton(icon: .gear, color: Palette.lilac, iconSize: 20) { model.openSettings() }
                     if !editing {
                         RoundGlyphButton(icon: .edit, color: Palette.lilac, iconSize: 20) { editing = true }
                     }
@@ -37,7 +29,7 @@ struct ProfileScreen: View {
 
                 GlassCard {
                     VStack(spacing: 10) {
-                        Avatar(user: me, size: 104, ring: true)
+                        EditableAvatar(user: me, onPicked: setAvatar, onRemove: { setAvatar("") })
                         if editing {
                             EditForm(
                                 user: me,
@@ -56,10 +48,10 @@ struct ProfileScreen: View {
                             FadeLine().padding(.top, 6)
                             // Счётчики — кнопки: каждый открывает свой раздел
                             HStack {
-                                statButton(state.myPosts.count, "записи", .posts)
-                                statButton(state.followers.count, "подписчики", .followers)
-                                statButton(state.following.count, "подписки", .following)
-                                statButton(state.myGroups.count, "группы", .groups)
+                                StatButton(value: state.myPosts.count, label: t("записи")) { model.openProfileSection(.posts) }
+                                StatButton(value: state.followers.count, label: t("подписчики")) { model.openProfileSection(.followers) }
+                                StatButton(value: state.following.count, label: t("подписки")) { model.openProfileSection(.following) }
+                                StatButton(value: state.myGroups.count, label: t("группы")) { model.openProfileSection(.groups) }
                             }
                             .padding(.top, 6)
                         }
@@ -73,76 +65,67 @@ struct ProfileScreen: View {
                 if !editing {
                     GlassCard {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("О СЕБЕ").textStyle(.label, Palette.mist)
+                            Text(t("О СЕБЕ")).textStyle(.label, Palette.mist)
                             if hasInfo || !me.joined.isEmpty { UserInfo(user: me) }
                             InterestChips(interests: me.interests)
                             if !hasInfo {
-                                Text("Добавьте город, день рождения, сайт и интересы — так вас проще найти.")
+                                Text(t("Добавьте город, день рождения, сайт и интересы — так вас проще найти."))
                                     .textStyle(.bodySmall, Palette.mist)
                                     .fixedSize(horizontal: false, vertical: true)
-                                GhostButton(title: "Заполнить") { editing = true }
+                                GhostButton(title: t("Заполнить")) { editing = true }
                             }
                         }
                         .padding(16)
                     }
                     .cardPadding()
+
+                    GlassCard {
+                        Button { model.openProfileSection(.saved) } label: {
+                            SettingRow(icon: .bookmark, title: t("Сохранённое")) {
+                                Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .cardPadding()
                 }
-
-                settings(state)
-
             }
             .padding(.top, 12)
             .padding(.bottom, tabBarSpace)
         }
         .scrollDismissesKeyboard(.interactively)
-        .confirmationDialog("Выйти из аккаунта?", isPresented: $confirmLogout, titleVisibility: .visible) {
-            Button("Выйти", role: .destructive, action: onLogout)
-            Button("Отмена", role: .cancel) {}
-        }
     }
 
-    private func statButton(_ value: Int, _ label: String, _ section: ProfileSection) -> some View {
-        Button { model.openProfileSection(section) } label: {
+    /// Новое фото (или "" — убрать): в профиль и в аккаунт; старый файл удаляется.
+    private func setAvatar(_ fileName: String) {
+        let old = model.state.me.avatar ?? ""
+        model.setAvatar(fileName)
+        onSaveProfile(model.state.me.name, model.profileInfo())
+        if !old.isEmpty && old != fileName {
+            MediaFiles.delete(Attachment(id: old, kind: .photo, fileName: old))
+        }
+    }
+}
+
+/// Счётчик профиля, который можно нажать.
+struct StatButton: View {
+    let value: Int
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
             Stat(value: value, label: label)
                 .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
-
-    private func settings(_ state: UiState) -> some View {
-        GlassCard {
-            VStack(spacing: 0) {
-                Button { model.openProfileSection(.saved) } label: {
-                    SettingRow(icon: .bookmark, title: "Сохранённое") {
-                        Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                FadeLine().padding(.horizontal, 16)
-                SettingRow(icon: .bell, title: "Уведомления") {
-                    Toggle("", isOn: Binding(get: { state.notifications }, set: { model.setNotifications($0) }))
-                        .labelsHidden()
-                        .tint(Palette.orchid)
-                }
-                FadeLine().padding(.horizontal, 16)
-                SettingRow(icon: .info, title: "О приложении") {
-                    Text("Memory \(version)").textStyle(.bodySmall, Palette.mist)
-                }
-                FadeLine().padding(.horizontal, 16)
-                Button { confirmLogout = true } label: {
-                    SettingRow(icon: .exit, title: "Выйти") { EmptyView() }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .cardPadding()
-    }
 }
 
-private struct SettingRow<Trailing: View>: View {
+struct SettingRow<Trailing: View>: View {
     let icon: LineIcon
     let title: String
     @ViewBuilder let trailing: () -> Trailing
@@ -187,42 +170,44 @@ private struct EditForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            field("Имя", $name, limit: 40)
-            field("О себе", $bio, limit: 160, multiline: true)
+            field(t("Имя"), $name, limit: 40)
+            field(t("О себе"), $bio, limit: 160, multiline: true)
             Text(plural(max(0, 160 - bio.count), "символ остался", "символа осталось", "символов осталось"))
                 .textStyle(.bodySmall, Palette.mist)
-            field("Город", $city, limit: 40)
-            field("День рождения, например 14 марта", $birthday, limit: 20)
-            field("Сайт или соцсеть", $website, limit: 80, keyboard: .URL)
+            field(t("Город"), $city, limit: 40)
+            field(t("День рождения, например 14 марта"), $birthday, limit: 20)
+            field(t("Сайт или соцсеть"), $website, limit: 80, keyboard: .URL)
             // Интересов много — список раскрывается по нажатию на «Интересы»
             DisclosurePill(
-                text: interests.isEmpty ? "Интересы" : "Интересы · \(interests.count)",
+                text: interests.isEmpty ? t("Интересы") : tf("Интересы · %s", interests.count),
                 open: showInterests,
                 active: !interests.isEmpty
             ) {
                 withAnimation(.easeOut(duration: 0.2)) { showInterests.toggle() }
             }
             if showInterests {
+                // Интересы раскрываются по одному, с небольшой задержкой
                 FlowLayout(spacing: 8) {
-                    ForEach(interestTopics, id: \.self) { tag in
+                    ForEach(Array(interestTopics.enumerated()), id: \.element) { i, tag in
                         let on = interests.contains(tag)
-                        Chip(text: tag, active: on) {
+                        Chip(text: t(tag), active: on) {
                             if on {
                                 interests.removeAll { $0 == tag }
                             } else {
                                 interests.append(tag)
                             }
                         }
+                        .staggerIn(i)
                     }
                 }
             }
             HStack(spacing: 10) {
-                GhostButton(title: "Отмена", action: onCancel)
-                GlowButton(title: "Сохранить", enabled: !name.trimmingCharacters(in: .whitespaces).isEmpty) {
+                GhostButton(title: t("Отмена"), action: onCancel)
+                GlowButton(title: t("Сохранить"), enabled: !name.trimmingCharacters(in: .whitespaces).isEmpty) {
                     let trim: (String) -> String = { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     onSave(trim(name), ProfileInfo(
                         bio: trim(bio), city: trim(city), birthday: trim(birthday),
-                        website: trim(website), interests: interests
+                        website: trim(website), interests: interests, avatar: user.avatar ?? ""
                     ))
                 }
             }

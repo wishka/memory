@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.stories
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -60,9 +62,9 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
     ) {
         item {
             ScreenTitle(
-                "Истории",
-                if (state.following.isEmpty()) "Пока ни одной подписки"
-                else "Подписки: ${state.following.size}",
+                t("Истории"),
+                if (state.following.isEmpty()) t("Пока ни одной подписки")
+                else tf("Подписки: %s", state.following.size),
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
@@ -94,15 +96,15 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                     ) {
                         Text(
                             if (state.following.isEmpty()) {
-                                "Здесь будут записи людей, на которых вы подписаны. " +
-                                    "Подписаться можно прямо в ленте — кнопкой у имени автора."
+                                t("Здесь будут записи людей, на которых вы подписаны. ") +
+                                    t("Подписаться можно прямо в ленте — кнопкой у имени автора.")
                             } else {
-                                "У ваших подписок пока нет записей."
+                                t("У ваших подписок пока нет записей.")
                             },
                             style = MaterialTheme.typography.bodyLarge,
                             color = Palette.Ink,
                         )
-                        GlowButton("Открыть ленту", onClick = { vm.selectTab(Tab.Feed) })
+                        GlowButton(t("Открыть ленту"), onClick = { vm.selectTab(Tab.Feed) })
                     }
                 }
             }

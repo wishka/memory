@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.groups
 
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +42,9 @@ import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.DisclosurePill
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.ui.components.Chip
+import ru.wishka.memory.ui.components.StaggerIn
 import ru.wishka.memory.ui.components.GhostButton
 import ru.wishka.memory.ui.components.GlassCard
 import ru.wishka.memory.ui.components.GlassField
@@ -83,8 +87,8 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ScreenTitle(
-                    "Группы",
-                    "Вы в ${plural(state.myGroups.size, "группе", "группах", "группах")}",
+                    t("Группы"),
+                    tf("Вы в %s", plural(state.myGroups.size, "группе", "группах", "группах")),
                     Modifier.weight(1f),
                 )
                 if (!creating) {
@@ -106,7 +110,7 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
 
         item {
             GlassField(
-                query, { query = it.take(40) }, "Поиск групп",
+                query, { query = it.take(40) }, t("Поиск групп"),
                 singleLine = true,
                 modifier = Modifier
                     .padding(horizontal = 16.dp)
@@ -118,7 +122,7 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
             TopicPicker(
                 selected = topic,
                 onSelect = { topic = it },
-                allLabel = "Все темы",
+                allLabel = t("Все темы"),
                 modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
             )
         }
@@ -126,7 +130,7 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
         if (found.isEmpty()) {
             item {
                 Text(
-                    "Ничего не нашли. Создайте свою группу — кнопкой «+» вверху.",
+                    t("Ничего не нашли. Создайте свою группу — кнопкой «+» вверху."),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
@@ -134,11 +138,11 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
             }
         }
         if (mine.isNotEmpty()) {
-            item { SectionTitle("Мои группы") }
+            item { SectionTitle(t("Мои группы")) }
             items(mine, key = { it.id }) { GroupRow(it, onOpen = { vm.openGroup(it.id) }, onToggle = { vm.toggleGroup(it.id) }) }
         }
         if (others.isNotEmpty()) {
-            item { SectionTitle(if (needle.isEmpty() && topic == null) "Рекомендуем" else "Найдено") }
+            item { SectionTitle(if (needle.isEmpty() && topic == null) t("Рекомендуем") else t("Найдено")) }
             items(others, key = { it.id }) { GroupRow(it, onOpen = { vm.openGroup(it.id) }, onToggle = { vm.toggleGroup(it.id) }) }
         }
     }
@@ -167,18 +171,24 @@ private fun GroupRow(group: Group, onOpen: () -> Unit, onToggle: () -> Unit) {
             Nebula(group.seed, Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(group.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(group.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    if (group.muted && !group.mine) Glyph(LineIcon.BellOff, Palette.Mist, size = 16.dp, modifier = Modifier.padding(start = 6.dp))
+                }
                 Text(
-                    "${group.topic} · ${plural(group.members, "участник", "участника", "участников")}",
+                    "${t(group.topic)} · ${plural(group.members, "участник", "участника", "участников")}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                 )
             }
             Spacer(Modifier.width(8.dp))
             when {
-                group.mine -> Text("ВАША", style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
-                group.joined -> GhostButton("Вы в группе", onClick = onToggle)
-                else -> GlowButton("Вступить", onClick = onToggle)
+                group.mine -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (group.muted) Glyph(LineIcon.BellOff, Palette.Mist, size = 16.dp, modifier = Modifier.padding(end = 6.dp))
+                    Text(t("ВАША"), style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
+                }
+                group.joined -> GhostButton(t("Вы в группе"), onClick = onToggle)
+                else -> GlowButton(t("Вступить"), onClick = onToggle)
             }
         }
     }
@@ -200,7 +210,7 @@ fun TopicPicker(
     var open by rememberSaveable { mutableStateOf(false) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         DisclosurePill(
-            selected ?: allLabel ?: "Выберите тему",
+            selected?.let { t(it) } ?: allLabel ?: t("Выберите тему"),
             open = open,
             active = selected != null,
             onClick = { open = !open },
@@ -210,28 +220,17 @@ fun TopicPicker(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // Метки раскрываются по одной, с небольшой задержкой
+                val offset = if (allLabel != null) 1 else 0
                 if (allLabel != null) {
-                    TopicChip(allLabel, active = selected == null) { onSelect(null); open = false }
+                    StaggerIn(0) { Chip(allLabel, active = selected == null) { onSelect(null); open = false } }
                 }
-                GROUP_TOPICS.forEach { t ->
-                    TopicChip(t, active = t == selected) { onSelect(t); open = false }
+                GROUP_TOPICS.forEachIndexed { i, topic ->
+                    StaggerIn(i + offset) { Chip(t(topic), active = topic == selected) { onSelect(topic); open = false } }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun TopicChip(title: String, active: Boolean, onClick: () -> Unit) {
-    Text(
-        title,
-        style = MaterialTheme.typography.labelLarge,
-        color = if (active) Palette.Ink else Palette.Lilac,
-        modifier = Modifier
-            .glass(RoundedCornerShape(50), strong = active)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    )
 }
 
 /** Форма новой группы: название, описание, тема. */
@@ -243,24 +242,24 @@ private fun CreateGroupCard(vm: AppViewModel, onClose: () -> Unit) {
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("НОВАЯ ГРУППА", style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
+            Text(t("НОВАЯ ГРУППА"), style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
             GlassField(
-                name, { name = it.take(40); error = null }, "Название",
+                name, { name = it.take(40); error = null }, t("Название"),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp)),
             )
             GlassField(
-                description, { description = it.take(300) }, "О чём группа",
+                description, { description = it.take(300) }, t("О чём группа"),
                 maxLines = 4,
                 modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp)),
             )
-            Text("Тема", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+            Text(t("Тема"), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
             TopicPicker(selected = topic, onSelect = { picked -> picked?.let { topic = it } }, modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
             Spacer(Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GhostButton("Отмена", onClick = onClose)
-                GlowButton("Создать", enabled = name.isNotBlank(), onClick = {
+                GhostButton(t("Отмена"), onClick = onClose)
+                GlowButton(t("Создать"), enabled = name.isNotBlank(), onClick = {
                     error = vm.createGroup(name, description, topic)
                     if (error == null) onClose()
                 })

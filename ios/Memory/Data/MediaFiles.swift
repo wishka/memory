@@ -113,11 +113,12 @@ enum MediaFiles {
 
 /// «2,4 МБ» — размер документа.
 func sizeTitle(_ bytes: Int64) -> String {
-    let ru = Locale(identifier: "ru_RU")
+    let en = L10n.shared.english
+    let locale = Locale(identifier: en ? "en_US" : "ru_RU")
     let kb = 1024.0
     let value = Double(bytes)
-    if value >= kb * kb * kb { return String(format: "%.1f ГБ", locale: ru, value / (kb * kb * kb)) }
-    if value >= kb * kb { return String(format: "%.1f МБ", locale: ru, value / (kb * kb)) }
-    if value >= kb { return "\(bytes / 1024) КБ" }
-    return "\(bytes) Б"
+    if value >= kb * kb * kb { return String(format: en ? "%.1f GB" : "%.1f ГБ", locale: locale, value / (kb * kb * kb)) }
+    if value >= kb * kb { return String(format: en ? "%.1f MB" : "%.1f МБ", locale: locale, value / (kb * kb)) }
+    if value >= kb { return en ? "\(bytes / 1024) KB" : "\(bytes / 1024) КБ" }
+    return en ? "\(bytes) B" : "\(bytes) Б"
 }
