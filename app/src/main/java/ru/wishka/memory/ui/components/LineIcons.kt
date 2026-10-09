@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Reply, Forward, ChevronDown, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info }
+enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info }
 
 @Composable
 fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -82,6 +82,16 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                     moveTo(s * 0.84f, s * 0.46f); lineTo(s * 0.42f, s * 0.46f)
                     cubicTo(s * 0.20f, s * 0.46f, s * 0.14f, s * 0.62f, s * 0.16f, s * 0.80f)
                 }, color, style = stroke)
+            }
+            LineIcon.Pushpin -> {
+                // Канцелярская кнопка, наклонённая вправо
+                drawPath(Path().apply {
+                    moveTo(s * 0.56f, s * 0.12f); lineTo(s * 0.88f, s * 0.44f)
+                    lineTo(s * 0.74f, s * 0.48f); lineTo(s * 0.58f, s * 0.64f)
+                    lineTo(s * 0.58f, s * 0.78f); lineTo(s * 0.22f, s * 0.42f)
+                    lineTo(s * 0.36f, s * 0.42f); lineTo(s * 0.52f, s * 0.26f); close()
+                }, color, style = stroke)
+                drawLine(color, Offset(s * 0.40f, s * 0.60f), Offset(s * 0.14f, s * 0.86f), stroke.width, StrokeCap.Round)
             }
             LineIcon.ChevronDown -> {
                 drawPath(Path().apply {

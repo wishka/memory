@@ -298,6 +298,21 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(message.forwardedFrom)
     }
 
+    func testPinAndUnpin() throws {
+        let vm = AppModel()
+        let chat = try XCTUnwrap(vm.state.chats.first)
+        let message = try XCTUnwrap(chat.messages.first)
+        vm.togglePin(chat.id, message.id)
+        XCTAssertEqual(vm.state.chats.first { $0.id == chat.id }?.pinned, message)
+        // Повторно — открепить
+        vm.togglePin(chat.id, message.id)
+        XCTAssertNil(vm.state.chats.first { $0.id == chat.id }?.pinnedId)
+        // Удалили закреплённое — закрепление снимается
+        vm.togglePin(chat.id, message.id)
+        vm.deleteMessage(chat.id, message.id, forEveryone: false)
+        XCTAssertNil(vm.state.chats.first { $0.id == chat.id }?.pinnedId)
+    }
+
     func testOverlaysCloseFirstOnBack() throws {
         let vm = AppModel()
         let post = try XCTUnwrap(vm.state.posts.first)

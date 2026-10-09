@@ -311,10 +311,27 @@ class AppViewModel(
         _state.update { s ->
             s.copy(chats = s.chats.map { chat ->
                 if (chat.id != chatId) chat
-                else chat.copy(messages = chat.messages.filterNot { it.id == messageId })
+                else chat.copy(
+                    messages = chat.messages.filterNot { it.id == messageId },
+                    // Удалили закреплённое — полоска вверху уходит
+                    pinnedId = chat.pinnedId?.takeIf { it != messageId },
+                )
             })
         }
         if (forEveryone) deletedForEveryone += messageId
+    }
+
+    /** Закрепить сообщение вверху переписки; повторно — открепить. Закреплённое одно. */
+    fun togglePin(chatId: Int, messageId: Long) {
+        _state.update { s ->
+            s.copy(chats = s.chats.map {
+                if (it.id != chatId) it else it.copy(pinnedId = if (it.pinnedId == messageId) null else messageId)
+            })
+        }
+    }
+
+    fun unpin(chatId: Int) {
+        _state.update { s -> s.copy(chats = s.chats.map { if (it.id == chatId) it.copy(pinnedId = null) else it }) }
     }
 
     /** Цитата для ответа на сообщение: автор и начало текста (или что приложено). */

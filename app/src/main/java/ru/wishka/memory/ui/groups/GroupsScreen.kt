@@ -40,6 +40,7 @@ import ru.wishka.memory.data.Group
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.UiState
+import ru.wishka.memory.ui.components.DisclosurePill
 import ru.wishka.memory.ui.components.GhostButton
 import ru.wishka.memory.ui.components.GlassCard
 import ru.wishka.memory.ui.components.GlassField
@@ -114,7 +115,7 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
             )
         }
         item {
-            TopicDropdown(
+            TopicPicker(
                 selected = topic,
                 onSelect = { topic = it },
                 allLabel = "Все темы",
@@ -184,61 +185,52 @@ private fun GroupRow(group: Group, onOpen: () -> Unit, onToggle: () -> Unit) {
 }
 
 /**
- * Тема группы — выпадающим списком: тем много, и рядом меток они
- * занимали бы пол-экрана. allLabel != null — первый пункт «все темы»
- * (для поиска), выбор его даёт null.
+ * Тема группы: таблетка с выбранной темой («Все темы ▾»), по нажатию под
+ * ней раскрываются все темы метками. Выбор метки сворачивает список.
+ * allLabel != null — первая метка «все темы» (для поиска), её выбор даёт null.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TopicDropdown(
+fun TopicPicker(
     selected: String?,
     onSelect: (String?) -> Unit,
     modifier: Modifier = Modifier,
     allLabel: String? = null,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box(modifier = modifier) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glass(RoundedCornerShape(16.dp))
-                .clickable { open = true }
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                selected ?: allLabel ?: "Выберите тему",
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (selected == null) Palette.Mist else Palette.Ink,
-                modifier = Modifier.weight(1f),
-            )
-            Glyph(LineIcon.ChevronDown, Palette.Lilac, size = 20.dp)
-        }
-        DropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            modifier = Modifier.heightIn(max = 380.dp),
-        ) {
-            if (allLabel != null) {
-                TopicItem(allLabel, active = selected == null) { open = false; onSelect(null) }
-            }
-            GROUP_TOPICS.forEach { t ->
-                TopicItem(t, active = t == selected) { open = false; onSelect(t) }
+    var open by rememberSaveable { mutableStateOf(false) }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        DisclosurePill(
+            selected ?: allLabel ?: "Выберите тему",
+            open = open,
+            active = selected != null,
+            onClick = { open = !open },
+        )
+        if (open) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (allLabel != null) {
+                    TopicChip(allLabel, active = selected == null) { onSelect(null); open = false }
+                }
+                GROUP_TOPICS.forEach { t ->
+                    TopicChip(t, active = t == selected) { onSelect(t); open = false }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TopicItem(title: String, active: Boolean, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (active) Palette.Lilac else Palette.Ink,
-            )
-        },
-        onClick = onClick,
+private fun TopicChip(title: String, active: Boolean, onClick: () -> Unit) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (active) Palette.Ink else Palette.Lilac,
+        modifier = Modifier
+            .glass(RoundedCornerShape(50), strong = active)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
     )
 }
 
@@ -263,7 +255,7 @@ private fun CreateGroupCard(vm: AppViewModel, onClose: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp)),
             )
             Text("Тема", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
-            TopicDropdown(selected = topic, onSelect = { picked -> picked?.let { topic = it } }, modifier = Modifier.fillMaxWidth())
+            TopicPicker(selected = topic, onSelect = { picked -> picked?.let { topic = it } }, modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
             Spacer(Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -1,11 +1,5 @@
 import SwiftUI
 
-/// Интересы на выбор в профиле.
-private let interestOptions = [
-    "Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт",
-    "Астрономия", "Кулинария", "Наука", "Игры", "Дизайн", "Танцы", "Театр", "Технологии",
-]
-
 /// Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе
 /// и настройки. Записи, подписчики, подписки, группы и сохранённое — на
 /// своих страницах: их открывают счётчики и строка «Сохранённое».
@@ -177,6 +171,7 @@ private struct EditForm: View {
     @State private var birthday: String
     @State private var website: String
     @State private var interests: [String]
+    @State private var showInterests = false
 
     init(user: User, onSave: @escaping (String, ProfileInfo) -> Void, onCancel: @escaping () -> Void) {
         self.user = user
@@ -199,15 +194,24 @@ private struct EditForm: View {
             field("Город", $city, limit: 40)
             field("День рождения, например 14 марта", $birthday, limit: 20)
             field("Сайт или соцсеть", $website, limit: 80, keyboard: .URL)
-            Text("Интересы").textStyle(.bodySmall, Palette.mist)
-            FlowLayout(spacing: 8) {
-                ForEach(interestOptions, id: \.self) { tag in
-                    let on = interests.contains(tag)
-                    Chip(text: tag, active: on) {
-                        if on {
-                            interests.removeAll { $0 == tag }
-                        } else {
-                            interests.append(tag)
+            // Интересов много — список раскрывается по нажатию на «Интересы»
+            DisclosurePill(
+                text: interests.isEmpty ? "Интересы" : "Интересы · \(interests.count)",
+                open: showInterests,
+                active: !interests.isEmpty
+            ) {
+                withAnimation(.easeOut(duration: 0.2)) { showInterests.toggle() }
+            }
+            if showInterests {
+                FlowLayout(spacing: 8) {
+                    ForEach(interestTopics, id: \.self) { tag in
+                        let on = interests.contains(tag)
+                        Chip(text: tag, active: on) {
+                            if on {
+                                interests.removeAll { $0 == tag }
+                            } else {
+                                interests.append(tag)
+                            }
                         }
                     }
                 }

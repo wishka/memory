@@ -310,6 +310,22 @@ class AppViewModelTest {
     }
 
     @Test
+    fun pinAndUnpin() {
+        val vm = AppViewModel()
+        val chat = vm.state.value.chats.first()
+        val message = chat.messages.first()
+        vm.togglePin(chat.id, message.id)
+        assertEquals(message, vm.state.value.chats.first { it.id == chat.id }.pinned)
+        // Повторно — открепить
+        vm.togglePin(chat.id, message.id)
+        assertNull(vm.state.value.chats.first { it.id == chat.id }.pinnedId)
+        // Удалили закреплённое — закрепление снимается
+        vm.togglePin(chat.id, message.id)
+        vm.deleteMessage(chat.id, message.id, forEveryone = false)
+        assertNull(vm.state.value.chats.first { it.id == chat.id }.pinnedId)
+    }
+
+    @Test
     fun overlaysCloseFirstOnBack() {
         val vm = AppViewModel()
         val post = vm.state.value.posts.first()

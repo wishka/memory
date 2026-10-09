@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import ru.wishka.memory.data.INTERESTS
 import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.User
 import ru.wishka.memory.data.plural
@@ -43,6 +44,7 @@ import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
+import ru.wishka.memory.ui.components.DisclosurePill
 import ru.wishka.memory.ui.components.FadeLine
 import ru.wishka.memory.ui.components.GhostButton
 import ru.wishka.memory.ui.components.GlassCard
@@ -60,11 +62,6 @@ import ru.wishka.memory.ui.feed.PostCard
 import ru.wishka.memory.ui.prism.PrismArt
 import ru.wishka.memory.ui.theme.Palette
 
-/** Интересы на выбор в профиле: темы групп и ещё несколько. */
-private val INTERESTS = listOf(
-    "Музыка", "Фото", "Путешествия", "Книги", "Природа", "Искусство", "Кино", "Спорт",
-    "Астрономия", "Кулинария", "Наука", "Игры", "Дизайн", "Танцы", "Театр", "Технологии",
-)
 
 /**
  * Вкладка «Профиль»: карточка с аватаром и счётчиками, сведения о себе,
@@ -268,8 +265,15 @@ private fun EditForm(user: User, onSave: (String, ProfileInfo) -> Unit, onCancel
         Field(city, { city = it.take(40) }, "Город")
         Field(birthday, { birthday = it.take(20) }, "День рождения, например 14 марта")
         Field(website, { website = it.take(80) }, "Сайт или соцсеть")
-        Text("Интересы", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Интересов много — список раскрывается по нажатию на «Интересы»
+        var showInterests by rememberSaveable { mutableStateOf(false) }
+        DisclosurePill(
+            if (interests.isEmpty()) "Интересы" else "Интересы · ${interests.size}",
+            open = showInterests,
+            active = interests.isNotEmpty(),
+            onClick = { showInterests = !showInterests },
+        )
+        if (showInterests) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             INTERESTS.forEach { tag ->
                 val on = tag in interests
                 Text(
