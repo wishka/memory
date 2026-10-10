@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // Kotlin встроен в AGP 9 — отдельного плагина Kotlin нет
@@ -8,6 +10,14 @@ plugins {
 // (.github/workflows). Локальная сборка без переменных получает версию
 // 0.1.0 (код 1), отладочную подпись, а release собирается неподписанным.
 fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
+
+// Ключ Jamendo для медиатеки PRISM: переменная JAMENDO_CLIENT_ID (в CI —
+// из секрета) или строка jamendo.clientId в local.properties. Без ключа
+// медиатека работает только с Openverse.
+val jamendoClientId: String = env("JAMENDO_CLIENT_ID") ?: rootProject.file("local.properties").let { f ->
+    if (!f.exists()) null
+    else Properties().apply { f.inputStream().use { load(it) } }.getProperty("jamendo.clientId")
+}.orEmpty()
 
 android {
     namespace = "ru.wishka.memory"
@@ -21,6 +31,7 @@ android {
         targetSdk = 36
         versionCode = env("VERSION_CODE")?.toInt() ?: 1
         versionName = env("VERSION_NAME") ?: "0.1.0"
+        buildConfigField("String", "JAMENDO_CLIENT_ID", "\"${jamendoClientId.replace("\"", "")}\"")
     }
 
     signingConfigs {
@@ -69,6 +80,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

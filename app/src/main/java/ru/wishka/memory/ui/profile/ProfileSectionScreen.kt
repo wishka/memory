@@ -133,7 +133,7 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                 }
             }
             // «Моя музыка» — свой экран (MusicScreen)
-            ProfileSection.Music -> Unit
+            ProfileSection.Music, ProfileSection.Stickers -> Unit
         }
     }
 }
@@ -145,6 +145,7 @@ private fun subtitle(state: UiState, section: ProfileSection): String = when (se
     ProfileSection.Groups -> plural(state.myGroups.size, "группа", "группы", "групп")
     ProfileSection.Saved -> plural(state.savedPrisms.size, "ролик", "ролика", "роликов")
     ProfileSection.Music -> plural(state.tracks.size, "трек", "трека", "треков")
+    ProfileSection.Stickers -> plural(state.stickers.size, "стикер", "стикера", "стикеров")
 }
 
 @Composable
@@ -199,7 +200,7 @@ private fun GroupRow(group: Group, onOpen: () -> Unit) {
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Nebula(group.seed, Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)))
+            ru.wishka.memory.ui.components.GroupCover(group, Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(group.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)

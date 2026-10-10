@@ -22,4 +22,5 @@ object Palette {
     val Ink = Color(0xFFEDE6F5)     // основной текст
     val Mist = Color(0xFF9C93B8)    // второстепенный текст
     val Line = Color(0x33BC92CD)    // тонкие линии и рамки
+    val PearlPink = Color(0xFFFF9EDE) // удаление и прочее необратимое — как на iPhone
 }

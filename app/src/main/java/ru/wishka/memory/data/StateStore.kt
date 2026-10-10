@@ -53,6 +53,9 @@ class StateStore(private val context: Context) {
             .put("blocked", JSONArray(s.blocked.toList()))
             .put("tracks", JSONArray(s.tracks.map { track(it) }))
             .put("playlists", JSONArray(s.playlists.map { playlist(it) }))
+            .put("reportedComments", JSONArray(s.reportedComments.toList()))
+            .put("stickers", JSONArray(s.stickers.map { sticker(it) }))
+            .put("profilePins", JSONArray(s.profilePins))
             .put("following", JSONArray(s.following.toList()))
             .put("posts", JSONArray(s.posts.map { post(it) }))
             .put("chats", JSONArray(s.chats.map { chat(it) }))
@@ -73,15 +76,29 @@ class StateStore(private val context: Context) {
             blocked = o.optJSONArray("blocked")?.let { a -> (0 until a.length()).map { a.getInt(it) }.toSet() } ?: emptySet(),
             tracks = o.optJSONArray("tracks").objects().map { track(it) },
             playlists = o.optJSONArray("playlists").objects().map { playlist(it) },
+            stickers = o.optJSONArray("stickers").objects().map { sticker(it) },
+            profilePins = o.optJSONArray("profilePins")?.let { a -> (0 until a.length()).map { a.getLong(it) } } ?: emptyList(),
+            reportedComments = o.optJSONArray("reportedComments")?.let { a -> (0 until a.length()).map { a.getLong(it) }.toSet() } ?: emptySet(),
         )
 
         private fun track(t: MusicTrack) = JSONObject()
             .put("id", t.id).put("title", t.title).put("artist", t.artist).put("path", t.path)
             .put("durationMs", t.durationMs).put("addedAt", t.addedAt)
+            .put("license", t.license).put("sourceUrl", t.sourceUrl)
 
         private fun track(o: JSONObject) = MusicTrack(
             o.getString("id"), o.optString("title"), o.optString("artist"), o.getString("path"),
             o.optLong("durationMs"), o.optLong("addedAt"),
+            license = o.optString("license"), sourceUrl = o.optString("sourceUrl"),
+        )
+
+        private fun sticker(t: Sticker) = JSONObject()
+            .put("id", t.id).put("path", t.path).put("kind", t.kind.name).put("createdAt", t.createdAt)
+
+        private fun sticker(o: JSONObject) = Sticker(
+            o.getString("id"), o.getString("path"),
+            StickerKind.entries.firstOrNull { it.name == o.optString("kind") } ?: StickerKind.Badge,
+            o.optLong("createdAt"),
         )
 
         private fun playlist(p: Playlist) = JSONObject()
@@ -130,12 +147,12 @@ class StateStore(private val context: Context) {
         private fun comment(c: Comment) = JSONObject()
             .put("id", c.id).put("author", c.author.id).put("text", c.text)
             .put("minutesAgo", c.minutesAgo).put("createdAt", c.createdAt)
-            .put("likes", c.likes).put("liked", c.liked)
+            .put("likes", c.likes).put("liked", c.liked).put("replyTo", c.replyTo)
 
         private fun comment(o: JSONObject) = Comment(
             o.getLong("id"), person(o.getInt("author")), o.getString("text"),
             o.optInt("minutesAgo"), o.optLong("createdAt"),
-            likes = o.optInt("likes"), liked = o.optBoolean("liked"),
+            likes = o.optInt("likes"), liked = o.optBoolean("liked"), replyTo = o.optString("replyTo"),
         )
 
         private fun post(p: Post) = JSONObject()
@@ -192,6 +209,9 @@ class StateStore(private val context: Context) {
             .put("id", g.id).put("name", g.name).put("description", g.description).put("topic", g.topic)
             .put("members", g.members).put("seed", g.seed).put("joined", g.joined).put("mine", g.mine)
             .put("muted", g.muted)
+            .put("cover", g.cover?.let { attachment(it) } ?: JSONObject.NULL)
+            .put("pinnedPostId", g.pinnedPostId ?: JSONObject.NULL)
+            .put("onlyOwnerPosts", g.onlyOwnerPosts)
             .put("posts", JSONArray(g.posts.map { post(it) }))
 
         private fun group(o: JSONObject) = Group(
@@ -199,6 +219,9 @@ class StateStore(private val context: Context) {
             o.optInt("members"), o.optInt("seed"), o.optBoolean("joined"), o.optBoolean("mine"),
             o.getJSONArray("posts").objects().map { post(it) },
             muted = o.optBoolean("muted"),
+            cover = o.optJSONObject("cover")?.let { attachment(it) },
+            pinnedPostId = if (o.isNull("pinnedPostId")) null else o.optLong("pinnedPostId"),
+            onlyOwnerPosts = o.optBoolean("onlyOwnerPosts"),
         )
 
         private fun prism(p: Prism) = JSONObject()

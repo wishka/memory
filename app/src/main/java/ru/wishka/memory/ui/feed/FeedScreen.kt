@@ -4,6 +4,9 @@ import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,6 +37,11 @@ import ru.wishka.memory.R
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.MediaFiles
+import ru.wishka.memory.data.MediaKind
+import ru.wishka.memory.ui.components.MemoryMenu
+import ru.wishka.memory.ui.components.CrystalLogo
+import ru.wishka.memory.ui.components.MenuRow
+import ru.wishka.memory.ui.components.PostFiles
 import ru.wishka.memory.data.agoTitle
 import ru.wishka.memory.data.minutesSince
 import ru.wishka.memory.data.plural
@@ -71,24 +79,33 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ScreenTitle(t("Лента"), t("Моменты, которые остаются"), Modifier.weight(1f))
-                // Кристалл из значка приложения — знак Memory в шапке
-                Image(
-                    painter = painterResource(R.drawable.memory_crystal),
-                    contentDescription = null,
-                    modifier = Modifier.size(52.dp),
-                )
+                // Знак Memory: кристалл со стеклом, как слово MEMORY на заставке
+                CrystalLogo(size = 56.dp)
             }
         }
         item { Composer(onPublish = vm::publish) }
         items(state.feed, key = { it.id }) { post ->
+            val mine = post.author.id == state.me.id
             PostCard(
                 post,
                 onLike = { vm.toggleLike(post.id) },
-                following = if (post.author.id == state.me.id) null else post.author.id in state.following,
+                following = if (mine) null else post.author.id in state.following,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
                 onComments = { vm.openComments(post.id) },
                 onOpenMedia = vm::openMedia,
+                // Своя запись: закрепить в витрине профиля или удалить
+                menu = if (!mine) null else { close ->
+                    val pinned = post.id in state.profilePins
+                    MenuRow(LineIcon.Pushpin, if (pinned) t("Убрать из витрины") else t("Закрепить в профиле")) {
+                        close(); vm.toggleProfilePin(post.id)
+                    }
+                    MenuRow(LineIcon.Trash, t("Удалить запись"), color = Palette.PearlPink) {
+                        close()
+                        post.media.forEach { MediaFiles.delete(it) }
+                        vm.deletePost(post.id)
+                    }
+                },
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
@@ -161,7 +178,12 @@ fun PostCard(
     onComments: (() -> Unit)? = null,
     /** Фото или видео записи на весь экран. */
     onOpenMedia: (Attachment) -> Unit = {},
+    /** Закреплена в группе — метка над текстом. */
+    pinned: Boolean = false,
+    /** Пункты меню «⋯» (закрепить, удалить…); null — меню нет. */
+    menu: (@Composable ColumnScope.(close: () -> Unit) -> Unit)? = null,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -187,11 +209,30 @@ fun PostCard(
                     if (following) GhostButton(t("Вы подписаны"), onClick = onFollow)
                     else GlowButton(t("Подписаться"), onClick = onFollow)
                 }
+                if (menu != null) {
+                    Box {
+                        Box(
+                            modifier = Modifier.size(36.dp).clip(CircleShape).clickable { menuOpen = true },
+                            contentAlignment = Alignment.Center,
+                        ) { Glyph(LineIcon.More, Palette.Mist, size = 20.dp) }
+                        MemoryMenu(expanded = menuOpen, onDismiss = { menuOpen = false }) {
+                            menu { menuOpen = false }
+                        }
+                    }
+                }
+            }
+            if (pinned) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Glyph(LineIcon.Pushpin, Palette.Lilac, size = 16.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(t("ЗАКРЕПЛЕНО"), style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
+                }
             }
             if (post.text.isNotEmpty()) {
                 Text(post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
             }
-            PostMedia(post.media, onOpen = onOpenMedia)
+            PostMedia(post.media.filter { it.kind != MediaKind.Document }, onOpen = onOpenMedia)
+            PostFiles(post.media.filter { it.kind == MediaKind.Document })
             post.artSeed?.let { seed ->
                 Nebula(
                     seed,

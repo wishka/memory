@@ -275,7 +275,14 @@ fun rememberMediaPicker(onPicked: (List<Attachment>) -> Unit): MediaPicker {
 
 /** Кнопка-скрепка с меню: галерея, фото, видео и (в чатах) документ. */
 @Composable
-fun AttachButton(picker: MediaPicker, documents: Boolean, modifier: Modifier = Modifier, size: Dp = 44.dp) {
+fun AttachButton(
+    picker: MediaPicker,
+    documents: Boolean,
+    modifier: Modifier = Modifier,
+    size: Dp = 44.dp,
+    /** «Музыка» в меню — трек из «Моей музыки» или файл; null — пункта нет. */
+    onMusic: (() -> Unit)? = null,
+) {
     var open by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
         Box(
@@ -291,6 +298,7 @@ fun AttachButton(picker: MediaPicker, documents: Boolean, modifier: Modifier = M
             MenuRow(LineIcon.Camera, t("Снять фото")) { open = false; picker.takePhoto() }
             MenuRow(LineIcon.Video, t("Снять видео")) { open = false; picker.recordVideo() }
             if (documents) MenuRow(LineIcon.Document, t("Документ")) { open = false; picker.pickDocuments() }
+            if (onMusic != null) MenuRow(LineIcon.Music, t("Музыка")) { open = false; onMusic() }
         }
     }
 }

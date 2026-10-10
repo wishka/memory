@@ -23,6 +23,7 @@ enum ProfileSection: String, CaseIterable {
     case groups = "Группы"
     case saved = "Сохранённое"
     case music = "Моя музыка"
+    case stickers = "Студия"
 
     var title: String { t(rawValue) }
 }
@@ -53,6 +54,12 @@ struct UiState: Equatable {
     var privacy = Privacy()
     /// Чёрный список: их записи, комментарии и сообщения не видны.
     var blocked: Set<Int> = []
+    /// Комментарии, на которые пожаловались: у пожаловавшегося они скрыты.
+    var reportedComments: Set<Int64> = []
+    /// Свои значки, смайлы и стикеры из «Студии» — новые первыми.
+    var stickers: [Sticker] = []
+    /// Записи, закреплённые в профиле (витрина), — до трёх.
+    var profilePins: [Int64] = []
     /// «Моя музыка»: треки и плейлисты — только на этом телефоне.
     var tracks: [MusicTrack] = []
     var playlists: [Playlist] = []
@@ -82,6 +89,8 @@ struct UiState: Equatable {
     var openPersonId: Int? = nil
     /// Страница группы поверх вкладки «Группы»; nil — список групп.
     var openGroupId: Int? = nil
+    /// Настройки открытой группы — за шестерёнкой.
+    var groupSettingsOpen = false
 
     var openPerson: User? { openPersonId.flatMap { Demo.person($0) } }
     var openGroup: MemoryGroup? { groups.first { $0.id == openGroupId } }
@@ -179,6 +188,9 @@ struct Snapshot: Codable, Equatable {
     var blocked: Set<Int>? = nil
     var tracks: [MusicTrack]? = nil
     var playlists: [Playlist]? = nil
+    var reportedComments: Set<Int64>? = nil
+    var stickers: [Sticker]? = nil
+    var profilePins: [Int64]? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -197,6 +209,8 @@ final class AppModel {
 
     /// Сколько фото и видео можно приложить к одной записи или сообщению.
     static let maxMedia = 10
+    /// Сколько записей можно закрепить в витрине профиля.
+    static let maxPins = 3
 
     @ObservationIgnored private var nextId: Int64 = 10_000
     @ObservationIgnored private var replyIndex = 0
@@ -220,6 +234,7 @@ final class AppModel {
     func selectTab(_ tab: AppTab) {
         state.openChatId = tab == .chats ? state.openChatId : nil
         state.openGroupId = tab == .groups ? state.openGroupId : nil
+        state.groupSettingsOpen = false
         state.openPersonId = nil
         state.personSection = nil
         state.returnToChatId = nil
@@ -296,6 +311,7 @@ final class AppModel {
         if state.openChatId != nil { closeChat(); return true }
         if state.personSection != nil && state.openPersonId != nil { closePersonSection(); return true }
         if state.openPersonId != nil { closePerson(); return true }
+        if state.groupSettingsOpen { closeGroupSettings(); return true }
         if state.openGroupId != nil { closeGroup(); return true }
         if state.settingsPage != nil { settingsBack(); return true }
         if state.profileSection != nil { closeProfileSection(); return true }
@@ -321,14 +337,20 @@ final class AppModel {
     }
 
     /// Комментарий к записи в ленте или в группе.
-    func addComment(_ postId: Int64, _ text: String) {
+    func addComment(_ postId: Int64, _ text: String, replyTo: String? = nil) {
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
         if trimmed.isEmpty { return }
-        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock())
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo)
         updatePosts(postId) { p in
             p.comments += 1
             p.commentList.append(comment)
         }
+    }
+
+    /// Пожаловаться на чужой комментарий: он скрывается у вас. Когда
+    /// появится сервер, жалоба уйдёт модераторам.
+    func reportComment(_ commentId: Int64) {
+        state.reportedComments.insert(commentId)
     }
 
     /// Свой комментарий можно удалить.
@@ -585,10 +607,10 @@ final class AppModel {
         updatePrism(prismId) { $0.saved.toggle() }
     }
 
-    func addPrismComment(_ prismId: Int64, _ text: String) {
+    func addPrismComment(_ prismId: Int64, _ text: String, replyTo: String? = nil) {
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
         if trimmed.isEmpty { return }
-        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock())
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo)
         updatePrism(prismId) { p in
             p.comments += 1
             p.commentList.append(comment)
@@ -649,6 +671,34 @@ final class AppModel {
             if p.id == prismId { change(&p) }
             return p
         }
+    }
+
+    // MARK: - Студия и витрина
+
+    /// Новый стикер — первым в «Студии».
+    func addSticker(_ sticker: Sticker) {
+        state.stickers = [sticker] + state.stickers.filter { $0.id != sticker.id }
+    }
+
+    /// Убрать стикер из «Студии». Файл удаляет экран.
+    func deleteSticker(_ stickerId: String) {
+        state.stickers.removeAll { $0.id == stickerId }
+    }
+
+    /// Закрепить свою запись в витрине профиля (до трёх) или открепить.
+    func toggleProfilePin(_ postId: Int64) {
+        if state.profilePins.contains(postId) {
+            state.profilePins.removeAll { $0 == postId }
+        } else if state.posts.contains(where: { $0.id == postId && $0.author.id == state.me.id }) {
+            state.profilePins = Array(([postId] + state.profilePins).prefix(Self.maxPins))
+        }
+    }
+
+    /// Удалить свою запись из ленты. Файлы удаляет экран.
+    func deletePost(_ postId: Int64) {
+        let meId = state.me.id
+        state.posts.removeAll { $0.id == postId && $0.author.id == meId }
+        state.profilePins.removeAll { $0 == postId }
     }
 
     // MARK: - Моя музыка
@@ -727,11 +777,76 @@ final class AppModel {
             state.tab = .groups
         }
         state.openGroupId = groupId
+        state.groupSettingsOpen = false
         state.openPersonId = nil
     }
 
     func closeGroup() {
         state.openGroupId = nil
+        state.groupSettingsOpen = false
+    }
+
+    func openGroupSettings() {
+        state.groupSettingsOpen = state.openGroupId != nil
+    }
+
+    func closeGroupSettings() {
+        state.groupSettingsOpen = false
+    }
+
+    /// Название, описание и тема своей группы. Ошибка — текст для экрана, nil — сохранено.
+    @discardableResult
+    func updateGroup(_ groupId: Int, name: String, description: String, topic: String) -> String? {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.count < 3 { return t("Название — от 3 символов") }
+        if title.count > 40 { return t("Название — не длиннее 40 символов") }
+        if state.groups.contains(where: { $0.id != groupId && $0.name.lowercased() == title.lowercased() }) {
+            return tf("Группа «%s» уже есть", title)
+        }
+        updateOwnGroup(groupId) { g in
+            g.name = title
+            g.description = String(description.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+            if !topic.isEmpty { g.topic = topic }
+        }
+        return nil
+    }
+
+    /// Новая заставка (фото) или nil — вернуть туманность. Старый файл удаляет экран.
+    func setGroupCover(_ groupId: Int, _ cover: Attachment?) {
+        updateOwnGroup(groupId) { $0.cover = cover }
+    }
+
+    func setGroupOnlyOwnerPosts(_ groupId: Int, _ only: Bool) {
+        updateOwnGroup(groupId) { $0.onlyOwnerPosts = only }
+    }
+
+    /// Закрепить запись в своей группе; та же запись ещё раз — открепить.
+    func togglePinGroupPost(_ groupId: Int, _ postId: Int64) {
+        updateOwnGroup(groupId) { g in
+            guard g.posts.contains(where: { $0.id == postId }) else { return }
+            g.pinnedPostId = g.pinnedPostId == postId ? nil : postId
+        }
+    }
+
+    /// Удалить запись в группе: свою — всегда, любую — в своей группе. Файлы удаляет экран.
+    func deleteGroupPost(_ groupId: Int, _ postId: Int64) {
+        let meId = state.me.id
+        state.groups = state.groups.map { group in
+            var g = group
+            if g.id == groupId, let post = g.posts.first(where: { $0.id == postId }), post.author.id == meId || g.mine {
+                g.posts.removeAll { $0.id == postId }
+                if g.pinnedPostId == postId { g.pinnedPostId = nil }
+            }
+            return g
+        }
+    }
+
+    private func updateOwnGroup(_ groupId: Int, _ change: (inout MemoryGroup) -> Void) {
+        state.groups = state.groups.map { group in
+            var g = group
+            if g.id == groupId && g.mine { change(&g) }
+            return g
+        }
     }
 
     /// Вступить или выйти. Из своей группы выйти нельзя — её можно только удалить.
@@ -780,17 +895,22 @@ final class AppModel {
     func deleteGroup(_ groupId: Int) {
         state.groups.removeAll { $0.id == groupId && $0.mine }
         state.openGroupId = nil
+        state.groupSettingsOpen = false
     }
 
-    /// Запись в группе — только для участников.
-    func postInGroup(_ groupId: Int, _ text: String) {
+    /// Запись в группе — для участников (или только для создателя, если он
+    /// так решил): текст и вложения — фото, видео, документы, музыка.
+    func postInGroup(_ groupId: Int, _ text: String, media: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return }
+        if trimmed.isEmpty && media.isEmpty { return }
         let me = state.me
         state.groups = state.groups.map { group in
             var g = group
-            if g.id == groupId && g.joined {
-                g.posts.insert(Post(id: newId(), author: me, text: trimmed, minutesAgo: 0, createdAt: clock()), at: 0)
+            if g.id == groupId && g.joined && (!g.onlyOwnerPosts || g.mine) {
+                g.posts.insert(Post(
+                    id: newId(), author: me, text: trimmed, minutesAgo: 0,
+                    media: Array(media.prefix(Self.maxMedia)), createdAt: clock()
+                ), at: 0)
             }
             return g
         }
@@ -886,7 +1006,8 @@ final class AppModel {
             posts: state.posts, chats: state.chats, groups: state.groups, prisms: state.prisms,
             following: state.following, notifications: state.notifications.all, nextId: nextId,
             notify: state.notifications, privacy: state.privacy, blocked: state.blocked,
-            tracks: state.tracks, playlists: state.playlists
+            tracks: state.tracks, playlists: state.playlists, reportedComments: state.reportedComments,
+            stickers: state.stickers, profilePins: state.profilePins
         )
     }
 
@@ -910,6 +1031,9 @@ final class AppModel {
         s.blocked = (snapshot.blocked ?? []).subtracting([s.me.id])
         s.tracks = snapshot.tracks ?? []
         s.playlists = snapshot.playlists ?? []
+        s.reportedComments = snapshot.reportedComments ?? []
+        s.stickers = snapshot.stickers ?? []
+        s.profilePins = snapshot.profilePins ?? []
         s.applyMe(s.me)
         state = s
     }

@@ -168,7 +168,7 @@ private fun GroupRow(group: Group, onOpen: () -> Unit, onToggle: () -> Unit) {
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Nebula(group.seed, Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)))
+            ru.wishka.memory.ui.components.GroupCover(group, Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

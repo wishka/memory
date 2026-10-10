@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
@@ -30,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
@@ -75,8 +77,12 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
         vm.consumePrismStart()
     }
     var confirmDelete by remember { mutableStateOf<Prism?>(null) }
+    // Вкладки сверху: ролики или медиатека
+    var library by rememberSaveable { mutableStateOf(false) }
     Box(Modifier.fillMaxSize()) {
-    VerticalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+    if (library) {
+        MediaLibraryScreen(vm, state, contentPadding)
+    } else VerticalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
         val prism = prisms[page]
         PrismPage(
             prism = prism,
@@ -94,8 +100,19 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
         )
     }
 
+    // «PRISM · МЕДИАТЕКА» — вкладки поверх роликов
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .padding(top = contentPadding.calculateTopPadding() + 14.dp, start = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PrismTabLabel("PRISM", active = !library) { library = false }
+        PrismTabLabel(t("МЕДИАТЕКА"), active = library) { library = true }
+    }
+
     // «+» — снять или выбрать свой ролик
-    Box(
+    if (!library) Box(
         modifier = Modifier
             .align(Alignment.TopEnd)
             .padding(top = contentPadding.calculateTopPadding() + 22.dp, end = 12.dp)
@@ -122,6 +139,28 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
                 }) { Text(t("Удалить"), color = Palette.Lilac) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text(t("Отмена"), color = Palette.Mist) } },
+        )
+    }
+}
+
+/** Вкладка сверху: подпись капслоком и светящаяся черта под выбранной. */
+@Composable
+private fun PrismTabLabel(text: String, active: Boolean, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(text, style = MaterialTheme.typography.labelSmall, color = if (active) Palette.Ink else Palette.Mist)
+        Spacer(Modifier.height(4.dp))
+        Box(
+            Modifier
+                .width(if (active) 24.dp else 0.dp)
+                .height(2.dp)
+                .clip(CircleShape)
+                .background(Brush.horizontalGradient(listOf(Palette.Lilac, Palette.Sky))),
         )
     }
 }
@@ -211,12 +250,6 @@ private fun PrismPage(
                         .background(Brush.horizontalGradient(listOf(Palette.Lilac, Palette.Sky))),
                 )
             }
-            Text(
-                "PRISM",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.Ink,
-                modifier = Modifier.padding(top = 10.dp),
-            )
         }
 
         if (paused) {

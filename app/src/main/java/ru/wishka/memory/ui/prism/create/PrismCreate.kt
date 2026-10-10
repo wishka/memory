@@ -137,8 +137,10 @@ fun PrismCreateFlow(vm: AppViewModel, state: UiState) {
                 PublishPrism(
                     edit = current,
                     musicPath = current.musicTrackId?.let { id -> state.track(id)?.path },
+                    // Трек из медиатеки — с лицензией: автора и лицензию нужно указывать
                     musicTitle = current.musicTrackId?.let { id -> state.track(id) }?.let { tr ->
-                        if (tr.artist.isBlank()) tr.title else "${tr.artist} — ${tr.title}"
+                        val credit = if (tr.artist.isBlank()) tr.title else "${tr.artist} — ${tr.title}"
+                        if (tr.license.isBlank()) credit else "$credit · ${tr.license}"
                     } ?: "",
                     onBack = { stage = Stage.Editor },
                     onPublished = { video, cover, caption, music ->

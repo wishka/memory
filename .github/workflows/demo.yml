@@ -61,6 +61,7 @@ jobs:
       - name: Сборка
         env:
           DEV_KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+          JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
         run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
 
       - name: Выпуск «demo»

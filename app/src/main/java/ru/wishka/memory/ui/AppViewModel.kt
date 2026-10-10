@@ -20,6 +20,7 @@ import ru.wishka.memory.data.ReplyRef
 import ru.wishka.memory.data.Message
 import ru.wishka.memory.data.MusicTrack
 import ru.wishka.memory.data.Playlist
+import ru.wishka.memory.data.Sticker
 import ru.wishka.memory.data.Notifications
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.Privacy
@@ -37,6 +38,7 @@ enum class ProfileSection(private val ru: String) {
     Groups("Группы"),
     Saved("Сохранённое"),
     Music("Моя музыка"),
+    Stickers("Студия"),
     ;
 
     /** Название на выбранном языке. */
@@ -82,6 +84,12 @@ data class UiState(
     val privacy: Privacy = Privacy(),
     /** Чёрный список: их записи, комментарии и сообщения не видны. */
     val blocked: Set<Int> = emptySet(),
+    /** Комментарии, на которые пожаловались: у пожаловавшегося они скрыты. */
+    val reportedComments: Set<Long> = emptySet(),
+    /** Свои значки, смайлы и стикеры из «Студии» — новые первыми. */
+    val stickers: List<Sticker> = emptyList(),
+    /** Записи, закреплённые в профиле (витрина), — до трёх. */
+    val profilePins: List<Long> = emptyList(),
     /** «Моя музыка»: треки и плейлисты — только на этом телефоне. */
     val tracks: List<MusicTrack> = emptyList(),
     val playlists: List<Playlist> = emptyList(),
@@ -111,6 +119,8 @@ data class UiState(
     val openPersonId: Int? = null,
     /** Страница группы поверх вкладки «Группы»; null — список групп. */
     val openGroupId: Int? = null,
+    /** Настройки открытой группы — за шестерёнкой. */
+    val groupSettingsOpen: Boolean = false,
 ) {
     val openPerson: User? get() = openPersonId?.let { Demo.person(it) }
     val openGroup: Group? get() = groups.firstOrNull { it.id == openGroupId }
@@ -179,6 +189,7 @@ class AppViewModel(
                 tab = tab,
                 openChatId = if (tab == Tab.Chats) it.openChatId else null,
                 openGroupId = if (tab == Tab.Groups) it.openGroupId else null,
+                groupSettingsOpen = false,
                 openPersonId = null,
                 personSection = null,
                 returnToChatId = null,
@@ -249,6 +260,7 @@ class AppViewModel(
             s.openChatId != null -> { closeChat(); true }
             s.personSection != null && s.openPersonId != null -> { closePersonSection(); true }
             s.openPersonId != null -> { closePerson(); true }
+            s.groupSettingsOpen -> { closeGroupSettings(); true }
             s.openGroupId != null -> { closeGroup(); true }
             s.settingsPage != null -> { settingsBack(); true }
             s.profileSection != null -> { closeProfileSection(); true }
@@ -278,11 +290,11 @@ class AppViewModel(
     }
 
     /** Комментарий к записи в ленте или в группе. */
-    fun addComment(postId: Long, text: String) {
+    fun addComment(postId: Long, text: String, replyTo: String = "") {
         val trimmed = text.trim().take(1000)
         if (trimmed.isEmpty()) return
         _state.update { s ->
-            val comment = Comment(nextId++, s.me, trimmed, createdAt = clock())
+            val comment = Comment(nextId++, s.me, trimmed, createdAt = clock(), replyTo = replyTo)
             fun Post.withComment() = if (id == postId) copy(comments = comments + 1, commentList = commentList + comment) else this
             s.copy(
                 posts = s.posts.map { it.withComment() },
@@ -314,6 +326,14 @@ class AppViewModel(
                 groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.flip() }) },
             )
         }
+    }
+
+    /**
+     * Пожаловаться на чужой комментарий: он скрывается у вас. Когда
+     * появится сервер, жалоба уйдёт модераторам.
+     */
+    fun reportComment(commentId: Long) {
+        _state.update { it.copy(reportedComments = it.reportedComments + commentId) }
     }
 
     fun openComments(postId: Long) {
@@ -523,11 +543,11 @@ class AppViewModel(
         updatePrism(prismId) { it.copy(saved = !it.saved) }
     }
 
-    fun addPrismComment(prismId: Long, text: String) {
+    fun addPrismComment(prismId: Long, text: String, replyTo: String = "") {
         val trimmed = text.trim().take(1000)
         if (trimmed.isEmpty()) return
         val me = _state.value.me
-        val comment = Comment(nextId++, me, trimmed, createdAt = clock())
+        val comment = Comment(nextId++, me, trimmed, createdAt = clock(), replyTo = replyTo)
         updatePrism(prismId) { it.copy(comments = it.comments + 1, commentList = it.commentList + comment) }
     }
 
@@ -648,6 +668,39 @@ class AppViewModel(
         _state.update { s -> s.copy(playlists = s.playlists.map { if (it.id == playlistId) change(it) else it }) }
     }
 
+    // ==================== СТУДИЯ И ВИТРИНА ====================
+
+    /** Новый стикер — первым в «Студии». */
+    fun addSticker(sticker: Sticker) {
+        _state.update { it.copy(stickers = listOf(sticker) + it.stickers.filterNot { s -> s.id == sticker.id }) }
+    }
+
+    /** Убрать стикер из «Студии». Файл удаляет экран. */
+    fun deleteSticker(stickerId: String) {
+        _state.update { it.copy(stickers = it.stickers.filterNot { s -> s.id == stickerId }) }
+    }
+
+    /** Закрепить свою запись в витрине профиля (до трёх) или открепить. */
+    fun toggleProfilePin(postId: Long) {
+        _state.update { s ->
+            when {
+                postId in s.profilePins -> s.copy(profilePins = s.profilePins - postId)
+                s.posts.none { it.id == postId && it.author.id == s.me.id } -> s
+                else -> s.copy(profilePins = (listOf(postId) + s.profilePins).take(MAX_PINS))
+            }
+        }
+    }
+
+    /** Удалить свою запись из ленты. Файлы удаляет экран. */
+    fun deletePost(postId: Long) {
+        _state.update { s ->
+            s.copy(
+                posts = s.posts.filterNot { it.id == postId && it.author.id == s.me.id },
+                profilePins = s.profilePins - postId,
+            )
+        }
+    }
+
     // ==================== ГРУППЫ ====================
 
     /** Группа поверх вкладки; из раздела профиля «назад» вернёт в него. */
@@ -656,13 +709,68 @@ class AppViewModel(
             it.copy(
                 tab = if (it.tab == Tab.Profile && it.profileSection != null) it.tab else Tab.Groups,
                 openGroupId = groupId,
+                groupSettingsOpen = false,
                 openPersonId = null,
             )
         }
     }
 
     fun closeGroup() {
-        _state.update { it.copy(openGroupId = null) }
+        _state.update { it.copy(openGroupId = null, groupSettingsOpen = false) }
+    }
+
+    fun openGroupSettings() {
+        _state.update { it.copy(groupSettingsOpen = it.openGroupId != null) }
+    }
+
+    fun closeGroupSettings() {
+        _state.update { it.copy(groupSettingsOpen = false) }
+    }
+
+    /** Название, описание и тема своей группы. Ошибка — текст для экрана, null — сохранено. */
+    fun updateGroup(groupId: Int, name: String, description: String, topic: String): String? {
+        val title = name.trim()
+        if (title.length < 3) return t("Название — от 3 символов")
+        if (title.length > 40) return t("Название — не длиннее 40 символов")
+        if (_state.value.groups.any { it.id != groupId && it.name.equals(title, ignoreCase = true) }) return tf("Группа «%s» уже есть", title)
+        updateOwnGroup(groupId) { it.copy(name = title, description = description.trim().take(500), topic = topic.ifBlank { it.topic }) }
+        return null
+    }
+
+    /** Новая заставка группы (фото) или null — вернуть туманность. Старый файл удаляет экран. */
+    fun setGroupCover(groupId: Int, cover: Attachment?) {
+        updateOwnGroup(groupId) { it.copy(cover = cover) }
+    }
+
+    fun setGroupOnlyOwnerPosts(groupId: Int, only: Boolean) {
+        updateOwnGroup(groupId) { it.copy(onlyOwnerPosts = only) }
+    }
+
+    /** Закрепить запись в своей группе; та же запись ещё раз — открепить. */
+    fun togglePinGroupPost(groupId: Int, postId: Long) {
+        updateOwnGroup(groupId) { g ->
+            if (g.posts.none { it.id == postId }) g
+            else g.copy(pinnedPostId = if (g.pinnedPostId == postId) null else postId)
+        }
+    }
+
+    /** Удалить запись в группе: свою — всегда, любую — в своей группе. Файлы удаляет экран. */
+    fun deleteGroupPost(groupId: Int, postId: Long) {
+        val meId = _state.value.me.id
+        _state.update { s ->
+            s.copy(groups = s.groups.map { g ->
+                if (g.id != groupId) g
+                else {
+                    val post = g.posts.firstOrNull { it.id == postId }
+                    if (post == null || (post.author.id != meId && !g.mine)) g
+                    else g.copy(posts = g.posts - post, pinnedPostId = g.pinnedPostId.takeIf { it != postId })
+                }
+            })
+        }
+    }
+
+    private fun updateOwnGroup(groupId: Int, change: (Group) -> Group) {
+        _state.update { s -> s.copy(groups = s.groups.map { if (it.id == groupId && it.mine) change(it) else it }) }
     }
 
     /** Вступить или выйти. Из своей группы выйти нельзя — её можно только удалить. */
@@ -697,17 +805,22 @@ class AppViewModel(
     }
 
     fun deleteGroup(groupId: Int) {
-        _state.update { s -> s.copy(groups = s.groups.filterNot { it.id == groupId && it.mine }, openGroupId = null) }
+        _state.update { s ->
+            s.copy(groups = s.groups.filterNot { it.id == groupId && it.mine }, openGroupId = null, groupSettingsOpen = false)
+        }
     }
 
-    /** Запись в группе — только для участников. */
-    fun postInGroup(groupId: Int, text: String) {
+    /**
+     * Запись в группе — только для участников (а если так решил создатель —
+     * только для него): текст и вложения — фото, видео, документы, музыка.
+     */
+    fun postInGroup(groupId: Int, text: String, media: List<Attachment> = emptyList()) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty() && media.isEmpty()) return
         _state.update { s ->
             s.copy(groups = s.groups.map {
-                if (it.id != groupId || !it.joined) it
-                else it.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, createdAt = clock())) + it.posts)
+                if (it.id != groupId || !it.joined || (it.onlyOwnerPosts && !it.mine)) it
+                else it.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock())) + it.posts)
             })
         }
     }
@@ -798,7 +911,7 @@ class AppViewModel(
 
     /** То, что сохраняется на телефоне между запусками (см. StateStore). */
     fun snapshot(): Snapshot = _state.value.let {
-        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked, it.tracks, it.playlists)
+        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked, it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins)
     }
 
     /**
@@ -819,6 +932,9 @@ class AppViewModel(
                 blocked = snapshot.blocked - s.me.id,
                 tracks = snapshot.tracks,
                 playlists = snapshot.playlists,
+                reportedComments = snapshot.reportedComments,
+                stickers = snapshot.stickers,
+                profilePins = snapshot.profilePins,
             ).withMe(s.me)
         }
     }
@@ -828,6 +944,9 @@ class AppViewModel(
     companion object {
         /** Сколько фото и видео можно приложить к одной записи или сообщению. */
         const val MAX_MEDIA = 10
+
+        /** Сколько записей можно закрепить в витрине профиля. */
+        const val MAX_PINS = 3
     }
 }
 
@@ -858,6 +977,9 @@ data class Snapshot(
     val blocked: Set<Int> = emptySet(),
     val tracks: List<MusicTrack> = emptyList(),
     val playlists: List<Playlist> = emptyList(),
+    val reportedComments: Set<Long> = emptySet(),
+    val stickers: List<Sticker> = emptyList(),
+    val profilePins: List<Long> = emptyList(),
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

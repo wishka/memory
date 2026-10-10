@@ -91,7 +91,10 @@ private struct PublishPrism: View {
 
     private var musicTitle: String {
         guard let id = edit.musicTrackId, let track = model.state.track(id) else { return "" }
-        return track.artist.isEmpty ? track.title : "\(track.artist) — \(track.title)"
+        // Трек из медиатеки — с лицензией: автора и лицензию нужно указывать
+        let credit = track.artist.isEmpty ? track.title : "\(track.artist) — \(track.title)"
+        if let license = track.license, !license.isEmpty { return "\(credit) · \(license)" }
+        return credit
     }
 
     var body: some View {

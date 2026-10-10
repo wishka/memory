@@ -54,7 +54,15 @@ struct Attachment: Identifiable, Equatable, Codable, Hashable {
     /// Имя для документов: «Договор.pdf».
     var name: String = ""
     var size: Int64 = 0
+
+    /// Музыка — документ со звуком: в записи он играет прямо в карточке.
+    var isAudio: Bool {
+        kind == .document && audioExtensions.contains((fileName as NSString).pathExtension.lowercased())
+    }
 }
+
+/// Расширения звуковых файлов — для вложений-«музыки».
+let audioExtensions: Set<String> = ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "aiff", "caf"]
 
 /// Комментарий к записи или PRISM. createdAt — момент написания; nil —
 /// у демо-комментариев, тогда время из minutesAgo.
@@ -68,6 +76,8 @@ struct Comment: Identifiable, Equatable, Codable {
     /// читаются без них; снаружи — likes и liked.
     var likeCount: Int? = nil
     var likedByMe: Bool? = nil
+    /// Ответ кому-то в обсуждении: имя того, кому ответили; nil — просто комментарий.
+    var replyTo: String? = nil
 
     var likes: Int {
         get { likeCount ?? 0 }
@@ -192,10 +202,21 @@ struct MemoryGroup: Identifiable, Equatable, Codable {
     var posts: [Post] = []
     /// Уведомления группы выключены; необязательное — для старых сохранений.
     var mutedFlag: Bool? = nil
+    /// Своя заставка — фото; nil — туманность по seed.
+    var cover: Attachment? = nil
+    /// Закреплённая запись — первой на странице группы.
+    var pinnedPostId: Int64? = nil
+    /// Писать в группу может только создатель; необязательное — для старых сохранений.
+    var onlyOwnerPostsFlag: Bool? = nil
 
     var muted: Bool {
         get { mutedFlag ?? false }
         set { mutedFlag = newValue }
+    }
+
+    var onlyOwnerPosts: Bool {
+        get { onlyOwnerPostsFlag ?? false }
+        set { onlyOwnerPostsFlag = newValue }
     }
 }
 
@@ -247,6 +268,10 @@ struct MusicTrack: Identifiable, Equatable, Codable, Hashable {
     var fileName: String
     var durationMs: Int64 = 0
     var addedAt: Date? = nil
+    /// Лицензия трека из медиатеки («CC BY 4.0»); nil — свой файл.
+    var license: String? = nil
+    /// Страница трека на Jamendo или Openverse — для указания автора.
+    var sourceUrl: String? = nil
 
     var url: URL { MediaFiles.directory.appendingPathComponent(fileName) }
 }

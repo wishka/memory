@@ -1,6 +1,14 @@
 package ru.wishka.memory.ui.components
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.platform.LocalContext
 import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +37,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -46,7 +55,8 @@ import ru.wishka.memory.ui.theme.Palette
 /**
  * Обсуждение записи или PRISM — шторка снизу: комментарии и поле ввода.
  * total — сколько всего комментариев (у демо-записей видна только часть).
- * Свой комментарий удаляется значком корзины рядом с ним.
+ * Долгое нажатие на комментарий — меню: ответить, скопировать,
+ * «нравится», страница автора, пожаловаться (на чужой) или удалить (свой).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,14 +64,18 @@ fun CommentsSheet(
     total: Int,
     comments: List<Comment>,
     myId: Int,
-    onSend: (String) -> Unit,
+    onSend: (text: String, replyTo: String) -> Unit,
     onDelete: (Long) -> Unit,
+    onReport: (Long) -> Unit,
     onLike: (Long) -> Unit,
     onAuthor: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
+    // Кому отвечаем: имя автора комментария; "" — просто комментарий
+    var replyTo by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
     LaunchedEffect(comments.size) { if (comments.isNotEmpty()) list.animateScrollToItem(comments.lastIndex) }
 
@@ -96,6 +110,16 @@ fun CommentsSheet(
                     CommentRow(
                         c,
                         mine = c.author.id == myId,
+                        onReply = { replyTo = c.author.name },
+                        onCopy = {
+                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                                .setPrimaryClip(ClipData.newPlainText("comment", c.text))
+                            Toast.makeText(context, t("Скопировано"), Toast.LENGTH_SHORT).show()
+                        },
+                        onReport = {
+                            onReport(c.id)
+                            Toast.makeText(context, t("Жалоба отправлена. Комментарий скрыт."), Toast.LENGTH_SHORT).show()
+                        },
                         onDelete = { onDelete(c.id) },
                         onLike = { onLike(c.id) },
                         onAuthor = { onAuthor(c.author.id) },
@@ -103,6 +127,20 @@ fun CommentsSheet(
                 }
             }
             FadeLine()
+            if (replyTo.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Glyph(LineIcon.Reply, Palette.Lilac, size = 16.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(tf("Ответ для %s", replyTo), style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, modifier = Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier.size(32.dp).clip(CircleShape).clickable { replyTo = "" },
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(LineIcon.Close, Palette.Mist, size = 16.dp) }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                 verticalAlignment = Alignment.Bottom,
@@ -122,8 +160,9 @@ fun CommentsSheet(
                             else Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean))
                         )
                         .clickable(enabled = text.isNotBlank()) {
-                            onSend(text)
+                            onSend(text, replyTo)
                             text = ""
+                            replyTo = ""
                         },
                     contentAlignment = Alignment.Center,
                 ) { Glyph(LineIcon.Send, if (text.isBlank()) Palette.Mist else Palette.Ink) }
@@ -132,28 +171,54 @@ fun CommentsSheet(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CommentRow(comment: Comment, mine: Boolean, onDelete: () -> Unit, onLike: () -> Unit, onAuthor: () -> Unit) {
+private fun CommentRow(
+    comment: Comment,
+    mine: Boolean,
+    onReply: () -> Unit,
+    onCopy: () -> Unit,
+    onReport: () -> Unit,
+    onDelete: () -> Unit,
+    onLike: () -> Unit,
+    onAuthor: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.Top) {
         Box(Modifier.clip(CircleShape).clickable(onClick = onAuthor)) { Avatar(comment.author, size = 34.dp) }
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(comment.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    agoTitle(minutesSince(comment.createdAt, comment.minutesAgo)),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Palette.Mist,
-                )
+        Box(Modifier.weight(1f)) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .combinedClickable(onClick = {}, onDoubleClick = onLike, onLongClick = { menu = true }),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(comment.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        agoTitle(minutesSince(comment.createdAt, comment.minutesAgo)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Palette.Mist,
+                    )
+                }
+                if (comment.replyTo.isNotEmpty()) {
+                    Text(tf("ответ для %s", comment.replyTo), style = MaterialTheme.typography.labelMedium, color = Palette.Lilac)
+                }
+                Text(comment.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
             }
-            Text(comment.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
-        }
-        if (mine) {
-            Box(
-                modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onDelete),
-                contentAlignment = Alignment.Center,
-            ) { Glyph(LineIcon.Trash, Palette.Mist, size = 18.dp) }
+            MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
+                MenuRow(LineIcon.Reply, t("Ответить")) { menu = false; onReply() }
+                MenuRow(LineIcon.Copy, t("Скопировать")) { menu = false; onCopy() }
+                MenuRow(if (comment.liked) LineIcon.HeartFilled else LineIcon.Heart, if (comment.liked) t("Убрать «нравится»") else t("Нравится")) { menu = false; onLike() }
+                MenuRow(LineIcon.Profile, t("Страница автора")) { menu = false; onAuthor() }
+                if (mine) {
+                    MenuRow(LineIcon.Trash, t("Удалить"), color = Palette.PearlPink) { menu = false; onDelete() }
+                } else {
+                    MenuRow(LineIcon.Flag, t("Пожаловаться"), color = Palette.PearlPink) { menu = false; onReport() }
+                }
+            }
         }
         // «Нравится» комментарию: сердце и число под ним
         Column(

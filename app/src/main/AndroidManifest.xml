@@ -3,6 +3,8 @@
 
     <!-- Камера PRISM: видео и звук. Без камеры приложение тоже ставится —
          ролик можно выбрать из галереи. -->
+    <!-- Медиатека PRISM: поиск и прослушивание музыки Jamendo и Openverse -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
