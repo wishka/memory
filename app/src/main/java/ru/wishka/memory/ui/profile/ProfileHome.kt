@@ -1,6 +1,5 @@
 package ru.wishka.memory.ui.profile
 
-import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,8 +35,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -236,7 +235,8 @@ private fun PinnedTile(post: Post, modifier: Modifier, onClick: () -> Unit) {
 /** Активность за две недели и кристаллы-достижения. */
 @Composable
 fun AchievementsCard(state: UiState) {
-    val context = LocalContext.current
+    // Подсказка к выбранному кристаллу — в карточке, в стиле приложения
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
     val list = achievements(state)
     val days = activity(state)
     val myId = state.me.id
@@ -267,9 +267,8 @@ fun AchievementsCard(state: UiState) {
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    Toast.makeText(context, (if (a.earned) "✦ " else "") + a.hint, Toast.LENGTH_SHORT).show()
-                                }
+                                .background(if (selected == a.title) Palette.Plum.copy(alpha = 0.7f) else Color.Transparent)
+                                .clickable { selected = if (selected == a.title) null else a.title }
                                 .padding(vertical = 4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
@@ -285,6 +284,26 @@ fun AchievementsCard(state: UiState) {
                         }
                     }
                     repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+            list.firstOrNull { it.title == selected }?.let { a ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glass(RoundedCornerShape(16.dp), strong = a.earned)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AchievementCrystal(a.earned, Modifier.size(22.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(a.title, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+                        Text(
+                            if (a.earned) tf("Получено: %s", a.hint) else tf("Чтобы получить: %s", a.hint),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (a.earned) Palette.Lilac else Palette.Mist,
+                        )
+                    }
                 }
             }
         }

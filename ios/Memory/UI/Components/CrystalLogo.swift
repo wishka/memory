@@ -1,171 +1,136 @@
 import SwiftUI
-import UIKit
 
-/// Знак Memory в шапке ленты: вытянутый кристалл, как во вкладке PRISM, —
-/// с гранями и ребром, а внутри — кристальное стекло, как у слова MEMORY
-/// на заставке: перламутр, светлые и тёмные грани, кант, контур и блики.
-/// По стеклу время от времени пробегает блик. Те же правила — в
-/// CrystalLogo.kt на Android.
+/// Знак Memory в шапке ленты: вытянутый кристалл (две четырёхгранные
+/// пирамиды, как в PRISM), который медленно вращается вокруг своей оси
+/// по часовой стрелке, если смотреть сверху. Грани — перламутровое
+/// стекло, как у слова MEMORY на заставке: свет падает слева сверху,
+/// повёрнутые к нему грани светлеют, остальные уходят в тень; рёбра и
+/// контур — белые, по стеклу пробегает блик. Те же правила — в
+/// CrystalLogo.kt на Android; тот же кристалл — на значке приложения.
 enum CrystalMark {
-    /// Перламутр — те же цвета, что у слова MEMORY.
-    private static let iridescent: [UInt32] = [0xFF9EDE, 0xC6A2FF, 0x8CC4FF, 0xFFF4FF, 0xFFDB8F, 0xD08CFF, 0x7AA8FF]
-
-    // Вершины в долях стороны: верх, право, низ, лево и точка ребра на «экваторе»
     static let topY: CGFloat = 0.04
     static let bottomY: CGFloat = 0.96
     static let midY: CGFloat = 0.5
     static let halfW: CGFloat = 0.2
-    static let ridgeX: CGFloat = 0.545
+    /// Один оборот, с.
+    static let turn: Double = 9
 
-    static func outline(_ s: CGFloat) -> UIBezierPath {
-        let p = UIBezierPath()
-        p.move(to: CGPoint(x: s * 0.5, y: s * topY))
-        p.addLine(to: CGPoint(x: s * (0.5 + halfW), y: s * midY))
-        p.addLine(to: CGPoint(x: s * 0.5, y: s * bottomY))
-        p.addLine(to: CGPoint(x: s * (0.5 - halfW), y: s * midY))
-        p.close()
-        return p
-    }
+    /// Перламутр — те же цвета, что у слова MEMORY.
+    static let iridescent: [Color] = ([0xFF9EDE, 0xC6A2FF, 0x8CC4FF, 0xFFF4FF, 0xFFDB8F, 0xD08CFF, 0x7AA8FF] as [UInt32]).map { RGB($0).color }
 
-    private static func tri(_ s: CGFloat, _ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> UIBezierPath {
-        let p = UIBezierPath()
-        p.move(to: CGPoint(x: s * a.x, y: s * a.y))
-        p.addLine(to: CGPoint(x: s * b.x, y: s * b.y))
-        p.addLine(to: CGPoint(x: s * c.x, y: s * c.y))
-        p.close()
-        return p
-    }
+    /// Куда светит свет: слева сверху и спереди.
+    private static let light: (Double, Double, Double) = {
+        let v = (-0.45, -0.55, 0.70)
+        let n = (v.0 * v.0 + v.1 * v.1 + v.2 * v.2).squareRoot()
+        return (v.0 / n, v.1 / n, v.2 / n)
+    }()
 
-    static func render(side s: CGFloat, scale: CGFloat) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        format.opaque = false
-        return UIGraphicsImageRenderer(size: CGSize(width: s, height: s), format: format).image { context in
-            let ctx = context.cgContext
-            let path = outline(s)
+    /// Нарисовать кристалл, повёрнутый на angle (радианы) вокруг вертикали.
+    /// По часовой сверху — угол убывает. sweep — положение блика 0…1 или вне.
+    static func draw(_ ctx: GraphicsContext, side s: CGFloat, angle: Double, sweep: Double) {
+        let cx = s * 0.5
+        let cy = s * midY
+        let half = s * (bottomY - topY) / 2
+        let r = Double(s * halfW)
+        // Экватор: четыре вершины квадратного сечения; z — к зрителю
+        let eq: [(Double, Double, Double)] = (0..<4).map { k in
+            let phi = angle + Double(k) * .pi / 2
+            return (r * sin(phi), 0, r * cos(phi))
+        }
+        let top = (0.0, -Double(half), 0.0)
+        let bottom = (0.0, Double(half), 0.0)
+        func screen(_ p: (Double, Double, Double)) -> CGPoint { CGPoint(x: cx + p.0, y: cy + p.1) }
 
-            // 1. Ореол: свет, рассеянный стеклом
-            ctx.saveGState()
-            ctx.setShadow(offset: .zero, blur: s * 0.12, color: UIColor(rgb: 0xC49BFF).withAlphaComponent(0.63).cgColor)
-            UIColor(rgb: 0xC49BFF).withAlphaComponent(0.5).setFill()
-            path.fill()
-            ctx.restoreGState()
+        // Ореол за стеклом
+        ctx.fill(
+            Path(ellipseIn: CGRect(x: 0, y: 0, width: s, height: s)),
+            with: .radialGradient(Gradient(colors: [RGB(0xC49BFF).color.opacity(0.4), .clear]), center: CGPoint(x: cx, y: cy), startRadius: 0, endRadius: s * 0.5)
+        )
 
-            ctx.saveGState()
-            path.addClip()
-            // 2. Тело — перламутр по диагонали
-            let colors = iridescent.map { UIColor(rgb: $0).cgColor } as CFArray
-            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: nil) {
-                ctx.drawLinearGradient(gradient, start: CGPoint(x: s * 0.3, y: 0), end: CGPoint(x: s * 0.7, y: s), options: [])
+        let body = GraphicsContext.Shading.linearGradient(
+            Gradient(colors: iridescent + iridescent.reversed()),
+            startPoint: CGPoint(x: s * 0.2, y: 0), endPoint: CGPoint(x: s * 0.8, y: s)
+        )
+        var silhouette = Path()
+        let edge = StrokeStyle(lineWidth: s * 0.012 + 0.6, lineJoin: .round)
+        for k in 0..<4 {
+            let a = eq[k]
+            let b = eq[(k + 1) % 4]
+            for apex in [top, bottom] {
+                // Нормаль грани наружу; видна — если смотрит на зрителя
+                let u = (a.0 - apex.0, a.1 - apex.1, a.2 - apex.2)
+                let v = (b.0 - apex.0, b.1 - apex.1, b.2 - apex.2)
+                var n = (u.1 * v.2 - u.2 * v.1, u.2 * v.0 - u.0 * v.2, u.0 * v.1 - u.1 * v.0)
+                let c = ((a.0 + b.0 + apex.0) / 3, (a.1 + b.1 + apex.1) / 3, (a.2 + b.2 + apex.2) / 3)
+                if n.0 * c.0 + n.1 * c.1 + n.2 * c.2 < 0 { n = (-n.0, -n.1, -n.2) }
+                guard n.2 > 0 else { continue }
+                let len = (n.0 * n.0 + n.1 * n.1 + n.2 * n.2).squareRoot()
+                let lit = (n.0 * light.0 + n.1 * light.1 + n.2 * light.2) / len
+                var face = Path()
+                face.move(to: screen(apex))
+                face.addLine(to: screen(a))
+                face.addLine(to: screen(b))
+                face.closeSubpath()
+                silhouette.addPath(face)
+                ctx.fill(face, with: body)
+                // Свет и тень грани
+                if lit > 0.55 {
+                    ctx.fill(face, with: .color(.white.opacity(min(0.5, (lit - 0.55) * 1.1))))
+                } else {
+                    ctx.fill(face, with: .color(RGB(0x4A2F9A).color.opacity(min(0.45, (0.55 - lit) * 0.75))))
+                }
+                ctx.stroke(face, with: .color(.white.opacity(0.75)), style: edge)
             }
-            // 3. Грани: четыре плоскости кристалла — светлые и в тени
-            let top = CGPoint(x: 0.5, y: topY)
-            let bottom = CGPoint(x: 0.5, y: bottomY)
-            let left = CGPoint(x: 0.5 - halfW, y: midY)
-            let right = CGPoint(x: 0.5 + halfW, y: midY)
-            let ridge = CGPoint(x: ridgeX, y: midY)
-            UIColor.white.withAlphaComponent(0.33).setFill()
-            tri(s, top, left, ridge).fill()
-            UIColor(rgb: 0x4A2F9A).withAlphaComponent(0.23).setFill()
-            tri(s, top, ridge, right).fill()
-            tri(s, left, bottom, ridge).fill()
-            UIColor.white.withAlphaComponent(0.19).setFill()
-            tri(s, ridge, bottom, right).fill()
-            // Косые сколы, как у слова MEMORY (свой генератор — тот же рисунок при каждом запуске)
-            var seed: UInt64 = 11
-            func next() -> CGFloat {
-                seed = seed &* 6364136223846793005 &+ 1442695040888963407
-                return CGFloat(seed >> 33) / CGFloat(UInt64(1) << 31)
-            }
-            var fx = -s * 0.2
-            var lit = true
-            while fx < s {
-                let w = s * (0.02 + next() * 0.05)
-                (lit ? UIColor.white.withAlphaComponent(0.2) : UIColor(rgb: 0x4A2F9A).withAlphaComponent(0.13)).setFill()
-                let band = UIBezierPath()
-                band.move(to: CGPoint(x: fx, y: 0))
-                band.addLine(to: CGPoint(x: fx + w, y: 0))
-                band.addLine(to: CGPoint(x: fx + w + s * 0.3, y: s))
-                band.addLine(to: CGPoint(x: fx + s * 0.3, y: s))
-                band.close()
-                band.fill()
-                fx += w + s * (0.02 + next() * 0.06)
-                lit.toggle()
-            }
-            // 4. Внутренний кант: светлая кромка и тень за ней
-            UIColor.white.withAlphaComponent(0.25).setStroke()
-            path.lineWidth = s * 0.05
-            path.stroke()
-            UIColor(rgb: 0x8A6FD8).withAlphaComponent(0.4).setStroke()
-            path.lineWidth = s * 0.02
-            path.stroke()
-            ctx.restoreGState()
-
-            // 5. Рёбра: «экватор» и переднее ребро — как у кристалла в PRISM
-            let edges = UIBezierPath()
-            edges.move(to: CGPoint(x: s * left.x, y: s * midY))
-            edges.addLine(to: CGPoint(x: s * right.x, y: s * midY))
-            edges.move(to: CGPoint(x: s * 0.5, y: s * topY))
-            edges.addLine(to: CGPoint(x: s * ridgeX, y: s * midY))
-            edges.addLine(to: CGPoint(x: s * 0.5, y: s * bottomY))
-            edges.lineWidth = s * 0.012 + 0.6
-            edges.lineCapStyle = .round
-            edges.lineJoinStyle = .round
-            UIColor.white.withAlphaComponent(0.8).setStroke()
-            edges.stroke()
-            // 6. Контур стекла
-            path.lineWidth = s * 0.016 + 0.8
-            path.lineJoinStyle = .round
-            UIColor.white.setStroke()
-            path.stroke()
-            // 7. Блики-звёздочки
-            for (sx, sy, r) in [(0.44, 0.30, 0.05), (0.58, 0.68, 0.035)] as [(CGFloat, CGFloat, CGFloat)] {
-                let star = UIBezierPath()
-                star.move(to: CGPoint(x: s * (sx - r), y: s * sy))
-                star.addLine(to: CGPoint(x: s * (sx + r), y: s * sy))
-                star.move(to: CGPoint(x: s * sx, y: s * (sy - r)))
-                star.addLine(to: CGPoint(x: s * sx, y: s * (sy + r)))
-                star.lineWidth = s * 0.012 + 0.5
-                star.lineCapStyle = .round
-                star.stroke()
-            }
+        }
+        // Блик по стеклу
+        if (0...1.2).contains(sweep) {
+            var clipped = ctx
+            clipped.clip(to: silhouette)
+            let y = s * sweep
+            clipped.fill(
+                Path(CGRect(x: 0, y: 0, width: s, height: s)),
+                with: .linearGradient(
+                    Gradient(colors: [.clear, .white.opacity(0.55), .clear]),
+                    startPoint: CGPoint(x: 0, y: y - s * 0.18), endPoint: CGPoint(x: s * 0.3, y: y + s * 0.18)
+                )
+            )
+        }
+        // Контур — по крайним вершинам экватора
+        if let left = eq.min(by: { $0.0 < $1.0 }), let right = eq.max(by: { $0.0 < $1.0 }) {
+            var outline = Path()
+            outline.move(to: screen(top))
+            outline.addLine(to: screen(right))
+            outline.addLine(to: screen(bottom))
+            outline.addLine(to: screen(left))
+            outline.closeSubpath()
+            ctx.stroke(outline, with: .color(.white), style: StrokeStyle(lineWidth: s * 0.018 + 0.8, lineJoin: .round))
+        }
+        // Блики-звёздочки — мерцают, пока кристалл поворачивается
+        let twinkle = 0.5 + 0.5 * sin(angle * 2)
+        for (sx, sy, rad) in [(0.44, 0.30, 0.05), (0.57, 0.68, 0.035)] as [(CGFloat, CGFloat, CGFloat)] {
+            let rr = s * rad * (0.6 + 0.4 * twinkle)
+            let c = CGPoint(x: s * sx, y: s * sy)
+            var star = Path()
+            star.move(to: CGPoint(x: c.x - rr, y: c.y)); star.addLine(to: CGPoint(x: c.x + rr, y: c.y))
+            star.move(to: CGPoint(x: c.x, y: c.y - rr)); star.addLine(to: CGPoint(x: c.x, y: c.y + rr))
+            ctx.stroke(star, with: .color(.white), style: StrokeStyle(lineWidth: s * 0.012 + 0.5, lineCap: .round))
         }
     }
 }
 
-/// Кристалл в шапке ленты с пробегающим бликом.
+/// Кристалл в шапке ленты: вращается по часовой стрелке (вид сверху), по стеклу пробегает блик.
 struct CrystalLogo: View {
     var size: CGFloat = 56
-    @Environment(\.displayScale) private var displayScale
-    @State private var image: UIImage?
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
-            // Блик проходит сверху вниз за 3,6 с, потом пауза
-            let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3.6) / 3.6 * 2.4 - 0.6
-            ZStack {
-                if let image { Image(uiImage: image).resizable() }
-                if (0...1.2).contains(t) {
-                    Canvas { ctx, sz in
-                        let s = sz.width
-                        ctx.clip(to: Path(CrystalMark.outline(s).cgPath))
-                        let y = s * t
-                        ctx.fill(
-                            Path(CGRect(origin: .zero, size: sz)),
-                            with: .linearGradient(
-                                Gradient(colors: [.clear, .white.opacity(0.55), .clear]),
-                                startPoint: CGPoint(x: 0, y: y - s * 0.18),
-                                endPoint: CGPoint(x: s * 0.3, y: y + s * 0.18)
-                            )
-                        )
-                    }
-                }
+            let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: CrystalMark.turn) / CrystalMark.turn
+            Canvas { ctx, sz in
+                // По часовой сверху: угол убывает; блик — в начале каждого оборота
+                CrystalMark.draw(ctx, side: sz.width, angle: -t * 2 * .pi + 0.35, sweep: t * 2.4 - 0.6)
             }
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
-        .onAppear {
-            if image == nil { image = CrystalMark.render(side: size, scale: displayScale) }
-        }
     }
 }

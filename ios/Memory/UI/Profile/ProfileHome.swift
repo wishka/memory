@@ -176,7 +176,8 @@ private struct PinnedTile: View {
 /// Активность за две недели и кристаллы-достижения.
 struct AchievementsCard: View {
     let state: UiState
-    @State private var hint: String?
+    /// Выбранный кристалл — подсказка к нему в карточке, в стиле приложения.
+    @State private var selected: String?
 
     var body: some View {
         let list = state.achievements
@@ -205,7 +206,7 @@ struct AchievementsCard: View {
                     .textStyle(.bodySmall, Palette.mist)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 8) {
                     ForEach(list) { a in
-                        Button { withAnimation { hint = (a.earned ? "✦ " : "") + a.hint } } label: {
+                        Button { withAnimation { selected = selected == a.title ? nil : a.title } } label: {
                             VStack(spacing: 4) {
                                 AchievementCrystal(earned: a.earned).frame(width: 36, height: 36)
                                 Text(a.title)
@@ -213,12 +214,31 @@ struct AchievementsCard: View {
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
                             }
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(selected == a.title ? Palette.plum.opacity(0.7) : .clear)
+                            )
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                if let hint {
-                    Text(hint).textStyle(.bodySmall, Palette.lilac).transition(.opacity)
+                if let a = list.first(where: { $0.title == selected }) {
+                    HStack(spacing: 10) {
+                        AchievementCrystal(earned: a.earned).frame(width: 22, height: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(a.title).textStyle(.title)
+                            Text(a.earned ? tf("Получено: %s", a.hint) : tf("Чтобы получить: %s", a.hint))
+                                .textStyle(.bodySmall, a.earned ? Palette.lilac : Palette.mist)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .glass(RoundedRectangle(cornerRadius: 16, style: .continuous), strong: a.earned)
+                    .transition(.opacity)
                 }
             }
             .padding(16)
