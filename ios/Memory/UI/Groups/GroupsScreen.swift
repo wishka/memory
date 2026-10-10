@@ -85,7 +85,7 @@ private struct GroupRow: View {
             HStack(spacing: 12) {
                 Button(action: onOpen) {
                     HStack(spacing: 12) {
-                        Nebula(seed: group.seed)
+                        GroupCover(group: group, maxPixel: 240)
                             .frame(width: 56, height: 56)
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         VStack(alignment: .leading, spacing: 2) {

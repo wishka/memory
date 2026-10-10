@@ -8,12 +8,19 @@ struct PrismScreen: View {
     let model: AppModel
     @State private var current: Int64?
     @State private var confirmDelete: Prism?
+    /// Вкладки сверху: ролики или медиатека.
+    @State private var library = false
 
     var body: some View {
         let state = model.state
         // Ролики тех, кто в чёрном списке, не показываются
         let prisms = state.prisms.filter { !state.isBlocked($0.author.id) }
         GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+            if library {
+                MediaLibraryScreen(model: model, safeTop: geo.safeAreaInsets.top)
+                    .ignoresSafeArea(edges: .top)
+            } else {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     ForEach(prisms) { prism in
@@ -49,6 +56,16 @@ struct PrismScreen: View {
                     .padding(.top, geo.safeAreaInsets.top + 8)
                     .padding(.trailing, 12)
             }
+            }
+            // «PRISM · МЕДИАТЕКА» — вкладки поверх роликов
+            HStack(spacing: 4) {
+                tabLabel("PRISM", active: !library) { library = false }
+                tabLabel(t("Медиатека").uppercased(), active: library) { library = true }
+            }
+            .padding(.top, geo.safeAreaInsets.top + 12)
+            .padding(.leading, 8)
+            }
+            .ignoresSafeArea(edges: .top)
         }
         .glassActions(
             item: $confirmDelete,
@@ -62,6 +79,23 @@ struct PrismScreen: View {
                 if let cover = prism.cover { MediaFiles.delete(cover) }
             }]
         }
+    }
+
+    /// Вкладка сверху: подпись капслоком и светящаяся черта под выбранной.
+    private func tabLabel(_ text: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Text(text).textStyle(.label, active ? Palette.ink : Palette.mist)
+                Capsule()
+                    .fill(LinearGradient(colors: [Palette.lilac, Palette.sky], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: active ? 24 : 0, height: 2)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.2), value: active)
     }
 
     private func jumpToStart() {
@@ -127,7 +161,8 @@ private struct PrismPage: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     progress(prism.video != nil ? videoProgress * prism.durationMs : ms)
-                    Text("PRISM").textStyle(.label)
+                    // Место под вкладки «PRISM · МЕДИАТЕКА» (они — поверх, в PrismScreen)
+                    Color.clear.frame(height: 18)
                     Spacer()
                     HStack(alignment: .bottom, spacing: 12) {
                         details

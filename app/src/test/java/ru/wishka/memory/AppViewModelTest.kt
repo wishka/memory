@@ -16,6 +16,11 @@ import ru.wishka.memory.data.Audience
 import ru.wishka.memory.data.Aspect
 import ru.wishka.memory.data.ColorMatrix
 import ru.wishka.memory.data.MusicTrack
+import ru.wishka.memory.data.MusicCatalog
+import ru.wishka.memory.data.Sticker
+import ru.wishka.memory.data.StickerKind
+import ru.wishka.memory.ui.profile.achievements
+import ru.wishka.memory.ui.profile.activity
 import ru.wishka.memory.data.VideoEdit
 import ru.wishka.memory.data.VideoFilter
 import ru.wishka.memory.data.Notifications
@@ -612,5 +617,96 @@ class AppViewModelTest {
         assertEquals(0.1f, gl[12], 1e-6f)
         assertEquals(0.3f, gl[14], 1e-6f)
         assertEquals(1f, gl[15], 1e-6f)
+    }
+
+    @Test
+    fun commentReplyAndReport() {
+        val vm = AppViewModel()
+        val post = vm.state.value.posts.first { it.commentList.isNotEmpty() }
+        val other = post.commentList.first { it.author.id != vm.state.value.me.id }
+        vm.addComment(post.id, "Согласна!", replyTo = other.author.name)
+        val mine = vm.state.value.findPost(post.id)!!.commentList.last()
+        assertEquals(other.author.name, mine.replyTo)
+        vm.reportComment(other.id)
+        assertTrue(other.id in vm.state.value.reportedComments)
+        // Жалобы переживают сохранение
+        val restored = AppViewModel()
+        restored.restore(vm.snapshot())
+        assertTrue(other.id in restored.state.value.reportedComments)
+    }
+
+    @Test
+    fun groupSettingsPinAndPosts() {
+        val vm = AppViewModel()
+        assertNull(vm.createGroup("Кофе и звёзды", "Ночные разговоры", "Природа"))
+        val id = vm.state.value.openGroupId!!
+        vm.openGroupSettings()
+        assertTrue(vm.state.value.groupSettingsOpen)
+        assertEquals("Название — от 3 символов", vm.updateGroup(id, "ab", "", "Фото"))
+        assertNull(vm.updateGroup(id, "  Кофе ночью ", "Новое описание", "Фото"))
+        val g = vm.state.value.groups.first { it.id == id }
+        assertEquals("Кофе ночью", g.name)
+        assertEquals("Фото", g.topic)
+        // Запись с музыкой и закрепление
+        val song = Attachment("s", MediaKind.Document, "/tmp/song.mp3", "Луна.mp3")
+        assertTrue(song.isAudio)
+        vm.postInGroup(id, "", listOf(song))
+        val post = vm.state.value.groups.first { it.id == id }.posts.first()
+        assertEquals(listOf(song), post.media)
+        vm.togglePinGroupPost(id, post.id)
+        assertEquals(post.id, vm.state.value.groups.first { it.id == id }.pinnedPostId)
+        vm.togglePinGroupPost(id, post.id)
+        assertNull(vm.state.value.groups.first { it.id == id }.pinnedPostId)
+        // «Только я»: создатель пишет, участники — нет
+        vm.setGroupOnlyOwnerPosts(id, true)
+        vm.postInGroup(id, "Только для меня")
+        assertEquals(2, vm.state.value.groups.first { it.id == id }.posts.size)
+        vm.deleteGroupPost(id, post.id)
+        assertEquals(1, vm.state.value.groups.first { it.id == id }.posts.size)
+        // Чужую группу нельзя править
+        val foreign = vm.state.value.groups.first { !it.mine }
+        vm.updateGroup(foreign.id, "Чужое имя", "", "")
+        assertEquals(foreign.name, vm.state.value.groups.first { it.id == foreign.id }.name)
+        vm.back()
+        assertFalse(vm.state.value.groupSettingsOpen)
+    }
+
+    @Test
+    fun stickersPinsAndAchievements() {
+        val vm = AppViewModel()
+        assertFalse(achievements(vm.state.value).first { it.title == "Художник" }.earned)
+        vm.addSticker(Sticker("a", "/tmp/a.png", StickerKind.Smiley, 1))
+        vm.addSticker(Sticker("b", "/tmp/b.png", StickerKind.Badge, 2))
+        assertEquals(listOf("b", "a"), vm.state.value.stickers.map { it.id })
+        assertTrue(achievements(vm.state.value).first { it.title == "Художник" }.earned)
+        vm.deleteSticker("a")
+        assertEquals(listOf("b"), vm.state.value.stickers.map { it.id })
+        // Витрина — только свои записи, до трёх
+        repeat(4) { vm.publish("Момент $it") }
+        val mine = vm.state.value.myPosts
+        mine.forEach { vm.toggleProfilePin(it.id) }
+        assertEquals(AppViewModel.MAX_PINS, vm.state.value.profilePins.size)
+        val foreign = vm.state.value.posts.first { it.author.id != vm.state.value.me.id }
+        vm.toggleProfilePin(foreign.id)
+        assertFalse(foreign.id in vm.state.value.profilePins)
+        vm.deletePost(mine.last().id)
+        assertFalse(mine.last().id in vm.state.value.profilePins)
+        // Сегодняшние записи — в последнем столбике активности
+        assertEquals(14, activity(vm.state.value).size)
+        assertTrue(activity(vm.state.value).last() >= 3)
+        val restored = AppViewModel()
+        restored.restore(vm.snapshot())
+        assertEquals(listOf("b"), restored.state.value.stickers.map { it.id })
+        assertEquals(vm.state.value.profilePins, restored.state.value.profilePins)
+    }
+
+    @Test
+    fun catalogLicenses() {
+        assertEquals("CC BY-NC-SA 3.0", MusicCatalog.licenseFromUrl("http://creativecommons.org/licenses/by-nc-sa/3.0/"))
+        assertEquals("CC BY 4.0", MusicCatalog.licenseFromUrl("https://creativecommons.org/licenses/by/4.0/"))
+        assertEquals("CC0", MusicCatalog.licenseFromUrl("https://creativecommons.org/publicdomain/zero/1.0/"))
+        assertEquals("CC0", MusicCatalog.licenseLabel("cc0", "1.0"))
+        assertEquals("CC BY 4.0", MusicCatalog.licenseLabel("by", "4.0"))
+        assertEquals("", MusicCatalog.licenseLabel("", ""))
     }
 }

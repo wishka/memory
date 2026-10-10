@@ -191,6 +191,7 @@ fun ProfileScreen(
         }
 
         if (!editing) {
+            item { ShowcaseCard(vm, state) }
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -208,6 +209,9 @@ fun ProfileScreen(
                     }
                 }
             }
+            item { AchievementsCard(state) }
+            item { ProfileContentTabs(vm, state) }
+            item { PeopleRows(vm, state) }
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column {
@@ -220,6 +224,12 @@ fun ProfileScreen(
                         Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Music) }) {
                             SettingRow(LineIcon.Music, t("Моя музыка")) {
                                 Text("${state.tracks.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                            }
+                        }
+                        FadeLine(Modifier.padding(horizontal = 16.dp))
+                        Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Stickers) }) {
+                            SettingRow(LineIcon.Sticker, t("Студия: значки и стикеры")) {
+                                Text("${state.stickers.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
                             }
                         }
                     }

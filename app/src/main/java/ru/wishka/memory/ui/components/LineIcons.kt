@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause }
+enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award }
 
 @Composable
 fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -499,6 +499,61 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
             LineIcon.Pause -> {
                 drawLine(color, Offset(s * 0.36f, s * 0.24f), Offset(s * 0.36f, s * 0.76f), stroke.width * 1.6f, StrokeCap.Round)
                 drawLine(color, Offset(s * 0.64f, s * 0.24f), Offset(s * 0.64f, s * 0.76f), stroke.width * 1.6f, StrokeCap.Round)
+            }
+            LineIcon.Copy -> {
+                // Два листа: задний — контуром со сдвигом
+                drawRoundRect(color, Offset(s * 0.32f, s * 0.30f), Size(s * 0.46f, s * 0.52f), CornerRadius(s * 0.08f), style = stroke)
+                drawPath(Path().apply {
+                    moveTo(s * 0.22f, s * 0.66f); lineTo(s * 0.22f, s * 0.22f)
+                    quadraticTo(s * 0.22f, s * 0.16f, s * 0.28f, s * 0.16f); lineTo(s * 0.60f, s * 0.16f)
+                }, color, style = stroke)
+            }
+            LineIcon.Flag -> {
+                // Флажок на древке — «пожаловаться»
+                drawLine(color, Offset(s * 0.24f, s * 0.14f), Offset(s * 0.24f, s * 0.88f), stroke.width, StrokeCap.Round)
+                drawPath(Path().apply {
+                    moveTo(s * 0.24f, s * 0.18f)
+                    cubicTo(s * 0.42f, s * 0.10f, s * 0.56f, s * 0.28f, s * 0.78f, s * 0.20f)
+                    lineTo(s * 0.78f, s * 0.54f)
+                    cubicTo(s * 0.56f, s * 0.62f, s * 0.42f, s * 0.44f, s * 0.24f, s * 0.52f)
+                }, color, style = stroke)
+            }
+            LineIcon.Search -> {
+                drawCircle(color, s * 0.24f, Offset(s * 0.44f, s * 0.44f), style = stroke)
+                drawLine(color, Offset(s * 0.62f, s * 0.62f), Offset(s * 0.84f, s * 0.84f), stroke.width * 1.2f, StrokeCap.Round)
+            }
+            LineIcon.Brush -> {
+                // Кисть: ручка наискосок и мазок
+                drawLine(color, Offset(s * 0.82f, s * 0.16f), Offset(s * 0.44f, s * 0.56f), stroke.width, StrokeCap.Round)
+                drawPath(Path().apply {
+                    moveTo(s * 0.44f, s * 0.56f)
+                    cubicTo(s * 0.30f, s * 0.50f, s * 0.18f, s * 0.62f, s * 0.22f, s * 0.84f)
+                    cubicTo(s * 0.40f, s * 0.86f, s * 0.54f, s * 0.74f, s * 0.44f, s * 0.56f)
+                }, color, style = stroke)
+            }
+            LineIcon.Smile -> {
+                drawCircle(color, s * 0.36f, Offset(s * 0.5f, s * 0.5f), style = stroke)
+                drawCircle(color, s * 0.04f, Offset(s * 0.38f, s * 0.42f))
+                drawCircle(color, s * 0.04f, Offset(s * 0.62f, s * 0.42f))
+                drawArc(color, 20f, 140f, false, Offset(s * 0.32f, s * 0.36f), Size(s * 0.36f, s * 0.32f), style = stroke)
+            }
+            LineIcon.Undo -> {
+                drawPath(Path().apply { moveTo(s * 0.34f, s * 0.20f); lineTo(s * 0.16f, s * 0.38f); lineTo(s * 0.34f, s * 0.56f) }, color, style = stroke)
+                drawPath(Path().apply {
+                    moveTo(s * 0.16f, s * 0.38f); lineTo(s * 0.60f, s * 0.38f)
+                    cubicTo(s * 0.92f, s * 0.38f, s * 0.92f, s * 0.82f, s * 0.60f, s * 0.82f); lineTo(s * 0.36f, s * 0.82f)
+                }, color, style = stroke)
+            }
+            LineIcon.Grid -> {
+                for (i in 0..1) for (j in 0..1) {
+                    drawRoundRect(color, Offset(s * (0.16f + i * 0.38f), s * (0.16f + j * 0.38f)), Size(s * 0.30f, s * 0.30f), CornerRadius(s * 0.06f), style = stroke)
+                }
+            }
+            LineIcon.Award -> {
+                // Кристалл-награда с лентами
+                diamond(Offset(s * 0.5f, s * 0.38f), s * 0.24f, color, stroke)
+                drawLine(color, Offset(s * 0.40f, s * 0.60f), Offset(s * 0.32f, s * 0.88f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(s * 0.60f, s * 0.60f), Offset(s * 0.68f, s * 0.88f), stroke.width, StrokeCap.Round)
             }
             LineIcon.Info -> {
                 diamond(Offset(s * 0.5f, s * 0.5f), s * 0.34f, color, stroke)

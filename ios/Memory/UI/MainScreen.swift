@@ -27,6 +27,10 @@ struct MainScreen: View {
                         PersonScreen(model: model, person: person)
                             .transition(.move(edge: .trailing))
                             .simultaneousGesture(backSwipe)
+                    } else if let group = state.openGroup, state.groupSettingsOpen {
+                        GroupSettingsScreen(model: model, group: group)
+                            .transition(.move(edge: .trailing))
+                            .simultaneousGesture(backSwipe)
                     } else if let group = state.openGroup {
                         GroupScreen(model: model, group: group)
                             .transition(.move(edge: .trailing))
@@ -60,6 +64,7 @@ struct MainScreen: View {
         .animation(.easeOut(duration: 0.25), value: state.openChatId)
         .animation(.easeOut(duration: 0.25), value: state.openPersonId)
         .animation(.easeOut(duration: 0.25), value: state.openGroupId)
+        .animation(.easeOut(duration: 0.25), value: state.groupSettingsOpen)
         .animation(.easeOut(duration: 0.2), value: state.profileSection)
         .animation(.easeOut(duration: 0.2), value: state.settingsPage)
         .animation(.easeOut(duration: 0.2), value: state.personSection)
@@ -98,20 +103,22 @@ struct MainScreen: View {
         if let id = state.commentsPostId, let post = state.findPost(id) {
             CommentsSheet(
                 total: post.comments,
-                comments: post.commentList.filter { !state.isBlocked($0.author.id) },
+                comments: post.commentList.filter { !state.isBlocked($0.author.id) && !state.reportedComments.contains($0.id) },
                 myId: state.me.id,
-                onSend: { model.addComment(id, $0) },
+                onSend: { model.addComment(id, $0, replyTo: $1) },
                 onDelete: { model.deleteComment(id, $0) },
+                onReport: { model.reportComment($0) },
                 onLike: { model.toggleCommentLike(id, $0) },
                 onAuthor: openAuthor
             )
         } else if let id = state.commentsPrismId, let prism = state.findPrism(id) {
             CommentsSheet(
                 total: prism.comments,
-                comments: prism.commentList.filter { !state.isBlocked($0.author.id) },
+                comments: prism.commentList.filter { !state.isBlocked($0.author.id) && !state.reportedComments.contains($0.id) },
                 myId: state.me.id,
-                onSend: { model.addPrismComment(id, $0) },
+                onSend: { model.addPrismComment(id, $0, replyTo: $1) },
                 onDelete: { model.deletePrismComment(id, $0) },
+                onReport: { model.reportComment($0) },
                 onLike: { model.togglePrismCommentLike(id, $0) },
                 onAuthor: openAuthor
             )
@@ -131,6 +138,8 @@ struct MainScreen: View {
                 SettingsScreen(model: model, page: page, account: account)
             } else if model.state.profileSection == .music {
                 MusicScreen(model: model)
+            } else if model.state.profileSection == .stickers {
+                StickerStudioScreen(model: model)
             } else if let section = model.state.profileSection {
                 ProfileSectionScreen(model: model, section: section)
             } else {

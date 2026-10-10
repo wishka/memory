@@ -10,6 +10,7 @@ enum LineIcon {
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
     case gear, shield, lock, block, textSize, globe, bellOff, more, eye, check
     case flash, flip, scissors, speed, crop, filter, sliders, text, sticker, volume, rotate, mirror, pause
+    case copy, flag, search, brush, smile, undo, grid, award
 }
 
 struct Glyph: View {
@@ -564,6 +565,58 @@ struct Glyph: View {
             let bar = StrokeStyle(lineWidth: 2.4, lineCap: .round)
             context.stroke(line(s, 0.36, 0.24, 0.36, 0.76), with: shading, style: bar)
             context.stroke(line(s, 0.64, 0.24, 0.64, 0.76), with: shading, style: bar)
+        case .copy:
+            // Два листа: задний — контуром со сдвигом
+            strokePath(roundRect(s, 0.32, 0.30, 0.46, 0.52, 0.08))
+            var back = Path()
+            back.move(to: p(s, 0.22, 0.66)); back.addLine(to: p(s, 0.22, 0.22))
+            back.addQuadCurve(to: p(s, 0.28, 0.16), control: p(s, 0.22, 0.16)); back.addLine(to: p(s, 0.60, 0.16))
+            strokePath(back)
+        case .flag:
+            // Флажок на древке — «пожаловаться»
+            strokePath(line(s, 0.24, 0.14, 0.24, 0.88))
+            var f = Path()
+            f.move(to: p(s, 0.24, 0.18))
+            f.addCurve(to: p(s, 0.78, 0.20), control1: p(s, 0.42, 0.10), control2: p(s, 0.56, 0.28))
+            f.addLine(to: p(s, 0.78, 0.54))
+            f.addCurve(to: p(s, 0.24, 0.52), control1: p(s, 0.56, 0.62), control2: p(s, 0.42, 0.44))
+            strokePath(f)
+        case .search:
+            strokePath(circle(s, 0.44, 0.44, 0.24))
+            context.stroke(line(s, 0.62, 0.62, 0.84, 0.84), with: shading, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+        case .brush:
+            strokePath(line(s, 0.82, 0.16, 0.44, 0.56))
+            var b = Path()
+            b.move(to: p(s, 0.44, 0.56))
+            b.addCurve(to: p(s, 0.22, 0.84), control1: p(s, 0.30, 0.50), control2: p(s, 0.18, 0.62))
+            b.addCurve(to: p(s, 0.44, 0.56), control1: p(s, 0.40, 0.86), control2: p(s, 0.54, 0.74))
+            strokePath(b)
+        case .smile:
+            strokePath(circle(s, 0.5, 0.5, 0.36))
+            fillPath(circle(s, 0.38, 0.42, 0.04))
+            fillPath(circle(s, 0.62, 0.42, 0.04))
+            var m = Path()
+            m.addArc(center: p(s, 0.5, 0.52), radius: s * 0.17, startAngle: .degrees(20), endAngle: .degrees(160), clockwise: false)
+            strokePath(m)
+        case .undo:
+            var h = Path()
+            h.move(to: p(s, 0.34, 0.20)); h.addLine(to: p(s, 0.16, 0.38)); h.addLine(to: p(s, 0.34, 0.56))
+            strokePath(h)
+            var u = Path()
+            u.move(to: p(s, 0.16, 0.38)); u.addLine(to: p(s, 0.60, 0.38))
+            u.addCurve(to: p(s, 0.60, 0.82), control1: p(s, 0.92, 0.38), control2: p(s, 0.92, 0.82))
+            u.addLine(to: p(s, 0.36, 0.82))
+            strokePath(u)
+        case .grid:
+            for i in 0..<2 {
+                for j in 0..<2 {
+                    strokePath(roundRect(s, 0.16 + CGFloat(i) * 0.38, 0.16 + CGFloat(j) * 0.38, 0.30, 0.30, 0.06))
+                }
+            }
+        case .award:
+            strokePath(diamond(s, 0.5, 0.38, 0.24))
+            strokePath(line(s, 0.40, 0.60, 0.32, 0.88))
+            strokePath(line(s, 0.60, 0.60, 0.68, 0.88))
         case .info:
             strokePath(diamond(s, 0.5, 0.5, 0.34))
             strokePath(line(s, 0.5, 0.46, 0.5, 0.64))

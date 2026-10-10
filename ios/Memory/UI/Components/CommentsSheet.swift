@@ -1,18 +1,25 @@
 import SwiftUI
+import UIKit
 
 /// Обсуждение записи или PRISM — шторка снизу: комментарии и поле ввода.
 /// total — сколько всего комментариев (у демо-записей видна только часть).
-/// Свой комментарий удаляется значком корзины рядом с ним.
+/// Долгое нажатие на комментарий — меню: ответить, скопировать,
+/// «нравится», страница автора, пожаловаться (на чужой) или удалить (свой).
 struct CommentsSheet: View {
     let total: Int
     let comments: [Comment]
     let myId: Int
-    let onSend: (String) -> Void
+    let onSend: (String, String?) -> Void
     let onDelete: (Int64) -> Void
+    let onReport: (Int64) -> Void
     let onLike: (Int64) -> Void
     let onAuthor: (Int) -> Void
 
     @State private var text = ""
+    /// Кому отвечаем: имя автора комментария; nil — просто комментарий.
+    @State private var replyTo: String?
+    @State private var menu: Comment?
+    @State private var notice: String?
     @FocusState private var focused: Bool
 
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -46,14 +53,38 @@ struct CommentsSheet: View {
                 }
             }
 
+            if let notice {
+                Text(notice)
+                    .textStyle(.labelLarge, Palette.lilac)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .glass(Capsule())
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
+            }
             FadeLine()
+            if let replyTo {
+                HStack(spacing: 8) {
+                    Glyph(kind: .reply, color: Palette.lilac, size: 16)
+                    Text(tf("Ответ для %s", replyTo)).textStyle(.labelLarge, Palette.lilac)
+                    Spacer()
+                    Button { self.replyTo = nil } label: {
+                        Glyph(kind: .close, color: Palette.mist, size: 16).frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.leading, 20)
+                .padding(.trailing, 8)
+                .padding(.top, 6)
+            }
             HStack(alignment: .bottom, spacing: 10) {
                 GlassField(placeholder: t("Комментарий"), text: $text, limit: 1000, maxLines: 4)
                     .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .focused($focused)
                 Button {
-                    onSend(text)
+                    onSend(text, replyTo)
                     text = ""
+                    replyTo = nil
                 } label: {
                     Glyph(kind: .send, color: canSend ? Palette.ink : Palette.mist)
                         .frame(width: 46, height: 46)
@@ -74,6 +105,41 @@ struct CommentsSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(Palette.night)
+        .glassActions(item: $menu, title: { $0.author.name }, message: { String($0.text.prefix(80)) }) { c in
+            actions(c)
+        }
+    }
+
+    private func actions(_ c: Comment) -> [GlassAction] {
+        var list = [
+            GlassAction(icon: .reply, title: t("Ответить")) {
+                replyTo = c.author.name
+                focused = true
+            },
+            GlassAction(icon: .copy, title: t("Скопировать")) {
+                UIPasteboard.general.string = c.text
+                show(t("Скопировано"))
+            },
+            GlassAction(icon: c.liked ? .heartFilled : .heart, title: c.liked ? t("Убрать «нравится»") : t("Нравится")) { onLike(c.id) },
+            GlassAction(icon: .profile, title: t("Страница автора")) { onAuthor(c.author.id) },
+        ]
+        if c.author.id == myId {
+            list.append(GlassAction(icon: .trash, title: t("Удалить"), destructive: true) { onDelete(c.id) })
+        } else {
+            list.append(GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true) {
+                onReport(c.id)
+                show(t("Жалоба отправлена. Комментарий скрыт."))
+            })
+        }
+        return list
+    }
+
+    private func show(_ text: String) {
+        withAnimation { notice = text }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            withAnimation { if notice == text { notice = nil } }
+        }
     }
 
     private func row(_ c: Comment) -> some View {
@@ -87,18 +153,19 @@ struct CommentsSheet: View {
                     Text(c.author.name).textStyle(.title).lineLimit(1)
                     Text(agoTitle(minutesSince(c.createdAt, c.minutesAgo))).textStyle(.bodySmall, Palette.mist)
                 }
+                if let to = c.replyTo, !to.isEmpty {
+                    Text(tf("ответ для %s", to)).textStyle(.label, Palette.lilac)
+                }
                 Text(c.text).textStyle(.body).fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
-            if c.author.id == myId {
-                Button { onDelete(c.id) } label: {
-                    Glyph(kind: .trash, color: Palette.mist, size: 18)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(t("Удалить комментарий"))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { onLike(c.id) }
+            .onLongPressGesture(minimumDuration: 0.4) {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                menu = c
             }
+            .accessibilityAction(named: t("Действия")) { menu = c }
             // «Нравится» комментарию: сердце и число под ним
             Button { onLike(c.id) } label: {
                 VStack(spacing: 0) {

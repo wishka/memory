@@ -4,6 +4,21 @@ import SwiftUI
 struct FeedScreen: View {
     let model: AppModel
 
+    /// Своя запись: закрепить в витрине профиля или удалить.
+    private func ownMenu(_ post: Post) -> [GlassAction] {
+        guard post.author.id == model.state.me.id else { return [] }
+        let pinned = model.state.profilePins.contains(post.id)
+        return [
+            GlassAction(icon: .pushpin, title: pinned ? t("Убрать из витрины") : t("Закрепить в профиле")) {
+                model.toggleProfilePin(post.id)
+            },
+            GlassAction(icon: .trash, title: t("Удалить запись"), destructive: true) {
+                post.media.forEach { MediaFiles.delete($0) }
+                model.deletePost(post.id)
+            },
+        ]
+    }
+
     var body: some View {
         let state = model.state
         ScrollView {
@@ -11,11 +26,8 @@ struct FeedScreen: View {
                 HStack(alignment: .center) {
                     ScreenTitle(title: t("Лента"), subtitle: t("Моменты, которые остаются"))
                     Spacer()
-                    // Кристалл из значка приложения — знак Memory в шапке
-                    Image("MemoryCrystal")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 52, height: 52)
+                    // Знак Memory: кристалл со стеклом, как слово MEMORY на заставке
+                    CrystalLogo(size: 56)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
@@ -30,7 +42,8 @@ struct FeedScreen: View {
                         onFollow: { model.toggleFollow(post.author.id) },
                         onAuthor: { model.openPerson(post.author.id) },
                         onComments: { model.openComments(post.id) },
-                        onOpenMedia: model.openMedia
+                        onOpenMedia: model.openMedia,
+                        menu: ownMenu(post)
                     )
                 }
             }
@@ -99,6 +112,12 @@ struct PostCard: View {
     var onComments: (() -> Void)? = nil
     /// Фото или видео записи на весь экран.
     var onOpenMedia: (Attachment) -> Void = { _ in }
+    /// Закреплена в группе — метка над текстом.
+    var pinned = false
+    /// Пункты меню «⋯» (закрепить, удалить…); пусто — меню нет.
+    var menu: [GlassAction] = []
+
+    @State private var showMenu = false
 
     var body: some View {
         GlassCard {
@@ -113,13 +132,28 @@ struct PostCard: View {
                             GlowButton(title: t("Подписаться"), action: onFollow)
                         }
                     }
+                    if !menu.isEmpty {
+                        Button { showMenu = true } label: {
+                            Glyph(kind: .more, color: Palette.mist, size: 20)
+                                .frame(width: 36, height: 36)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if pinned {
+                    HStack(spacing: 6) {
+                        Glyph(kind: .pushpin, color: Palette.lilac, size: 16)
+                        Text(t("Закреплено").uppercased()).textStyle(.label, Palette.lilac)
+                    }
                 }
                 if !post.text.isEmpty {
                     Text(post.text)
                         .textStyle(.body)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                PostMediaView(media: post.media, onOpen: onOpenMedia)
+                PostMediaView(media: post.media.filter { $0.kind != .document }, onOpen: onOpenMedia)
+                PostFiles(files: post.media.filter { $0.kind == .document })
                 if let seed = post.artSeed {
                     Nebula(seed: seed)
                         .frame(height: 200)
@@ -154,6 +188,7 @@ struct PostCard: View {
             .padding(16)
         }
         .cardPadding()
+        .glassActions($showMenu, cancel: true, actions: menu)
     }
 
     @ViewBuilder

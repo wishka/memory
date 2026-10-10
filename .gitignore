@@ -14,4 +14,7 @@ captures/
 *.keystore
 keystore.properties
 
+# Ключи API (Jamendo) для iPhone — никогда в репозиторий
+ios/Memory/Secrets.plist
+
 .DS_Store

@@ -1,11 +1,22 @@
 import SwiftUI
 
-/// Страница группы: обложка, описание, вступление, записи участников.
+/// Страница группы: заставка, описание, вступление, записи участников.
+/// Шестерёнка на заставке — настройки (у создателя — правка, заставка,
+/// удаление; у участника — уведомления и выход).
 struct GroupScreen: View {
     let model: AppModel
     let group: MemoryGroup
     @State private var text = ""
-    @State private var confirmDelete = false
+    @State private var media: [Attachment] = []
+    @State private var choosingMusic = false
+
+    private var canPost: Bool { group.joined && (!group.onlyOwnerPosts || group.mine) }
+
+    private var posts: [Post] {
+        let visible = group.posts.filter { !model.state.isBlocked($0.author.id) }
+        let pinned = visible.first { $0.id == group.pinnedPostId }
+        return (pinned.map { [$0] } ?? []) + visible.filter { $0.id != group.pinnedPostId }
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -14,7 +25,7 @@ struct GroupScreen: View {
                     cover(safeTop: geo.safeAreaInsets.top)
                     about
                     composer
-                    let posts = group.posts.filter { !model.state.isBlocked($0.author.id) }
+                    let posts = self.posts
                     SectionTitle(text: posts.isEmpty ? t("Записей пока нет") : tf("Записи · %s", posts.count))
                     ForEach(posts) { post in
                         PostCard(
@@ -22,7 +33,9 @@ struct GroupScreen: View {
                             onLike: { model.toggleGroupPostLike(group.id, post.id) },
                             onAuthor: { model.openPerson(post.author.id) },
                             onComments: { model.openComments(post.id) },
-                            onOpenMedia: model.openMedia
+                            onOpenMedia: model.openMedia,
+                            pinned: post.id == group.pinnedPostId,
+                            menu: menu(post)
                         )
                     }
                 }
@@ -31,12 +44,34 @@ struct GroupScreen: View {
             .ignoresSafeArea(edges: .top)
             .scrollDismissesKeyboard(.interactively)
         }
+        .sheet(isPresented: $choosingMusic) {
+            MusicChooser(tracks: model.state.tracks, onPicked: { picked in
+                media = Array((media + picked).prefix(AppModel.maxMedia))
+            }, onClose: { choosingMusic = false })
+        }
     }
 
-    /// Обложка во всю ширину, под строкой состояния.
+    private func menu(_ post: Post) -> [GlassAction] {
+        let mine = post.author.id == model.state.me.id
+        guard group.mine || mine else { return [] }
+        var items: [GlassAction] = []
+        if group.mine {
+            let pinned = post.id == group.pinnedPostId
+            items.append(GlassAction(icon: .pushpin, title: pinned ? t("Открепить") : t("Закрепить")) {
+                model.togglePinGroupPost(group.id, post.id)
+            })
+        }
+        items.append(GlassAction(icon: .trash, title: t("Удалить запись"), destructive: true) {
+            post.media.forEach { MediaFiles.delete($0) }
+            model.deleteGroupPost(group.id, post.id)
+        })
+        return items
+    }
+
+    /// Заставка во всю ширину, под строкой состояния.
     private func cover(safeTop: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
-            Nebula(seed: group.seed)
+            GroupCover(group: group)
             LinearGradient(
                 stops: [
                     .init(color: Palette.voidRGB.opacity(0), location: 0.4),
@@ -44,9 +79,15 @@ struct GroupScreen: View {
                 ],
                 startPoint: .top, endPoint: .bottom
             )
-            RoundGlyphButton(icon: .back, strong: true) { model.closeGroup() }
-                .padding(.top, safeTop + 12)
-                .padding(.leading, 12)
+            HStack {
+                RoundGlyphButton(icon: .back, strong: true) { model.closeGroup() }
+                Spacer()
+                if group.joined {
+                    RoundGlyphButton(icon: .gear, strong: true) { model.openGroupSettings() }
+                }
+            }
+            .padding(.top, safeTop + 12)
+            .padding(.horizontal, 12)
             VStack(alignment: .leading, spacing: 2) {
                 Spacer()
                 Text(group.name.uppercased()).textStyle(.headline)
@@ -66,42 +107,8 @@ struct GroupScreen: View {
             if !group.description.isEmpty {
                 Text(group.description).textStyle(.body).fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 10) {
-                if group.mine {
-                    GhostButton(title: t("Удалить группу")) { confirmDelete = true }
-                } else if group.joined {
-                    GhostButton(title: t("Выйти из группы")) { model.toggleGroup(group.id) }
-                } else {
-                    GlowButton(title: t("Вступить")) { model.toggleGroup(group.id) }
-                }
-                // Уведомления группы: колокольчик включает и выключает
-                if group.joined {
-                    Button { model.toggleGroupMute(group.id) } label: {
-                        HStack(spacing: 6) {
-                            Glyph(kind: group.muted ? .bellOff : .bell, color: Palette.lilac, size: 18)
-                            Text(group.muted ? t("Без звука").uppercased() : t("Уведомления").uppercased())
-                                .textStyle(.label, group.muted ? Palette.mist : Palette.ink)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .glass(Capsule(), strong: !group.muted)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            if confirmDelete {
-                GlassCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(tf("Удалить «%s» вместе с записями? Отменить будет нельзя.", group.name))
-                            .textStyle(.body)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 10) {
-                            GhostButton(title: t("Отмена")) { confirmDelete = false }
-                            GlowButton(title: t("Удалить")) { model.deleteGroup(group.id) }
-                        }
-                    }
-                    .padding(16)
-                }
+            if !group.joined {
+                GlowButton(title: t("Вступить")) { model.toggleGroup(group.id) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -110,24 +117,36 @@ struct GroupScreen: View {
 
     @ViewBuilder
     private var composer: some View {
-        if group.joined {
+        if canPost {
             GlassCard {
                 VStack(spacing: 0) {
                     GlassField(placeholder: t("Написать в группу"), text: $text, limit: 2000)
-                    HStack {
+                    PendingAttachments(items: media) { item in
+                        media.removeAll { $0.id == item.id }
+                        MediaFiles.delete(item)
+                    }
+                    .padding(.bottom, media.isEmpty ? 0 : 10)
+                    HStack(spacing: 10) {
+                        AttachButton(documents: true, size: 40, onMusic: { choosingMusic = true }) { picked in
+                            media = Array((media + picked).prefix(AppModel.maxMedia))
+                        }
+                        Text(media.isEmpty ? t("Фото, видео, документы, музыка") : plural(media.count, "вложение", "вложения", "вложений"))
+                            .textStyle(.bodySmall, Palette.mist)
+                            .lineLimit(1)
                         Spacer()
-                        GlowButton(title: t("Опубликовать"), enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                            model.postInGroup(group.id, text)
+                        GlowButton(title: t("Опубликовать"), enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty) {
+                            model.postInGroup(group.id, text, media: media)
                             text = ""
+                            media = []
                         }
                     }
-                    .padding(.trailing, 12)
+                    .padding(.horizontal, 12)
                     .padding(.bottom, 12)
                 }
             }
             .cardPadding()
         } else {
-            Text(t("Вступите, чтобы писать в группу."))
+            Text(group.joined ? t("В этой группе пишет только её создатель.") : t("Вступите, чтобы писать в группу."))
                 .textStyle(.bodySmall, Palette.mist)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 24)

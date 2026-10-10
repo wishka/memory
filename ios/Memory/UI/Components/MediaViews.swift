@@ -224,6 +224,8 @@ struct CameraPicker: UIViewControllerRepresentable {
 struct AttachButton: View {
     var documents: Bool = false
     var size: CGFloat = 44
+    /// «Музыка» в меню — трек из «Моей музыки» или файл; nil — пункта нет.
+    var onMusic: (() -> Void)? = nil
     let onPicked: ([Attachment]) -> Void
 
     @State private var showGallery = false
@@ -241,6 +243,9 @@ struct AttachButton: View {
         }
         if documents {
             items.append(GlassAction(icon: .document, title: t("Документ")) { showFiles = true })
+        }
+        if let onMusic {
+            items.append(GlassAction(icon: .music, title: t("Музыка"), action: onMusic))
         }
         return items
     }

@@ -37,6 +37,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.groups.GroupScreen
+import ru.wishka.memory.ui.groups.GroupSettingsScreen
 import ru.wishka.memory.ui.groups.GroupsScreen
 import ru.wishka.memory.ui.person.PersonScreen
 import ru.wishka.memory.ui.prism.PrismScreen
@@ -59,6 +60,7 @@ import ru.wishka.memory.ui.feed.FeedScreen
 import ru.wishka.memory.ui.profile.ProfileScreen
 import ru.wishka.memory.ui.profile.ProfileSectionScreen
 import ru.wishka.memory.ui.profile.MusicScreen
+import ru.wishka.memory.ui.profile.StickerStudioScreen
 import ru.wishka.memory.ui.prism.create.PrismCreateFlow
 import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.settings.AccountActions
@@ -188,6 +190,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         when {
             // Страница человека и группы — поверх вкладки, панель вкладок остаётся
             openPerson != null -> PersonScreen(vm, state, openPerson, padding)
+            openGroup != null && state.groupSettingsOpen -> GroupSettingsScreen(vm, openGroup, padding)
             openGroup != null -> GroupScreen(vm, state, openGroup, padding)
             else -> AnimatedContent(
                 targetState = state.tab,
@@ -206,6 +209,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                         when {
                             settings != null -> SettingsScreen(vm, state, settings, padding, version, prefs, account)
                             section == ProfileSection.Music -> MusicScreen(vm, state, padding)
+                            section == ProfileSection.Stickers -> StickerStudioScreen(vm, state, padding)
                             section != null -> ProfileSectionScreen(vm, state, section, padding)
                             else -> ProfileScreen(vm, state, padding, onSaveProfile)
                         }
@@ -230,10 +234,11 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             state.findPost(id)?.let { post ->
                 CommentsSheet(
                     total = post.comments,
-                    comments = post.commentList.filter { it.author.id !in state.blocked },
+                    comments = post.commentList.filter { it.author.id !in state.blocked && it.id !in state.reportedComments },
                     myId = state.me.id,
-                    onSend = { vm.addComment(id, it) },
+                    onSend = { text, replyTo -> vm.addComment(id, text, replyTo) },
                     onDelete = { vm.deleteComment(id, it) },
+                    onReport = vm::reportComment,
                     onLike = { vm.toggleCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
@@ -244,10 +249,11 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             state.findPrism(id)?.let { prism ->
                 CommentsSheet(
                     total = prism.comments,
-                    comments = prism.commentList.filter { it.author.id !in state.blocked },
+                    comments = prism.commentList.filter { it.author.id !in state.blocked && it.id !in state.reportedComments },
                     myId = state.me.id,
-                    onSend = { vm.addPrismComment(id, it) },
+                    onSend = { text, replyTo -> vm.addPrismComment(id, text, replyTo) },
                     onDelete = { vm.deletePrismComment(id, it) },
+                    onReport = vm::reportComment,
                     onLike = { vm.togglePrismCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,

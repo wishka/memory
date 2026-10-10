@@ -35,6 +35,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
 
       - name: Сборка
+        env:
+          JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
         run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
 
       - name: Юнит-тесты

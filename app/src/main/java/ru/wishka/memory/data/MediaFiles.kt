@@ -104,6 +104,24 @@ object MediaFiles {
         )
     }
 
+    /**
+     * Скопировать файл, который уже лежит в памяти приложения (трек из
+     * «Моей музыки», кадр), как отдельное вложение: удалят трек — запись
+     * не потеряет файл. null — не скопировалось.
+     */
+    fun copyLocal(context: Context, source: File, kind: MediaKind, name: String, mime: String = ""): Attachment? {
+        if (!source.exists() || source.length() > MAX_BYTES) return null
+        val id = UUID.randomUUID().toString()
+        val target = File(dir(context), "$id.${source.extension.ifEmpty { "bin" }}")
+        return runCatching {
+            source.copyTo(target)
+            Attachment(id, kind, target.absolutePath, name, target.length(), mime)
+        }.getOrElse {
+            target.delete()
+            null
+        }
+    }
+
     /** Удалить копию вложения (из удалённого сообщения или черновика). */
     fun delete(attachment: Attachment) {
         runCatching { File(attachment.path).delete() }

@@ -63,6 +63,8 @@ struct ProfileScreen: View {
                 .cardPadding()
 
                 if !editing {
+                    ShowcaseCard(model: model)
+
                     GlassCard {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(t("О СЕБЕ")).textStyle(.label, Palette.mist)
@@ -79,6 +81,10 @@ struct ProfileScreen: View {
                     }
                     .cardPadding()
 
+                    AchievementsCard(state: state)
+                    ProfileContentTabs(model: model)
+                    PeopleRows(model: model)
+
                     GlassCard {
                         VStack(spacing: 0) {
                             Button { model.openProfileSection(.saved) } label: {
@@ -92,6 +98,14 @@ struct ProfileScreen: View {
                             Button { model.openProfileSection(.music) } label: {
                                 SettingRow(icon: .music, title: t("Моя музыка")) {
                                     Text("\(state.tracks.count)").textStyle(.bodySmall, Palette.mist)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            FadeLine().padding(.horizontal, 16)
+                            Button { model.openProfileSection(.stickers) } label: {
+                                SettingRow(icon: .sticker, title: t("Студия: значки и стикеры")) {
+                                    Text("\(state.stickers.count)").textStyle(.bodySmall, Palette.mist)
                                 }
                                 .contentShape(Rectangle())
                             }

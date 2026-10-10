@@ -50,7 +50,15 @@ data class Attachment(
     val name: String = "",
     val size: Long = 0,
     val mime: String = "",
-)
+) {
+    /** Музыка — документ со звуком: в записи он играет прямо в карточке. */
+    val isAudio: Boolean
+        get() = kind == MediaKind.Document &&
+            (mime.startsWith("audio/") || path.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS)
+}
+
+/** Расширения звуковых файлов — для вложений-«музыки». */
+val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus")
 
 /** Комментарий к записи или PRISM. createdAt — мс; 0 — у демо-комментариев, тогда время из minutesAgo. */
 data class Comment(
@@ -61,6 +69,8 @@ data class Comment(
     val createdAt: Long = 0,
     val likes: Int = 0,
     val liked: Boolean = false,
+    /** Ответ кому-то в обсуждении: имя того, кому ответили; "" — просто комментарий. */
+    val replyTo: String = "",
 )
 
 /**
@@ -169,6 +179,12 @@ data class Group(
     val posts: List<Post> = emptyList(),
     /** Уведомления группы выключены. */
     val muted: Boolean = false,
+    /** Своя заставка — фото; null — туманность по seed. */
+    val cover: Attachment? = null,
+    /** Закреплённая запись — первой на странице группы. */
+    val pinnedPostId: Long? = null,
+    /** Писать в группу могут только её создатели; false — все участники. */
+    val onlyOwnerPosts: Boolean = false,
 )
 
 /** Интересы в профиле — те же темы, без «Другое». */
@@ -222,6 +238,10 @@ data class MusicTrack(
     val path: String,
     val durationMs: Long = 0,
     val addedAt: Long = 0,
+    /** Лицензия трека из медиатеки («CC BY 4.0»); "" — свой файл. */
+    val license: String = "",
+    /** Страница трека на Jamendo или Openverse — для указания автора. */
+    val sourceUrl: String = "",
 )
 
 /** Плейлист: название и треки по порядку. */

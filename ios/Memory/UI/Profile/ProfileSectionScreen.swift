@@ -34,6 +34,7 @@ struct ProfileSectionScreen: View {
         case .groups: return plural(state.myGroups.count, "группа", "группы", "групп")
         case .saved: return plural(state.savedPrisms.count, "ролик", "ролика", "роликов")
         case .music: return plural(state.tracks.count, "трек", "трека", "треков")
+        case .stickers: return plural(state.stickers.count, "стикер", "стикера", "стикеров")
         }
     }
 
@@ -86,8 +87,8 @@ struct ProfileSectionScreen: View {
                 }
             }
             .padding(.horizontal, 16)
-        case .music:
-            // «Моя музыка» — свой экран (MainScreen), сюда не попадает
+        case .music, .stickers:
+            // «Моя музыка» и «Студия» — свой экран (MainScreen), сюда не попадает
             EmptyView()
         }
     }
@@ -150,7 +151,7 @@ private struct GroupLine: View {
         GlassCard {
             Button(action: onOpen) {
                 HStack(spacing: 12) {
-                    Nebula(seed: group.seed)
+                    GroupCover(group: group, maxPixel: 240)
                         .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {

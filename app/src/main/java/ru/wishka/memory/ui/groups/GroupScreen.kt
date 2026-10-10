@@ -33,6 +33,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import ru.wishka.memory.data.Attachment
+import ru.wishka.memory.data.MediaFiles
+import ru.wishka.memory.ui.components.AttachButton
+import ru.wishka.memory.ui.components.GroupCover
+import ru.wishka.memory.ui.components.MenuRow
+import ru.wishka.memory.ui.components.MusicChooser
+import ru.wishka.memory.ui.components.PendingAttachments
+import ru.wishka.memory.ui.components.rememberMediaPicker
 import ru.wishka.memory.data.Group
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
@@ -48,11 +58,21 @@ import ru.wishka.memory.ui.components.glass
 import ru.wishka.memory.ui.feed.PostCard
 import ru.wishka.memory.ui.theme.Palette
 
-/** Страница группы: обложка, описание, вступление, записи участников. */
+/**
+ * Страница группы: заставка, описание, вступление, записи участников.
+ * Шестерёнка на заставке — настройки (у создателя — правка, заставка,
+ * удаление; у участника — уведомления и выход).
+ */
 @Composable
 fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: PaddingValues) {
     var text by rememberSaveable(group.id) { mutableStateOf("") }
-    var confirmDelete by rememberSaveable(group.id) { mutableStateOf(false) }
+    var media by remember(group.id) { mutableStateOf<List<Attachment>>(emptyList()) }
+    var choosingMusic by remember { mutableStateOf(false) }
+    val picker = rememberMediaPicker { picked -> media = (media + picked).take(AppViewModel.MAX_MEDIA) }
+    val canPost = group.joined && (!group.onlyOwnerPosts || group.mine)
+    val visible = group.posts.filter { it.author.id !in state.blocked }
+    val pinned = visible.firstOrNull { it.id == group.pinnedPostId }
+    val posts = listOfNotNull(pinned) + visible.filter { it.id != group.pinnedPostId }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -60,23 +80,23 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            // Обложка во всю ширину, под строкой состояния
+            // Заставка во всю ширину, под строкой состояния
             Box(modifier = Modifier.fillMaxWidth().height(220.dp)) {
-                Nebula(group.seed, Modifier.fillMaxSize())
+                GroupCover(group, Modifier.fillMaxSize())
                 Box(
                     Modifier
                         .fillMaxSize()
                         .background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Palette.Void)),
                 )
-                Box(
+                Row(
                     modifier = Modifier
-                        .padding(top = contentPadding.calculateTopPadding(), start = 12.dp)
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .glass(CircleShape, strong = true)
-                        .clickable { vm.closeGroup() },
-                    contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Back, Palette.Ink) }
+                        .fillMaxWidth()
+                        .padding(top = contentPadding.calculateTopPadding(), start = 12.dp, end = 12.dp),
+                ) {
+                    RoundGlass(LineIcon.Back) { vm.closeGroup() }
+                    Spacer(Modifier.weight(1f))
+                    if (group.joined) RoundGlass(LineIcon.Gear) { vm.openGroupSettings() }
+                }
                 Column(modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 20.dp, vertical = 12.dp)) {
                     Text(group.name.uppercase(), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink)
                     Text(
@@ -93,91 +113,103 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                 if (group.description.isNotBlank()) {
                     Text(group.description, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    when {
-                        group.mine -> GhostButton(t("Удалить группу"), onClick = { confirmDelete = true })
-                        group.joined -> GhostButton(t("Выйти из группы"), onClick = { vm.toggleGroup(group.id) })
-                        else -> GlowButton(t("Вступить"), onClick = { vm.toggleGroup(group.id) })
-                    }
-                    // Уведомления группы: колокольчик включает и выключает
-                    if (group.joined) {
-                        Row(
-                            modifier = Modifier
-                                .glass(RoundedCornerShape(50), strong = !group.muted)
-                                .clickable { vm.toggleGroupMute(group.id) }
-                                .padding(horizontal = 14.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Glyph(if (group.muted) LineIcon.BellOff else LineIcon.Bell, Palette.Lilac, size = 18.dp)
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                if (group.muted) t("БЕЗ ЗВУКА") else t("УВЕДОМЛЕНИЯ"),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (group.muted) Palette.Mist else Palette.Ink,
-                            )
-                        }
-                    }
-                }
-                if (confirmDelete) {
-                    GlassCard {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(tf("Удалить «%s» вместе с записями? Отменить будет нельзя.", group.name),
-                                style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                GhostButton(t("Отмена"), onClick = { confirmDelete = false })
-                                GlowButton(t("Удалить"), onClick = { vm.deleteGroup(group.id) })
-                            }
-                        }
-                    }
-                }
+                if (!group.joined) GlowButton(t("Вступить"), onClick = { vm.toggleGroup(group.id) })
             }
         }
 
-        if (group.joined) {
-            item {
+        when {
+            canPost -> item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column {
                         GlassField(text, { text = it.take(2000) }, t("Написать в группу"))
+                        PendingAttachments(
+                            media,
+                            onRemove = { item -> media = media - item; MediaFiles.delete(item) },
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(end = 12.dp, bottom = 12.dp),
-                            horizontalArrangement = Arrangement.End,
+                            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            GlowButton(t("Опубликовать"), enabled = text.isNotBlank(), onClick = {
-                                vm.postInGroup(group.id, text)
+                            AttachButton(picker, documents = true, size = 40.dp, onMusic = { choosingMusic = true })
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                if (media.isEmpty()) t("Фото, видео, документы, музыка")
+                                else plural(media.size, "вложение", "вложения", "вложений"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Palette.Mist,
+                                modifier = Modifier.weight(1f),
+                            )
+                            GlowButton(t("Опубликовать"), enabled = text.isNotBlank() || media.isNotEmpty(), onClick = {
+                                vm.postInGroup(group.id, text, media)
                                 text = ""
+                                media = emptyList()
                             })
                         }
                     }
                 }
             }
-        } else {
-            item {
-                Text(
-                    t("Вступите, чтобы писать в группу."),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Palette.Mist,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
-            }
+            group.joined -> item { Hint(t("В этой группе пишет только её создатель.")) }
+            else -> item { Hint(t("Вступите, чтобы писать в группу.")) }
         }
 
         item {
             Text(
-                if (group.posts.isEmpty()) t("ЗАПИСЕЙ ПОКА НЕТ") else tf("ЗАПИСИ · %s", group.posts.size),
+                if (posts.isEmpty()) t("ЗАПИСЕЙ ПОКА НЕТ") else tf("ЗАПИСИ · %s", posts.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Mist,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
         }
-        items(group.posts.filter { it.author.id !in state.blocked }, key = { it.id }) { post ->
+        items(posts, key = { it.id }) { post ->
+            val mine = post.author.id == state.me.id
             PostCard(
                 post,
                 onLike = { vm.toggleGroupPostLike(group.id, post.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
                 onComments = { vm.openComments(post.id) },
                 onOpenMedia = vm::openMedia,
+                pinned = post.id == group.pinnedPostId,
+                menu = if (!group.mine && !mine) null else { close ->
+                    if (group.mine) {
+                        MenuRow(LineIcon.Pushpin, if (post.id == group.pinnedPostId) t("Открепить") else t("Закрепить")) {
+                            close(); vm.togglePinGroupPost(group.id, post.id)
+                        }
+                    }
+                    MenuRow(LineIcon.Trash, t("Удалить запись"), color = Palette.PearlPink) {
+                        close()
+                        post.media.forEach { MediaFiles.delete(it) }
+                        vm.deleteGroupPost(group.id, post.id)
+                    }
+                },
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
+
+    if (choosingMusic) {
+        MusicChooser(
+            tracks = state.tracks,
+            onPicked = { picked -> media = (media + picked).take(AppViewModel.MAX_MEDIA) },
+            onDismiss = { choosingMusic = false },
+        )
+    }
+}
+
+@Composable
+private fun Hint(text: String) {
+    Text(text, style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, modifier = Modifier.padding(horizontal = 24.dp))
+}
+
+/** Круглая стеклянная кнопка на заставке. */
+@Composable
+internal fun RoundGlass(icon: LineIcon, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .glass(CircleShape, strong = true)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Glyph(icon, Palette.Ink) }
 }

@@ -608,4 +608,84 @@ final class AppModelTests: XCTestCase {
         let (wr, _, wb) = ColorMatrix.apply(e.colorMatrix, 0.5, 0.5, 0.5)
         XCTAssertTrue(wr > 0.5 && wb < 0.5)
     }
+
+    func testCommentReplyAndReport() throws {
+        let vm = AppModel()
+        let post = try XCTUnwrap(vm.state.posts.first { !$0.commentList.isEmpty })
+        let other = try XCTUnwrap(post.commentList.first { $0.author.id != vm.state.me.id })
+        vm.addComment(post.id, "Согласна!", replyTo: other.author.name)
+        let mine = try XCTUnwrap(vm.state.findPost(post.id)?.commentList.last)
+        XCTAssertEqual(mine.replyTo, other.author.name)
+        vm.reportComment(other.id)
+        XCTAssertTrue(vm.state.reportedComments.contains(other.id))
+        let restored = AppModel()
+        restored.restore(vm.snapshot())
+        XCTAssertTrue(restored.state.reportedComments.contains(other.id))
+    }
+
+    func testGroupSettingsPinAndPosts() throws {
+        let vm = AppModel()
+        XCTAssertNil(vm.createGroup(name: "Кофе и звёзды", description: "Ночные разговоры", topic: "Природа"))
+        let id = try XCTUnwrap(vm.state.openGroupId)
+        vm.openGroupSettings()
+        XCTAssertTrue(vm.state.groupSettingsOpen)
+        XCTAssertEqual(vm.updateGroup(id, name: "ab", description: "", topic: "Фото"), "Название — от 3 символов")
+        XCTAssertNil(vm.updateGroup(id, name: "  Кофе ночью ", description: "Новое описание", topic: "Фото"))
+        XCTAssertEqual(vm.state.groups.first { $0.id == id }?.name, "Кофе ночью")
+        let song = Attachment(id: "s", kind: .document, fileName: "song.mp3", name: "Луна.mp3")
+        XCTAssertTrue(song.isAudio)
+        vm.postInGroup(id, "", media: [song])
+        let post = try XCTUnwrap(vm.state.groups.first { $0.id == id }?.posts.first)
+        XCTAssertEqual(post.media, [song])
+        vm.togglePinGroupPost(id, post.id)
+        XCTAssertEqual(vm.state.groups.first { $0.id == id }?.pinnedPostId, post.id)
+        vm.togglePinGroupPost(id, post.id)
+        XCTAssertNil(vm.state.groups.first { $0.id == id }?.pinnedPostId)
+        vm.setGroupOnlyOwnerPosts(id, true)
+        vm.postInGroup(id, "Только для меня")
+        XCTAssertEqual(vm.state.groups.first { $0.id == id }?.posts.count, 2)
+        vm.deleteGroupPost(id, post.id)
+        XCTAssertEqual(vm.state.groups.first { $0.id == id }?.posts.count, 1)
+        let foreign = try XCTUnwrap(vm.state.groups.first { !$0.mine })
+        vm.updateGroup(foreign.id, name: "Чужое имя", description: "", topic: "")
+        XCTAssertEqual(vm.state.groups.first { $0.id == foreign.id }?.name, foreign.name)
+        _ = vm.back()
+        XCTAssertFalse(vm.state.groupSettingsOpen)
+    }
+
+    func testStickersPinsAndAchievements() throws {
+        let vm = AppModel()
+        XCTAssertFalse(vm.state.achievements.first { $0.title == "Художник" }?.earned ?? true)
+        vm.addSticker(Sticker(id: "a", fileName: "a.png", kind: .smiley))
+        vm.addSticker(Sticker(id: "b", fileName: "b.png", kind: .badge))
+        XCTAssertEqual(vm.state.stickers.map(\.id), ["b", "a"])
+        XCTAssertTrue(vm.state.achievements.first { $0.title == "Художник" }?.earned ?? false)
+        vm.deleteSticker("a")
+        XCTAssertEqual(vm.state.stickers.map(\.id), ["b"])
+        for i in 0..<4 { vm.publish("Момент \(i)") }
+        let mine = vm.state.myPosts
+        mine.forEach { vm.toggleProfilePin($0.id) }
+        XCTAssertEqual(vm.state.profilePins.count, AppModel.maxPins)
+        let foreign = try XCTUnwrap(vm.state.posts.first { $0.author.id != vm.state.me.id })
+        vm.toggleProfilePin(foreign.id)
+        XCTAssertFalse(vm.state.profilePins.contains(foreign.id))
+        let last = try XCTUnwrap(mine.last)
+        vm.deletePost(last.id)
+        XCTAssertFalse(vm.state.profilePins.contains(last.id))
+        XCTAssertEqual(vm.state.activity().count, 14)
+        XCTAssertGreaterThanOrEqual(vm.state.activity().last ?? 0, 3)
+        let restored = AppModel()
+        restored.restore(vm.snapshot())
+        XCTAssertEqual(restored.state.stickers.map(\.id), ["b"])
+        XCTAssertEqual(restored.state.profilePins, vm.state.profilePins)
+    }
+
+    func testCatalogLicenses() {
+        XCTAssertEqual(MusicCatalog.licenseFromURL("http://creativecommons.org/licenses/by-nc-sa/3.0/"), "CC BY-NC-SA 3.0")
+        XCTAssertEqual(MusicCatalog.licenseFromURL("https://creativecommons.org/licenses/by/4.0/"), "CC BY 4.0")
+        XCTAssertEqual(MusicCatalog.licenseFromURL("https://creativecommons.org/publicdomain/zero/1.0/"), "CC0")
+        XCTAssertEqual(MusicCatalog.licenseLabel("cc0", "1.0"), "CC0")
+        XCTAssertEqual(MusicCatalog.licenseLabel("by", "4.0"), "CC BY 4.0")
+        XCTAssertEqual(MusicCatalog.licenseLabel("", ""), "")
+    }
 }
