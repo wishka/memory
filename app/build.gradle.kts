@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // Kotlin встроен в AGP 9 — отдельного плагина Kotlin нет
@@ -14,7 +16,7 @@ fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
 // медиатека работает только с Openverse.
 val jamendoClientId: String = env("JAMENDO_CLIENT_ID") ?: rootProject.file("local.properties").let { f ->
     if (!f.exists()) null
-    else java.util.Properties().apply { f.inputStream().use { load(it) } }.getProperty("jamendo.clientId")
+    else Properties().apply { f.inputStream().use { load(it) } }.getProperty("jamendo.clientId")
 }.orEmpty()
 
 android {
