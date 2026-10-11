@@ -288,7 +288,7 @@ fun MediaLibraryScreen(vm: AppViewModel, state: UiState, contentPadding: Padding
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Cover(track, Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)))
+                CatalogCover(track, Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)))
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(track.title, style = MaterialTheme.typography.labelLarge, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -332,7 +332,7 @@ fun MediaLibraryScreen(vm: AppViewModel, state: UiState, contentPadding: Padding
 }
 
 @Composable
-private fun Cover(track: CatalogTrack, modifier: Modifier) {
+internal fun CatalogCover(track: CatalogTrack, modifier: Modifier) {
     val image by produceState<ImageBitmap?>(null, track.imageUrl) {
         value = withContext(Dispatchers.IO) { MusicCatalog.cover(track.imageUrl)?.asImageBitmap() }
     }
@@ -364,7 +364,7 @@ private fun CatalogRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box {
-                Cover(track, Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
+                CatalogCover(track, Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)

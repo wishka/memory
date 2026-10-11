@@ -120,7 +120,6 @@ struct CommentsSheet: View {
                 UIPasteboard.general.string = c.text
                 show(t("Скопировано"))
             },
-            GlassAction(icon: c.liked ? .heartFilled : .heart, title: c.liked ? t("Убрать «нравится»") : t("Нравится")) { onLike(c.id) },
             GlassAction(icon: .profile, title: t("Страница автора")) { onAuthor(c.author.id) },
         ]
         if c.author.id == myId {
@@ -160,7 +159,6 @@ struct CommentsSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) { onLike(c.id) }
             .onLongPressGesture(minimumDuration: 0.4) {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 menu = c

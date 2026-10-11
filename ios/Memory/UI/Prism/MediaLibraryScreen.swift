@@ -320,7 +320,7 @@ struct MediaLibraryScreen: View {
 }
 
 /// Обложка трека из сети; пока грузится — градиент со значком.
-private struct CoverImage: View {
+struct CoverImage: View {
     let url: URL?
     @State private var image: UIImage?
 

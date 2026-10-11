@@ -58,8 +58,17 @@ final class PrismCameraModel: NSObject, AVCaptureFileOutputRecordingDelegate {
         queue.async { [weak self] in self?.session.stopRunning() }
     }
 
+    /// Звук сессии настраиваем сами: микрофон пишет, а музыка для ролика
+    /// при этом играет из динамика (иначе камера глушит плеер).
+    static func prepareAudio() {
+        try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothA2DP, .mixWithOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
+    }
+
     private func configure(front: Bool, audio: Bool) {
         session.beginConfiguration()
+        session.automaticallyConfiguresApplicationAudioSession = false
+        Self.prepareAudio()
         session.sessionPreset = session.canSetSessionPreset(.hd1920x1080) ? .hd1920x1080 : .high
         for input in session.inputs where (input as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true {
             session.removeInput(input)
@@ -106,6 +115,7 @@ final class PrismCameraModel: NSObject, AVCaptureFileOutputRecordingDelegate {
     /// Начать запись или продолжить после паузы.
     func record() {
         guard !output.isRecording else { return }
+        Self.prepareAudio()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
         output.startRecording(to: url, recordingDelegate: self)
         recording = true
@@ -225,11 +235,18 @@ private struct CameraPreview: UIViewRepresentable {
 }
 
 /// Экран съёмки PRISM: таймер перед записью, длина ролика, вспышка,
-/// смена камеры, пауза и продолжение, выбор видео из галереи. Готовое
-/// видео уходит в onVideo.
+/// смена камеры, пауза и продолжение, выбор видео из галереи. Музыку
+/// можно выбрать до съёмки — из «Моей музыки» или медиатеки: она звучит
+/// во время записи и сразу стоит в редакторе. Готовое видео и выбранный
+/// трек уходят в onVideo.
 struct PrismCamera: View {
-    let onVideo: (URL) -> Void
+    let model: AppModel
+    let onVideo: (URL, MusicTrack?) -> Void
     let onClose: () -> Void
+
+    @State private var music: MusicTrack?
+    @State private var musicPlayer: AVAudioPlayer?
+    @State private var choosingMusic = false
 
     @State private var camera = PrismCameraModel()
     @State private var timer = 0
@@ -265,6 +282,7 @@ struct PrismCamera: View {
             VStack {
                 HStack(spacing: 8) {
                     RoundGlyphButton(icon: .close) {
+                        musicPlayer?.stop()
                         camera.stop()
                         onClose()
                     }
@@ -286,6 +304,8 @@ struct PrismCamera: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
+
+                musicChip.padding(.top, 8)
 
                 Spacer()
 
@@ -314,11 +334,21 @@ struct PrismCamera: View {
         .onAppear {
             camera.onFinished = { url in
                 merging = false
-                if let url { onVideo(url) } else { failed = true }
+                musicPlayer?.stop()
+                if let url { onVideo(url, music) } else { failed = true }
             }
             camera.start()
         }
-        .onDisappear { camera.stop() }
+        .onDisappear {
+            musicPlayer?.stop()
+            camera.stop()
+        }
+        .fullScreenCover(isPresented: $choosingMusic) {
+            MusicPicker(model: model, onPick: { picked in
+                choosingMusic = false
+                setMusic(picked)
+            }, onDismiss: { choosingMusic = false })
+        }
         .onChange(of: camera.recordedMs) { _, ms in
             if camera.recording && !camera.paused && ms >= Int64(length) * 1000 { finish() }
         }
@@ -334,7 +364,7 @@ struct PrismCamera: View {
                     try? FileManager.default.removeItem(at: movie.url)
                 }
                 importing = false
-                if let url { onVideo(url) } else { failed = true }
+                if let url { onVideo(url, music) } else { failed = true }
             }
         }
         .glassActions(
@@ -354,7 +384,43 @@ struct PrismCamera: View {
 
     private func finish() {
         merging = true
+        musicPlayer?.pause()
         camera.finish()
+    }
+
+    /// Выбранный трек: готовим плеер, чтобы он заиграл вместе с записью.
+    private func setMusic(_ track: MusicTrack?) {
+        musicPlayer?.stop()
+        music = track
+        musicPlayer = track.flatMap { try? AVAudioPlayer(contentsOf: $0.url) }
+        musicPlayer?.prepareToPlay()
+    }
+
+    /// Музыка для ролика: выбрать до съёмки — звучит во время записи.
+    private var musicChip: some View {
+        HStack(spacing: 8) {
+            Button { if !camera.recording { choosingMusic = true } } label: {
+                HStack(spacing: 8) {
+                    Glyph(kind: .music, color: music != nil ? Palette.ink : Palette.lilac, size: 18)
+                    Text(music.map { $0.artist.isEmpty ? $0.title : "\($0.artist) — \($0.title)" } ?? t("Добавить музыку"))
+                        .textStyle(.labelLarge)
+                        .lineLimit(1)
+                        .frame(maxWidth: 220)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(camera.recording)
+            if music != nil && !camera.recording {
+                Button { setMusic(nil) } label: {
+                    Glyph(kind: .close, color: Palette.mist, size: 14).frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, music != nil && !camera.recording ? 6 : 14)
+        .padding(.vertical, 8)
+        .glass(Capsule(), strong: music != nil)
     }
 
     /// Кнопка записи: старт (с таймером), пауза, продолжение.
@@ -372,11 +438,15 @@ struct PrismCamera: View {
                         left -= 1
                     }
                     countdown = 0
+                    musicPlayer?.currentTime = 0
+                    musicPlayer?.play()
                     camera.record()
                 }
             } else if camera.paused {
+                musicPlayer?.play()
                 camera.record()
             } else {
+                musicPlayer?.pause()
                 camera.pause()
             }
         } label: {

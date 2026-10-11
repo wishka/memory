@@ -1,5 +1,10 @@
 package ru.wishka.memory.ui.prism.create
 
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.style.TextOverflow
+import ru.wishka.memory.data.MusicTrack
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.MediaItem
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
@@ -83,10 +88,18 @@ val CAMERA_LENGTHS = listOf(15, 30, 60)
 /**
  * Камера PRISM: передняя или задняя, вспышка, таймер перед записью,
  * длина ролика, пауза и продолжение записи (кнопка записи), выбор видео
- * из галереи. Готовое видео — путь к файлу — уходит в onVideo.
+ * из галереи. Музыку можно выбрать до съёмки — из «Моей музыки» или
+ * медиатеки: она звучит во время записи (под неё удобно снимать) и сразу
+ * стоит в редакторе. Готовое видео — путь к файлу и выбранный трек —
+ * уходит в onVideo.
  */
 @Composable
-fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
+fun PrismCamera(
+    tracks: List<MusicTrack>,
+    onAddTracks: (List<MusicTrack>) -> Unit,
+    onVideo: (path: String, music: MusicTrack?) -> Unit,
+    onClose: () -> Unit,
+) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -121,9 +134,20 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
     var recordedMs by remember { mutableLongStateOf(0L) }
     var file by remember { mutableStateOf<File?>(null) }
     var importing by remember { mutableStateOf(false) }
+    var music by remember { mutableStateOf<MusicTrack?>(null) }
+    var choosingMusic by remember { mutableStateOf(false) }
+
+    // Музыка во время записи: играет с начала, на паузе — молчит
+    val musicPlayer = remember { ExoPlayer.Builder(context).build() }
+    DisposableEffect(musicPlayer) { onDispose { musicPlayer.release() } }
+    LaunchedEffect(music) {
+        val m = music
+        if (m == null) musicPlayer.stop() else { musicPlayer.setMediaItem(MediaItem.fromUri(m.path)); musicPlayer.prepare() }
+    }
 
     fun finish() {
         recording?.stop()
+        musicPlayer.pause()
     }
 
     // Звук пишется, только если разрешение на микрофон уже выдано (granted)
@@ -147,7 +171,8 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
                 is VideoRecordEvent.Finalize -> {
                     recording = null
                     val ok = !event.hasError() || event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED
-                    if (ok && target.exists() && target.length() > 0) onVideo(target.absolutePath)
+                    musicPlayer.pause()
+                    if (ok && target.exists() && target.length() > 0) onVideo(target.absolutePath, music)
                     else {
                         target.delete()
                         Toast.makeText(context, t("Не удалось записать видео"), Toast.LENGTH_SHORT).show()
@@ -169,10 +194,11 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
                     delay(1000)
                 }
                 countdown = 0
+                if (music != null) { musicPlayer.seekTo(0); musicPlayer.play() }
                 startRecording()
             }
-            paused -> { current.resume(); paused = false }
-            else -> { current.pause(); paused = true }
+            paused -> { current.resume(); paused = false; if (music != null) musicPlayer.play() }
+            else -> { current.pause(); paused = true; musicPlayer.pause() }
         }
     }
 
@@ -182,7 +208,7 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
         scope.launch {
             val item = withContext(Dispatchers.IO) { MediaFiles.import(context, uri, MediaKind.Video) }
             importing = false
-            if (item != null) onVideo(item.path)
+            if (item != null) onVideo(item.path, music)
             else Toast.makeText(context, t("Не удалось открыть видео (до 200 МБ)"), Toast.LENGTH_SHORT).show()
         }
     }
@@ -216,7 +242,7 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            CamButton(LineIcon.Close) { recording?.stop(); onClose() }
+            CamButton(LineIcon.Close) { recording?.stop(); musicPlayer.stop(); onClose() }
             Spacer(Modifier.weight(1f))
             if (recording == null) {
                 CamChip(if (timer == 0) t("Таймер") else tf("%s с", timer), active = timer > 0) {
@@ -235,6 +261,37 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
                     front = !front
                     controller.cameraSelector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
                 }
+            }
+        }
+
+        // Музыка для ролика: выбрать до съёмки — звучит во время записи
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 64.dp)
+                .clip(RoundedCornerShape(50))
+                .glass(RoundedCornerShape(50), strong = music != null)
+                .clickable(enabled = recording == null) { choosingMusic = true }
+                .padding(start = 14.dp, end = if (music != null && recording == null) 6.dp else 14.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Glyph(LineIcon.Music, if (music != null) Palette.Ink else Palette.Lilac, size = 18.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                music?.let { if (it.artist.isBlank()) it.title else "${it.artist} — ${it.title}" } ?: t("Добавить музыку"),
+                style = MaterialTheme.typography.labelLarge,
+                color = Palette.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 220.dp),
+            )
+            if (music != null && recording == null) {
+                Spacer(Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier.size(28.dp).clip(CircleShape).clickable { music = null },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(LineIcon.Close, Palette.Mist, size = 14.dp) }
             }
         }
 
@@ -293,6 +350,15 @@ fun PrismCamera(onVideo: (String) -> Unit, onClose: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (choosingMusic) {
+        MusicPicker(
+            tracks = tracks,
+            onAddTracks = onAddTracks,
+            onPick = { picked -> music = picked; choosingMusic = false },
+            onDismiss = { choosingMusic = false },
+        )
     }
 }
 

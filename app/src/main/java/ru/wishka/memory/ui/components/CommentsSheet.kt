@@ -192,7 +192,7 @@ private fun CommentRow(
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .combinedClickable(onClick = {}, onDoubleClick = onLike, onLongClick = { menu = true }),
+                    .combinedClickable(onClick = {}, onLongClick = { menu = true }),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(comment.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
@@ -211,7 +211,6 @@ private fun CommentRow(
             MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
                 MenuRow(LineIcon.Reply, t("Ответить")) { menu = false; onReply() }
                 MenuRow(LineIcon.Copy, t("Скопировать")) { menu = false; onCopy() }
-                MenuRow(if (comment.liked) LineIcon.HeartFilled else LineIcon.Heart, if (comment.liked) t("Убрать «нравится»") else t("Нравится")) { menu = false; onLike() }
                 MenuRow(LineIcon.Profile, t("Страница автора")) { menu = false; onAuthor() }
                 if (mine) {
                     MenuRow(LineIcon.Trash, t("Удалить"), color = Palette.PearlPink) { menu = false; onDelete() }
