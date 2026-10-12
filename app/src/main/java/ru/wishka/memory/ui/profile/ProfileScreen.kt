@@ -211,6 +211,7 @@ fun ProfileScreen(
 
         if (!editing) {
             item { ShowcaseCard(vm, state) }
+            item { ShelfCard(vm, state) }
             item { RecapCard(vm, state) }
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {

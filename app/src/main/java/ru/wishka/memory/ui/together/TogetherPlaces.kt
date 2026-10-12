@@ -1,5 +1,10 @@
 package ru.wishka.memory.ui.together
 
+import ru.wishka.memory.data.InviteAction
+import ru.wishka.memory.data.Unlock
+import ru.wishka.memory.data.amountNumber
+import ru.wishka.memory.ui.components.Chip
+import ru.wishka.memory.ui.components.shareInvite
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -89,8 +94,20 @@ internal fun MissionsSection(vm: AppViewModel, state: UiState, geo: Geo) {
     val shown = missions.filter { selected == null || it.id == selected }
     SectionMap(state, geo, shown.flatMap { m -> m.finds.filter { it.authorId !in state.blocked }.map { f -> MapPin("${m.id}:${f.id}", f.at, f.note, m.emoji, f.authorId == state.me.id) } })
     Hint(t("Задания по городу. Находки всех участников — на общей карте."))
+    var creating by remember { mutableStateOf(false) }
+    val own = state.unlocks.first { it.unlock == Unlock.OwnMission }
+    Card {
+        if (own.open) {
+            Hint(t("Вы открыли право придумать миссию для своего района."))
+            GlowButton(t("Своя миссия"), onClick = { creating = true })
+        } else {
+            Hint("🔒 " + t("Своя миссия района") + ": " + own.unlock.how + " · " + tf("осталось %s", own.left))
+        }
+    }
+    val km = state.movedKm
     missions.forEach { m ->
         val mine = m.mineCount(state.me.id)
+        val locked = m.locked(km)
         Card {
             Row(Modifier.clickable { selected = if (selected == m.id) null else m.id }, verticalAlignment = Alignment.CenterVertically) {
                 EmojiBadge(m.emoji)
@@ -108,9 +125,36 @@ internal fun MissionsSection(vm: AppViewModel, state: UiState, geo: Geo) {
                     photos.takeLast(4).forEach { MediaTile(it, Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)), maxSide = 256, onClick = { vm.openMedia(it) }) }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (locked) {
+                ProgressBar((km / m.unlockKm).toFloat())
+                Hint("🔒 " + tf("Откроется после %s км пробежек, прогулок и заездов — осталось %s км", amountNumber(m.unlockKm), amountNumber(Math.round((m.unlockKm - km) * 10) / 10.0)))
+            } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!m.joined) GhostButton(t("Участвовать"), onClick = { vm.joinMission(m.id) })
                 GlowButton(t("Добавить находку"), onClick = { adding = m })
+            }
+        }
+    }
+    if (creating) {
+        var emoji by remember { mutableStateOf("🗺️") }
+        var title by remember { mutableStateOf("") }
+        var description by remember { mutableStateOf("") }
+        var target by remember { mutableStateOf(5) }
+        var error by remember { mutableStateOf<String?>(null) }
+        TogetherDialog(t("Своя миссия"), onDismiss = { creating = false }) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("🗺️", "🧱", "🌳", "🎨", "🏛️", "🐦").forEach { e -> Chip(e, active = emoji == e) { emoji = e } }
+            }
+            Field(title, { title = it.take(60); error = null }, t("Что ищем? «Старые почтовые ящики»"))
+            Field(description, { description = it.take(300) }, t("Пара слов: что считается находкой"), singleLine = false)
+            Caption(tf("Сколько найти: %s", target))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(3, 5, 7, 10).forEach { n -> Chip("$n", active = target == n) { target = n } } }
+            error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Palette.PearlPink) }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GhostButton(t("Отмена"), onClick = { creating = false })
+                GlowButton(t("Создать"), enabled = title.isNotBlank(), onClick = {
+                    error = vm.createMission(emoji, title, description, target)
+                    if (error == null) creating = false
+                })
             }
         }
     }
@@ -153,7 +197,12 @@ internal fun CachesSection(vm: AppViewModel, state: UiState, geo: Geo) {
     }
     Card {
         Hint(t("Спрячьте маленький контейнер, оставьте подсказку — другие найдут и отметятся. Отметиться можно, только оказавшись рядом."))
-        GlowButton(t("Спрятать клад здесь"), onClick = { hiding = true })
+        val right = state.unlocks.first { it.unlock == Unlock.HideCache }
+        if (right.open) GlowButton(t("Спрятать клад здесь"), onClick = { hiding = true })
+        else {
+            ProgressBar(right.fraction)
+            Hint("🔒 " + t("Прятать клады можно, когда найдёте три чужих") + " · " + tf("осталось %s", right.left))
+        }
     }
     val here = geo.here
     caches.sortedBy { c -> here?.distanceTo(c.at) ?: 0.0 }.forEach { c ->
@@ -309,6 +358,7 @@ internal fun OutingsSection(vm: AppViewModel, state: UiState, geo: Geo) {
 
 @Composable
 private fun OutingCard(vm: AppViewModel, state: UiState, o: Outing) {
+    val context = LocalContext.current
     val me = state.me.id
     val organizer = personOf(state, o.organizerId)
     val joined = me in o.participants
@@ -336,6 +386,7 @@ private fun OutingCard(vm: AppViewModel, state: UiState, o: Outing) {
                 else -> GlowButton(t("Иду"), onClick = { vm.toggleOuting(o.id) })
             }
             if (o.organizerId != me) GhostButton(t("Написать"), onClick = { vm.writeTo(o.organizerId) })
+            if (!o.full && (joined || o.organizerId == me)) GhostButton(t("Позвать"), onClick = { shareInvite(context, vm, InviteAction.Outing, o.id.toString(), o.title) })
         }
     }
 }

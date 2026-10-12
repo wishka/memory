@@ -66,10 +66,22 @@ import ru.wishka.memory.ui.components.LineIcon
 import ru.wishka.memory.ui.components.Nebula
 import ru.wishka.memory.ui.components.ScreenTitle
 import ru.wishka.memory.ui.theme.Palette
+import ru.wishka.memory.data.CheckIn
+import ru.wishka.memory.data.EchoLine
+import ru.wishka.memory.data.InviteAction
+import ru.wishka.memory.data.MemoryOfDay
+import ru.wishka.memory.data.ShareCardSpec
+import ru.wishka.memory.data.memoriesOfDay
+import ru.wishka.memory.i18n.tf
+import ru.wishka.memory.ui.components.PostMedia
+import ru.wishka.memory.ui.components.shareCard
 
 /** Вкладка «Лента»: поле новой записи и записи друзей. */
 @Composable
 fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val memories = remember(state.posts) { memoriesOfDay(state.posts, state.me.id) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = contentPadding,
@@ -97,6 +109,10 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
             )
         }
+        // «Год назад вы…»: своя запись из этого же дня — пока не закрыли сегодня
+        if (memories.isNotEmpty() && state.memorySeen != java.time.LocalDate.now().toString()) {
+            item(key = "memory") { MemoryCard(vm, memories.first(), memories.size) }
+        }
         items(state.feed, key = { it.id }) { post ->
             val mine = post.author.id == state.me.id
             PostCard(
@@ -110,6 +126,12 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 // Своя запись: закрепить в витрине профиля или удалить
                 menu = if (!mine) null else { close ->
                     val pinned = post.id in state.profilePins
+                    post.checkIn?.let { c ->
+                        MenuRow(LineIcon.Share, t("Поделиться карточкой")) {
+                            close()
+                            shareCard(context, scope, vm, checkInCard(c, state), "checkin-${post.id}", InviteAction.App)
+                        }
+                    }
                     MenuRow(LineIcon.Pushpin, if (pinned) t("Убрать из витрины") else t("Закрепить в профиле")) {
                         close(); vm.toggleProfilePin(post.id)
                     }
@@ -123,6 +145,38 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
+}
+
+/** Воспоминание дня: запись, чек-ин или фото, и сколько прошло. */
+@Composable
+private fun MemoryCard(vm: AppViewModel, memory: MemoryOfDay, count: Int) {
+    GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(t("В ЭТОТ ДЕНЬ") + " · " + memory.label.uppercase(), style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
+            memory.post.checkIn?.let { CheckInBadge(it) }
+            if (memory.post.text.isNotEmpty()) Text(memory.post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink, maxLines = 4)
+            if (memory.post.media.isNotEmpty()) PostMedia(memory.post.media, onOpen = vm::openMedia)
+            if (count > 1) Text(tf("И ещё воспоминаний: %s", count - 1), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GlowButton(t("Все записи"), onClick = { vm.openProfileSection(ru.wishka.memory.ui.ProfileSection.Posts) })
+                GhostButton(t("Скрыть до завтра"), onClick = vm::dismissMemory)
+            }
+        }
+    }
+}
+
+/** Карточка-картинка чек-ина: что, оценка, темп и что изменилось на полке. */
+fun checkInCard(c: CheckIn, state: UiState): ShareCardSpec {
+    val lines = buildList {
+        if (c.rating > 0) add(EchoLine("⭐", "★".repeat(c.rating) + "☆".repeat(5 - c.rating)))
+        if (c.amountTitle.isNotEmpty()) add(EchoLine("📏", c.amountTitle))
+        if (c.paceTitle.isNotEmpty()) add(EchoLine("⚡", tf("Темп: %s", c.paceTitle)))
+        if (c.statusTitle.isNotEmpty()) add(EchoLine("📖", c.statusTitle))
+    }
+    return ShareCardSpec(
+        kicker = t("Чек-ин"), emoji = c.emoji, title = c.subject.ifEmpty { c.displayTitle },
+        subtitle = c.displayTitle, lines = lines, author = "${state.me.name} · @${state.me.handle}",
+    )
 }
 
 /**

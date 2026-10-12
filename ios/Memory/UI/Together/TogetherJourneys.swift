@@ -116,6 +116,7 @@ private struct JourneyPage: View {
     let onBack: () -> Void
     @State private var text = ""
     @State private var media: [Attachment] = []
+    @State private var sharing: SharePayload?
 
     var body: some View {
         let state = model.state
@@ -153,6 +154,22 @@ private struct JourneyPage: View {
                     }
                 }
             }
+            if mine {
+                HStack(spacing: 10) {
+                    GhostButton(title: t("Поделиться")) {
+                        let spec = ShareCardSpec(
+                            kicker: t("Челлендж"), emoji: j.emoji, title: j.title,
+                            subtitle: tf("День %s из %s", j.entries.count, j.days),
+                            lines: j.entries.suffix(3).reversed().map { EchoLine(emoji: "📓", text: tf("День %s: %s", $0.day, $0.text)) },
+                            author: "\(state.me.name) · @\(state.me.handle)"
+                        )
+                        sharing = shareCard(model, spec, name: "journey-\(j.id)", action: .journey, targetId: "\(j.id)", title: j.title)
+                    }
+                    GhostButton(title: t("Позвать за советом")) {
+                        sharing = shareInvite(model, .journey, targetId: "\(j.id)", title: j.title)
+                    }
+                }
+            }
             if j.entries.isEmpty {
                 TogetherHint(text: t("Пока ни одного дня. Первый шаг — самый важный."))
             }
@@ -160,6 +177,7 @@ private struct JourneyPage: View {
                 EntryCard(model: model, journey: j, entry: e, mine: mine)
             }
         }
+        .shareSheet($sharing)
     }
 }
 

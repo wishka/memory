@@ -26,6 +26,7 @@ enum ProfileSection: String, CaseIterable {
     case music = "Моя музыка"
     case stickers = "Студия"
     case recap = "Итоги"
+    case shelf = "Полка"
     case requests = "Заявки на подписку"
 
     var title: String { t(rawValue) }
@@ -41,9 +42,38 @@ enum SettingsPage: String, CaseIterable {
     case textSize = "Размер текста"
     case language = "Язык"
     case about = "О приложении"
+    case growth = "Друзья и идеи"
 
     var title: String { t(rawValue) }
 }
+
+/// Разделы полки.
+enum ShelfTab: String, CaseIterable, Identifiable {
+    case forYou = "Для вас"
+    case films = "Кино"
+    case books = "Книги"
+    case sport = "Спорт"
+    case places = "Места"
+    case progress = "Права"
+
+    var id: String { rawValue }
+    var title: String { t(rawValue) }
+
+    var emoji: String {
+        switch self {
+        case .forYou: return "✨"
+        case .films: return "🎬"
+        case .books: return "📖"
+        case .sport: return "🏃"
+        case .places: return "📍"
+        case .progress: return "🔓"
+        }
+    }
+}
+
+// Внутри UiState одноимённые свойства заслоняют функции — зовём через эти.
+private func computeRunPlan(_ checkIns: [Dated]) -> RunPlan { runPlan(checkIns) }
+private func computeMovedKm(_ checkIns: [Dated]) -> Double { movedKm(checkIns) }
 
 /// Всё, что видно на экране. Те же поля и правила, что UiState на Android.
 struct UiState: Equatable {
@@ -114,6 +144,37 @@ struct UiState: Equatable {
     var together: TogetherState = TogetherDemo.initial()
     /// Открытый раздел вкладки «Вместе».
     var togetherSection: TogetherSection = .challenges
+    /// Полка: отметки без записи в ленте — любимое при знакомстве, «хочу посмотреть».
+    var shelfMarks: [ShelfMark] = []
+    /// Рекомендации, от которых отказались («не моё»): ключи «film:дюна».
+    var dismissedRecs: Set<String> = []
+    /// Отклик на только что отмеченный чек-ин; nil — не показываем.
+    var echo: CheckInEcho? = nil
+    /// Журнал событий роста: приглашения, карточки, чек-ины.
+    var growth: [GrowthEvent] = []
+    /// Кто вас позвал в Memory (по ссылке).
+    var invitedBy: Invite? = nil
+    /// Приглашение, по которому только что открыли приложение: показать, к чему зовут.
+    var openedInvite: Invite? = nil
+    /// День, когда закрыли «В этот день»: «2026-10-12».
+    var memorySeen: String = ""
+    /// Полка: открытый раздел.
+    var shelfTab: ShelfTab = .films
+
+    /// Полка — собирается сама из чек-инов и отметок.
+    var shelf: Shelf { Shelf.build(posts.datedCheckIns(me.id), shelfMarks) }
+    var myCheckIns: [Dated] { posts.datedCheckIns(me.id) }
+    /// Подборка: kind — «film» или «book».
+    func recommendations(_ kind: String, limit: Int = 6, shelf precomputed: Shelf? = nil) -> [Recommendation] {
+        let shelf = precomputed ?? self.shelf
+        return recommend(shelf.rated, exclude: shelf.keys.union(dismissedRecs),
+                         friends: DemoTaste.ratings.filter { !blocked.contains($0.key) }, kind: kind, limit: limit)
+    }
+    var runPlan: RunPlan { computeRunPlan(myCheckIns) }
+    var unlocks: [UnlockProgress] { unlockProgress(together, me.id) }
+    func unlocked(_ u: Unlock) -> Bool { together.unlocked(u, meId: me.id) }
+    var movedKm: Double { computeMovedKm(myCheckIns) }
+    var inviteCode: String { Invites.code(me.handle) }
 
     var openPerson: User? { openPersonId.flatMap { Demo.person($0) } }
     var openGroup: MemoryGroup? { groups.first { $0.id == openGroupId } }
@@ -231,6 +292,11 @@ struct Snapshot: Codable, Equatable {
     var sentRequests: Set<Int>? = nil
     var recapNotified: Set<String>? = nil
     var together: TogetherState? = nil
+    var shelfMarks: [ShelfMark]? = nil
+    var dismissedRecs: Set<String>? = nil
+    var growth: [GrowthEvent]? = nil
+    var invitedBy: Invite? = nil
+    var memorySeen: String? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -379,9 +445,146 @@ final class AppModel {
             id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
             media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn
         )
-        state.posts.insert(post, at: 0)
-        // Чек-ин сам засчитывается в общие цели «Вместе»
-        if let checkIn { state.together = state.together.afterCheckIn(checkIn) }
+        let before = state
+        var next = state
+        next.posts.insert(post, at: 0)
+        if let checkIn {
+            // Чек-ин сам засчитывается в общие цели «Вместе»
+            next.together = next.together.afterCheckIn(checkIn)
+            next.growth = next.growth.logged(GrowthEvent(type: .checkIn, at: clock(), detail: checkIn.activity))
+            // Отклик: что изменилось от чек-ина — полка, цели, план, что откроется дальше
+            next.echo = echoFor(checkIn, before: before, after: next)
+        }
+        state = next
+    }
+
+    private func echoFor(_ c: CheckIn, before: UiState, after: UiState) -> CheckInEcho {
+        let kind = shelfKind(c.activity)
+        let shelfAfter = after.shelf
+        let rec = kind == "film" || kind == "book" ? after.recommendations(kind, limit: 1, shelf: shelfAfter).first : nil
+        return checkInEcho(
+            c, shelfBefore: before.shelf, shelfAfter: shelfAfter,
+            togetherBefore: before.together, togetherAfter: after.together,
+            plan: c.activity == "run" ? after.runPlan : nil,
+            kmBefore: before.movedKm, kmAfter: after.movedKm, recommendation: rec
+        ) { id in Demo.person(id)?.firstName ?? "" }
+    }
+
+    func dismissEcho() {
+        state.echo = nil
+    }
+
+    // MARK: - Полка, память, рекомендации
+
+    func openShelf(_ tab: ShelfTab = .films) {
+        openProfileSection(.shelf)
+        state.shelfTab = tab
+    }
+
+    func selectShelfTab(_ tab: ShelfTab) {
+        state.shelfTab = tab
+    }
+
+    /// «Хочу посмотреть» / «Хочу прочитать» — в планы на полке, без записи в ленте.
+    func planOnShelf(_ kind: String, _ subject: String) {
+        let activity = kind == "book" ? "book" : "movie"
+        if state.shelf.keys.contains(shelfKey(activity, subject)) { return }
+        state.shelfMarks.append(ShelfMark(activity: activity, subject: subject.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          rating: 0, status: BookStatus.want.id, at: clock()))
+    }
+
+    /// Оценка на полке без записи: поставить звёзды уже отмеченному.
+    func rateOnShelf(_ activity: String, _ subject: String, _ rating: Int) {
+        let r = min(5, max(1, rating))
+        let status = shelfKind(activity) == "book" ? BookStatus.done.id : ""
+        state.shelfMarks.append(ShelfMark(activity: activity, subject: subject.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          rating: r, status: status, at: clock()))
+    }
+
+    /// «Не моё» — больше не советовать.
+    func dismissRecommendation(_ key: String) {
+        state.dismissedRecs.insert(key)
+    }
+
+    /// Любимое из знакомства: на полку с пятью звёздами — первые рекомендации сразу.
+    func addFavorites(_ picks: [CatalogTitle]) {
+        if picks.isEmpty { return }
+        let now = clock()
+        let existing = state.shelfMarks
+        let marks: [ShelfMark] = picks.filter { p in
+            !existing.contains { $0.key == shelfKey(p.kind == "book" ? "book" : "movie", p.title) }
+        }.map { p in
+            ShelfMark(activity: p.kind == "book" ? "book" : "movie", subject: p.title, rating: 5,
+                      status: p.kind == "book" ? BookStatus.done.id : "", at: now)
+        }
+        state.shelfMarks += marks
+        state.growth = state.growth.logged(GrowthEvent(type: .onboardingDone, at: now, detail: "\(picks.count)"))
+    }
+
+    /// «В этот день» закрыли — до завтра не показываем.
+    func dismissMemory() {
+        state.memorySeen = dayKey(clock())
+    }
+
+    // MARK: - Приглашения и журнал роста
+
+    /// Приглашение к действию: текст со ссылкой для «Поделиться»; в журнал — что отправили.
+    @discardableResult
+    func invite(_ action: InviteAction, targetId: String = "", title: String = "") -> String {
+        let s = state
+        let invite = Invite(code: s.inviteCode, action: action, targetId: targetId, from: s.me.firstName)
+        log(.inviteSent, action.id + (targetId.isEmpty ? "" : ":\(targetId)"))
+        return Invites.message(invite, title: title)
+    }
+
+    func logCardShared(_ what: String) { log(.cardShared, what) }
+
+    func logFeedback(_ idea: Bool) { log(.feedback, idea ? "idea" : "bug") }
+
+    private func log(_ type: GrowthEventType, _ detail: String) {
+        state.growth = state.growth.logged(GrowthEvent(type: type, at: clock(), detail: detail))
+    }
+
+    /// Открыли приложение по ссылке-приглашению. Своя ссылка — просто
+    /// открываем, к чему она; чужая — запоминаем, кто позвал (если это
+    /// новый человек без записей — он пришёл по приглашению).
+    func openInvite(_ invite: Invite) {
+        let own = invite.code == state.inviteCode
+        let now = clock()
+        var growth = state.growth.logged(GrowthEvent(type: .inviteOpened, at: now, detail: invite.code))
+        var invitedBy = state.invitedBy
+        if !own && invitedBy == nil && state.myPosts.isEmpty {
+            invitedBy = invite
+            growth = growth.logged(GrowthEvent(type: .joinedByInvite, at: now, detail: invite.code))
+        }
+        state.growth = growth
+        state.invitedBy = invitedBy
+        state.openedInvite = own ? nil : invite
+        routeInvite(invite)
+    }
+
+    func dismissInvite() {
+        state.openedInvite = nil
+    }
+
+    /// К чему зовёт приглашение — туда и ведём.
+    private func routeInvite(_ invite: Invite) {
+        let section: TogetherSection
+        switch invite.action {
+        case .drawing: section = .drawing
+        case .book: section = .sharing
+        case .outing: section = .outings
+        case .lesson: section = .skills
+        case .journey: section = .journeys
+        case .cache: section = .caches
+        case .shelf:
+            openShelf(.forYou)
+            return
+        case .app:
+            return
+        }
+        selectTab(.together)
+        selectTogetherSection(section)
     }
 
     // MARK: - Чек-ины
@@ -1493,15 +1696,44 @@ final class AppModel {
     func joinMission(_ id: String) { together { $0.joinMission(id) } }
 
     func addFind(_ missionId: String, note: String, at: LatLon, photo: Attachment?) {
+        // Маршрут, который открывают километры, до них закрыт
+        if state.together.missions.first(where: { $0.id == missionId })?.locked(state.movedKm) == true { return }
         let find = MissionFind(id: newId(), authorId: meId, note: String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)),
                                at: at, photo: photo, createdAt: clock())
         together { $0.addFind(missionId, find) }
+    }
+
+    /// Своя миссия района — право за пять находок. nil — создана; иначе что не так.
+    @discardableResult
+    func createMission(emoji: String, title: String, description: String, target: Int) -> String? {
+        if !state.unlocked(.ownMission) { return Unlock.ownMission.how }
+        func clip(_ s: String, _ n: Int) -> String { String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(n)) }
+        if clip(title, 60).isEmpty { return t("Назовите миссию") }
+        let mission = Mission(id: "own-\(newId())", emoji: emoji, title: clip(title, 60), description: clip(description, 300),
+                              target: target, authorId: meId)
+        let ok = together { $0.createMission(mission) }
+        return ok ? nil : t("Не получилось — попробуйте другое название")
+    }
+
+    /// Своя общая цель — право за вклад в две чужие. nil — создана.
+    @discardableResult
+    func createGoal(emoji: String, title: String, description: String, unit: String, target: Double) -> String? {
+        if !state.unlocked(.ownGoal) { return Unlock.ownGoal.how }
+        func clip(_ s: String, _ n: Int) -> String { String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(n)) }
+        if clip(title, 60).isEmpty || clip(unit, 12).isEmpty { return t("Укажите название и единицу") }
+        if target <= 0 { return t("Сколько нужно собрать?") }
+        let goal = CommunityGoal(id: "own-\(newId())", emoji: emoji, title: clip(title, 60), description: clip(description, 300),
+                                 unit: clip(unit, 12), target: target, total: 0, participants: 1, metric: .other, authorId: meId)
+        let ok = together { $0.createGoal(goal) }
+        return ok ? nil : t("Не получилось — попробуйте другое название")
     }
 
     // MARK: Клады
 
     @discardableResult
     func hideCache(title: String, hint: String, difficulty: Int, size: String, at: LatLon) -> Bool {
+        // Прятать — право: сначала найдите три чужих (Unlock.hideCache)
+        if !state.unlocked(.hideCache) { return false }
         let id = newId()
         let cache = GeoCache(
             id: id, authorId: meId,
@@ -1696,7 +1928,9 @@ final class AppModel {
             stickers: state.stickers, profilePins: state.profilePins,
             checkInTemplates: state.checkInTemplates, followRequests: state.followRequests,
             approvedFollowers: state.approvedFollowers, sentRequests: state.sentRequests,
-            recapNotified: state.recapNotified, together: state.together
+            recapNotified: state.recapNotified, together: state.together,
+            shelfMarks: state.shelfMarks, dismissedRecs: state.dismissedRecs, growth: state.growth,
+            invitedBy: state.invitedBy, memorySeen: state.memorySeen
         )
     }
 
@@ -1728,7 +1962,17 @@ final class AppModel {
         s.approvedFollowers = snapshot.approvedFollowers ?? []
         s.sentRequests = snapshot.sentRequests ?? []
         s.recapNotified = snapshot.recapNotified ?? []
-        s.together = snapshot.together ?? s.together
+        let demo = s.together
+        s.together = snapshot.together.map { $0.withNewDemo(demo) } ?? demo
+        let savedMarks = snapshot.shelfMarks ?? []
+        s.shelfMarks = savedMarks + s.shelfMarks.filter { m in !savedMarks.contains { $0.key == m.key } }
+        s.dismissedRecs = snapshot.dismissedRecs ?? []
+        // Повторное восстановление (аккаунт перечитан) не удваивает журнал
+        let savedGrowth = snapshot.growth ?? []
+        let merged = savedGrowth + s.growth.filter { !savedGrowth.contains($0) }
+        s.growth = Array(merged.stableSorted { $0.at < $1.at }.suffix(growthLogLimit))
+        s.invitedBy = snapshot.invitedBy ?? s.invitedBy
+        s.memorySeen = snapshot.memorySeen ?? ""
         s.applyMe(s.me)
         state = s
     }

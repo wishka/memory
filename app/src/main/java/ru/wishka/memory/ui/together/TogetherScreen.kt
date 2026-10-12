@@ -1,5 +1,8 @@
 package ru.wishka.memory.ui.together
 
+import ru.wishka.memory.data.InviteAction
+import ru.wishka.memory.data.Unlock
+import ru.wishka.memory.ui.components.shareInvite
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -297,6 +300,44 @@ private fun ChallengesSection(vm: AppViewModel, state: UiState) {
             }
         }
     }
+    // Своя цель — право за вклад в чужие
+    var creating by remember { mutableStateOf(false) }
+    val own = state.unlocks.first { it.unlock == Unlock.OwnGoal }
+    Card {
+        if (own.open) {
+            Hint(t("Вы открыли право предложить сообществу свою цель."))
+            GlowButton(t("Своя цель"), onClick = { creating = true })
+        } else {
+            Hint("🔒 " + t("Своя общая цель") + ": " + own.unlock.how + " · " + tf("осталось %s", own.left))
+        }
+    }
+    if (creating) {
+        var emoji by remember { mutableStateOf("🎯") }
+        var title by remember { mutableStateOf("") }
+        var description by remember { mutableStateOf("") }
+        var unit by remember { mutableStateOf("") }
+        var target by remember { mutableStateOf("") }
+        var error by remember { mutableStateOf<String?>(null) }
+        TogetherDialog(t("Своя цель"), onDismiss = { creating = false }) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("🎯", "🌳", "🧹", "🚲", "📚", "🐾").forEach { e -> Chip(e, active = emoji == e) { emoji = e } }
+            }
+            Field(title, { title = it.take(60); error = null }, t("Цель: «Уберём 100 дворов»"))
+            Field(description, { description = it.take(300) }, t("Как засчитывается вклад"), singleLine = false)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) { Field(target, { v -> target = v.filter { it.isDigit() }.take(9) }, t("Сколько"), keyboardType = KeyboardType.Number) }
+                Box(Modifier.weight(1f)) { Field(unit, { unit = it.take(12) }, t("Чего: дворов")) }
+            }
+            error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Palette.PearlPink) }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GhostButton(t("Отмена"), onClick = { creating = false })
+                GlowButton(t("Создать"), enabled = title.isNotBlank(), onClick = {
+                    error = vm.createGoal(emoji, title, description, unit, target.toDoubleOrNull() ?: 0.0)
+                    if (error == null) creating = false
+                })
+            }
+        }
+    }
     contributing?.let { goal ->
         var amount by remember(goal.id) { mutableStateOf("") }
         TogetherDialog(goal.title, onDismiss = { contributing = null }) {
@@ -321,9 +362,15 @@ private fun SkillsSection(vm: AppViewModel, state: UiState) {
     val together = state.together
     var adding by remember { mutableStateOf<Boolean?>(null) }
     var dealWith by remember { mutableStateOf<SkillOffer?>(null) }
+    val context = LocalContext.current
+    val mentor = state.unlocks.first { it.unlock == Unlock.Mentor }
     Card {
         Caption(t("Банк времени"))
         Text(minutesTitle(together.balance), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink)
+        Text(
+            if (mentor.open) "🎓 " + t("Вы наставник — вас первым видят в подборе") else "🎓 " + mentor.unlock.how + " · " + tf("осталось %s", mentor.left),
+            style = MaterialTheme.typography.labelLarge, color = Palette.Lilac,
+        )
         Hint(t("Никаких денег: научили кого-то 30 минут — получили 30 минут, потратить их можно на любой навык у любого. Обмен «я тебе — ты мне» баланс не меняет."))
     }
     Card {
@@ -353,6 +400,11 @@ private fun SkillsSection(vm: AppViewModel, state: UiState) {
             Text(tf("Хочет: %s", offer.wants.joinToString(", ")), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
             GlowButton(t("Договориться"), onClick = { dealWith = offer })
         }
+    }
+    // Нужного навыка нет среди знакомых — позвать того, кто умеет
+    Card {
+        Hint(t("Знаете того, кто умеет то, чему вы хотите научиться? Позовите — обменяетесь навыками."))
+        GhostButton(t("Позвать в обмен навыками"), onClick = { shareInvite(context, vm, InviteAction.Lesson, title = together.myWant.firstOrNull().orEmpty()) })
     }
     adding?.let { teach ->
         var skill by remember(teach) { mutableStateOf("") }

@@ -67,6 +67,15 @@ class StateStore(private val context: Context) {
             .put("sentRequests", JSONArray(s.sentRequests.toList()))
             .put("recapNotified", JSONArray(s.recapNotified.toList()))
             .put("together", s.together?.let { together(it) } ?: JSONObject.NULL)
+            .put("shelfMarks", JSONArray(s.shelfMarks.map { m ->
+                JSONObject().put("activity", m.activity).put("subject", m.subject).put("rating", m.rating).put("status", m.status).put("at", m.at)
+            }))
+            .put("dismissedRecs", JSONArray(s.dismissedRecs.toList()))
+            .put("growth", JSONArray(s.growth.map { e -> JSONObject().put("type", e.type.name).put("at", e.at).put("detail", e.detail) }))
+            .put("invitedBy", s.invitedBy?.let { i ->
+                JSONObject().put("code", i.code).put("action", i.action.id).put("targetId", i.targetId).put("from", i.from)
+            } ?: JSONObject.NULL)
+            .put("memorySeen", s.memorySeen)
 
         fun snapshot(o: JSONObject) = Snapshot(
             posts = o.getJSONArray("posts").objects().map { post(it) },
@@ -91,6 +100,17 @@ class StateStore(private val context: Context) {
             sentRequests = o.optJSONArray("sentRequests").ints().toSet(),
             recapNotified = o.optJSONArray("recapNotified")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
             together = o.optJSONObject("together")?.let { runCatching { together(it) }.getOrNull() },
+            shelfMarks = o.optJSONArray("shelfMarks").objects().map { m ->
+                ShelfMark(m.optString("activity", "movie"), m.optString("subject"), m.optInt("rating"), m.optString("status"), m.optLong("at"))
+            },
+            dismissedRecs = o.optJSONArray("dismissedRecs")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
+            growth = o.optJSONArray("growth").objects().mapNotNull { e ->
+                GrowthEventType.entries.firstOrNull { it.name == e.optString("type") }?.let { GrowthEvent(it, e.optLong("at"), e.optString("detail")) }
+            },
+            invitedBy = o.optJSONObject("invitedBy")?.let { i ->
+                Invite(i.optString("code"), InviteAction.of(i.optString("action")), i.optString("targetId"), i.optString("from"))
+            },
+            memorySeen = o.optString("memorySeen"),
         )
 
         // ---------- Вместе ----------
@@ -118,7 +138,7 @@ class StateStore(private val context: Context) {
             .put("goals", JSONArray(t.goals.map { g ->
                 JSONObject().put("id", g.id).put("emoji", g.emoji).put("title", g.title).put("description", g.description)
                     .put("unit", g.unit).put("target", g.target).put("total", g.total).put("participants", g.participants)
-                    .put("metric", g.metric.name).put("joined", g.joined).put("mine", g.mine)
+                    .put("metric", g.metric.name).put("joined", g.joined).put("mine", g.mine).put("authorId", g.authorId)
             }))
             .put("offers", JSONArray(t.offers.map { o ->
                 JSONObject().put("personId", o.personId).put("teaches", strings(o.teaches)).put("wants", strings(o.wants)).put("about", o.about)
@@ -141,7 +161,7 @@ class StateStore(private val context: Context) {
             }))
             .put("missions", JSONArray(t.missions.map { m ->
                 JSONObject().put("id", m.id).put("emoji", m.emoji).put("title", m.title).put("description", m.description)
-                    .put("target", m.target).put("joined", m.joined)
+                    .put("target", m.target).put("joined", m.joined).put("unlockKm", m.unlockKm).put("authorId", m.authorId)
                     .put("finds", JSONArray(m.finds.map { f ->
                         JSONObject().put("id", f.id).put("authorId", f.authorId).put("note", f.note).put("at", latLon(f.at))
                             .put("photo", f.photo?.let { attachment(it) } ?: JSONObject.NULL).put("createdAt", f.createdAt)
@@ -186,7 +206,7 @@ class StateStore(private val context: Context) {
                     g.getString("id"), g.optString("emoji"), g.optString("title"), g.optString("description"), g.optString("unit"),
                     g.optDouble("target", 1.0), g.optDouble("total", 0.0), g.optInt("participants"),
                     GoalMetric.entries.firstOrNull { it.name == g.optString("metric") } ?: GoalMetric.Other,
-                    g.optBoolean("joined"), g.optDouble("mine", 0.0),
+                    g.optBoolean("joined"), g.optDouble("mine", 0.0), g.optInt("authorId", 0),
                 )
             },
             offers = o.optJSONArray("offers").objects().map { f ->
@@ -220,6 +240,7 @@ class StateStore(private val context: Context) {
                     m.optJSONArray("finds").objects().map { f ->
                         MissionFind(f.getLong("id"), f.getInt("authorId"), f.optString("note"), latLon(f.getJSONArray("at")), f.optAttachment("photo"), f.optLong("createdAt"))
                     },
+                    m.optDouble("unlockKm", 0.0), m.optInt("authorId", 0),
                 )
             },
             caches = o.optJSONArray("caches").objects().map { c ->
@@ -265,10 +286,12 @@ class StateStore(private val context: Context) {
         private fun checkIn(c: CheckIn) = JSONObject()
             .put("activity", c.activity).put("emoji", c.emoji).put("title", c.title)
             .put("subject", c.subject).put("amount", c.amount).put("unit", c.unit)
+            .put("rating", c.rating).put("status", c.status).put("minutes", c.minutes)
 
         private fun checkIn(o: JSONObject) = CheckIn(
             o.getString("activity"), o.optString("emoji"), o.optString("title"),
             o.optString("subject"), o.optDouble("amount", 0.0), o.optString("unit"),
+            rating = o.optInt("rating", 0), status = o.optString("status"), minutes = o.optInt("minutes", 0),
         )
 
         private fun track(t: MusicTrack) = JSONObject()

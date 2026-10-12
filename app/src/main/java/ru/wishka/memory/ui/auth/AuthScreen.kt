@@ -49,8 +49,8 @@ import ru.wishka.memory.ui.theme.Palette
  * снова только если выйдет из профиля.
  */
 @Composable
-fun AuthScreen(vm: AuthViewModel, state: AuthState) {
-    var registering by rememberSaveable { mutableStateOf(false) }
+fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = false) {
+    var registering by rememberSaveable { mutableStateOf(startRegistering) }
     var login by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
     // Пароли не сохраняются при повороте экрана: им нечего делать в

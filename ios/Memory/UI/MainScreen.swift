@@ -59,6 +59,18 @@ struct MainScreen: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: state.banner?.id)
+        // Отклик на чек-ин и приглашение — окном посреди экрана
+        .overlay {
+            if let echo = state.echo {
+                EchoDialog(model: model, echo: echo)
+                    .transition(.opacity)
+            } else if let invite = state.openedInvite {
+                InviteDialog(model: model, invite: invite)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: state.echo != nil)
+        .animation(.easeOut(duration: 0.2), value: state.openedInvite != nil)
         // Обсуждение записи или PRISM — шторкой поверх любого экрана
         .sheet(isPresented: commentsShown) { comments }
         // Фото или видео — на весь экран
@@ -154,6 +166,8 @@ struct MainScreen: View {
                 StickerStudioScreen(model: model)
             } else if model.state.profileSection == .recap {
                 RecapScreen(model: model)
+            } else if model.state.profileSection == .shelf {
+                ShelfScreen(model: model)
             } else if let section = model.state.profileSection {
                 ProfileSectionScreen(model: model, section: section)
             } else {

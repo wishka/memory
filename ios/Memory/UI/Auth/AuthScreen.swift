@@ -8,7 +8,13 @@ import SwiftUI
 struct AuthScreen: View {
     let auth: AuthModel
 
-    @State private var registering = false
+    @State private var registering: Bool
+
+    /// startRegistering — после знакомства сразу регистрация: полку нужно сохранить.
+    init(auth: AuthModel, startRegistering: Bool = false) {
+        self.auth = auth
+        _registering = State(initialValue: startRegistering)
+    }
     @State private var login = ""
     @State private var name = ""
     @State private var password = ""

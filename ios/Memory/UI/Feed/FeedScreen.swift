@@ -3,12 +3,19 @@ import SwiftUI
 /// Вкладка «Лента»: поле новой записи и записи друзей.
 struct FeedScreen: View {
     let model: AppModel
+    @State private var sharing: SharePayload?
 
-    /// Своя запись: закрепить в витрине профиля или удалить.
+    /// Своя запись: поделиться карточкой чек-ина, закрепить в витрине профиля или удалить.
     private func ownMenu(_ post: Post) -> [GlassAction] {
         guard post.author.id == model.state.me.id else { return [] }
         let pinned = model.state.profilePins.contains(post.id)
-        return [
+        var card: [GlassAction] = []
+        if let c = post.checkIn {
+            card.append(GlassAction(icon: .share, title: t("Поделиться карточкой")) {
+                sharing = shareCard(model, checkInCard(c, model.state), name: "checkin-\(post.id)", action: .app)
+            })
+        }
+        return card + [
             GlassAction(icon: .pushpin, title: pinned ? t("Убрать из витрины") : t("Закрепить в профиле")) {
                 model.toggleProfilePin(post.id)
             },
@@ -34,6 +41,12 @@ struct FeedScreen: View {
 
                 PostComposer(model: model)
 
+                // «Год назад вы…»: своя запись из этого же дня — пока не закрыли сегодня
+                let memories = memoriesOfDay(state.posts, meId: state.me.id)
+                if let first = memories.first, state.memorySeen != dayKey() {
+                    MemoryCard(model: model, memory: first, count: memories.count)
+                }
+
                 ForEach(state.feed) { post in
                     PostCard(
                         post: post,
@@ -51,7 +64,55 @@ struct FeedScreen: View {
             .padding(.bottom, tabBarSpace)
         }
         .scrollDismissesKeyboard(.interactively)
+        .shareSheet($sharing)
     }
+}
+
+/// Воспоминание дня: запись, чек-ин или фото, и сколько прошло.
+private struct MemoryCard: View {
+    let model: AppModel
+    let memory: MemoryOfDay
+    let count: Int
+
+    var body: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(t("В ЭТОТ ДЕНЬ") + " · " + memory.label.uppercased()).textStyle(.label, Palette.lilac)
+                if let c = memory.post.checkIn { CheckInBadge(checkIn: c) }
+                if !memory.post.text.isEmpty {
+                    Text(memory.post.text).textStyle(.body).lineLimit(4)
+                }
+                if !memory.post.media.isEmpty {
+                    PostMediaView(media: memory.post.media.filter { $0.kind != .document && !$0.sticker }) { model.openMedia($0) }
+                }
+                if count > 1 {
+                    Text(tf("И ещё воспоминаний: %s", count - 1)).textStyle(.bodySmall, Palette.mist)
+                }
+                HStack(spacing: 10) {
+                    GlowButton(title: t("Все записи")) { model.openProfileSection(.posts) }
+                    GhostButton(title: t("Скрыть до завтра")) { model.dismissMemory() }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .cardPadding()
+    }
+}
+
+/// Карточка-картинка чек-ина: что, оценка, темп и статус книги.
+func checkInCard(_ c: CheckIn, _ state: UiState) -> ShareCardSpec {
+    var lines: [EchoLine] = []
+    if c.rating > 0 {
+        lines.append(EchoLine(emoji: "⭐", text: String(repeating: "★", count: c.rating) + String(repeating: "☆", count: max(0, 5 - c.rating))))
+    }
+    if !c.amountTitle.isEmpty { lines.append(EchoLine(emoji: "📏", text: c.amountTitle)) }
+    if !c.paceTitle.isEmpty { lines.append(EchoLine(emoji: "⚡", text: tf("Темп: %s", c.paceTitle))) }
+    if !c.statusTitle.isEmpty { lines.append(EchoLine(emoji: "📖", text: c.statusTitle)) }
+    return ShareCardSpec(
+        kicker: t("Чек-ин"), emoji: c.emoji, title: c.subject.isEmpty ? c.displayTitle : c.subject,
+        subtitle: c.displayTitle, lines: lines, author: "\(state.me.name) · @\(state.me.handle)"
+    )
 }
 
 /// Карточка записи. following: nil — это своя запись (кнопки подписки

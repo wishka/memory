@@ -1,5 +1,8 @@
 package ru.wishka.memory.ui.together
 
+import ru.wishka.memory.data.InviteAction
+import ru.wishka.memory.data.Unlock
+import ru.wishka.memory.ui.components.shareInvite
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -166,6 +169,7 @@ private fun DrawingCard(state: UiState, d: CollabDrawing, action: String?, onAct
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DrawTurnEditor(vm: AppViewModel, state: UiState, d: CollabDrawing, onClose: () -> Unit) {
+    val context = LocalContext.current
     var strokes by remember { mutableStateOf<List<DrawStroke>>(emptyList()) }
     var current by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
     var color by remember { mutableIntStateOf(STICKER_COLORS[4]) }
@@ -219,6 +223,7 @@ private fun DrawTurnEditor(vm: AppViewModel, state: UiState, d: CollabDrawing, o
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         friends.forEach { p -> Chip(p.name.substringBefore(' '), active = passTo == p.id) { passTo = p.id } }
                     }
+                    GhostButton(t("Позвать того, кого нет в Memory"), onClick = { shareInvite(context, vm, InviteAction.Drawing, d.id.toString(), d.title) })
                 } else {
                     Hint(t("Это последний ход — после него рисунок готов."))
                 }
@@ -235,6 +240,7 @@ private fun DrawTurnEditor(vm: AppViewModel, state: UiState, d: CollabDrawing, o
 
 @Composable
 internal fun SharingSection(vm: AppViewModel, state: UiState) {
+    val context = LocalContext.current
     var kind by remember { mutableStateOf(ShareKind.Book) }
     var adding by remember { mutableStateOf(false) }
     var handing by remember { mutableStateOf<ShareItem?>(null) }
@@ -258,7 +264,14 @@ internal fun SharingSection(vm: AppViewModel, state: UiState) {
             onClick = { adding = true },
         )
     }
-    state.together.shares.filter { it.kind == kind && it.ownerId !in state.blocked }.forEach { item -> ShareCard(vm, state, item) { handing = item } }
+    // Хранитель книг: ваши книги — первыми в обмене
+    val keeper = state.unlocked(Unlock.Keeper)
+    if (kind == ShareKind.Book) {
+        val k = state.unlocks.first { it.unlock == Unlock.Keeper }
+        Hint(if (k.open) "📚 " + t("Вы хранитель книг — ваши книги стоят первыми") else "📚 " + k.unlock.how + " · " + tf("осталось %s", k.left))
+    }
+    state.together.shares.filter { it.kind == kind && it.ownerId !in state.blocked }
+        .sortedByDescending { keeper && it.ownerId == state.me.id }.forEach { item -> ShareCard(vm, state, item) { handing = item } }
     if (adding) {
         var title by remember { mutableStateOf("") }
         var description by remember { mutableStateOf("") }
@@ -287,6 +300,7 @@ internal fun SharingSection(vm: AppViewModel, state: UiState) {
             people.forEach { p ->
                 PersonLine(p, "", onClick = { vm.handOver(item.id, p.id); handing = null })
             }
+            GhostButton(t("Тому, кого нет в Memory"), onClick = { shareInvite(context, vm, InviteAction.Book, item.id.toString(), item.title) })
             GhostButton(t("Отмена"), onClick = { handing = null })
         }
     }

@@ -63,6 +63,7 @@ import ru.wishka.memory.ui.profile.ProfileSectionScreen
 import ru.wishka.memory.ui.profile.MusicScreen
 import ru.wishka.memory.ui.profile.StickerStudioScreen
 import ru.wishka.memory.ui.profile.RecapScreen
+import ru.wishka.memory.ui.profile.ShelfScreen
 import ru.wishka.memory.ui.prism.create.PrismCreateFlow
 import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.settings.AccountActions
@@ -81,6 +82,11 @@ import ru.wishka.memory.push.AppVisibility
 import ru.wishka.memory.push.MemoryNotifications
 import ru.wishka.memory.push.PushBus
 import ru.wishka.memory.ui.components.NudgeBanner
+import ru.wishka.memory.ui.components.EchoDialog
+import ru.wishka.memory.ui.components.InviteDialog
+import ru.wishka.memory.ui.auth.OnboardingScreen
+import ru.wishka.memory.data.Invite
+import ru.wishka.memory.data.Invites
 
 class MainActivity : ComponentActivity() {
     override fun onStart() {
@@ -97,11 +103,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         MemoryNotifications.fromIntent(intent)?.let { openedNudge.value = it }
+        intent.data?.toString()?.let(Invites::parse)?.let { openedInvite.value = it }
     }
 
     companion object {
         /** Уведомление, по которому открыли приложение, — его откроет AppRoot. */
         val openedNudge = MutableStateFlow<Nudge?>(null)
+
+        /** Ссылка-приглашение, по которой открыли приложение: её разберёт MainScreen после входа. */
+        val openedInvite = MutableStateFlow<Invite?>(null)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -109,6 +119,7 @@ class MainActivity : ComponentActivity() {
         val fromHistory = (intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
         if (savedInstanceState == null && !fromHistory) {
             MemoryNotifications.fromIntent(intent)?.let { openedNudge.value = it }
+            intent?.data?.toString()?.let(Invites::parse)?.let { openedInvite.value = it }
         }
         // Рисуем под системными панелями; значки панелей — светлые
         enableEdgeToEdge(
@@ -125,7 +136,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Что сейчас на экране: заставка, вход или само приложение. */
-private enum class Stage { Splash, Auth, Main }
+private enum class Stage { Splash, Onboarding, Auth, Main }
 
 @Composable
 fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel()) {
@@ -139,6 +150,10 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
     val account = auth.account
     val context = LocalContext.current
     val store = remember(context) { StateStore(context.applicationContext) }
+    val device = remember(context) { DevicePrefs(context.applicationContext) }
+    // Знакомство «выберите любимое» — один раз на телефоне, до регистрации
+    var onboarded by rememberSaveable { mutableStateOf(device.onboarded) }
+    var registerNext by rememberSaveable { mutableStateOf(false) }
     var loadedFor by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(account) {
         loadedFor = null
@@ -146,6 +161,11 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
             vm.setAccount(account.username, account.displayName, account.info)
             val me = vm.state.value.me
             withContext(Dispatchers.IO) { store.load(account.username, me) }?.let(vm::restore)
+            // Любимое из знакомства — на полку этого аккаунта
+            device.pendingPicks().takeIf { it.isNotEmpty() }?.let { picks ->
+                vm.addFavorites(picks)
+                device.clearPicks()
+            }
             loadedFor = account.username
             // Сохранённое на месте — можно считать итоги и оживлять демо
             vm.checkRecapReady()
@@ -165,17 +185,44 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
         }
     }
 
+    // Открыли приложение по ссылке-приглашению — кто позвал и к чему.
+    // Только когда сохранённое уже на месте: иначе у старого аккаунта без
+    // записей (до restore) приглашение сочли бы регистрацией по ссылке.
+    // Пока не вошли — ссылка ждёт в openedInvite.
+    LaunchedEffect(loadedFor) {
+        if (loadedFor == null) return@LaunchedEffect
+        MainActivity.openedInvite.collect { invite ->
+            if (invite != null) {
+                vm.openInvite(invite)
+                MainActivity.openedInvite.value = null
+            }
+        }
+    }
+
     // Заставка держится, пока проверяется сохранённая сессия: иначе на
     // долю секунды мелькнул бы экран входа у уже вошедшего человека
     val stage = when {
         !splashDone || auth.checking -> Stage.Splash
+        account == null && !onboarded -> Stage.Onboarding
         account == null -> Stage.Auth
         else -> Stage.Main
     }
     Crossfade(targetState = stage, animationSpec = tween(500), label = "stage") { s ->
         when (s) {
             Stage.Splash -> AtomSplash(onFinished = { splashDone = true })
-            Stage.Auth -> AuthScreen(authVm, auth)
+            Stage.Onboarding -> OnboardingScreen(
+                onDone = { picks ->
+                    device.savePicks(picks)
+                    device.setOnboarded()
+                    registerNext = true
+                    onboarded = true
+                },
+                onSkip = {
+                    device.setOnboarded()
+                    onboarded = true
+                },
+            )
+            Stage.Auth -> AuthScreen(authVm, auth, startRegistering = registerNext)
             Stage.Main -> MainScreen(
                 vm,
                 onSaveProfile = authVm::saveProfile,
@@ -289,6 +336,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                             section == ProfileSection.Music -> MusicScreen(vm, state, padding)
                             section == ProfileSection.Stickers -> StickerStudioScreen(vm, state, padding)
                             section == ProfileSection.Recap -> RecapScreen(vm, state, padding)
+                            section == ProfileSection.Shelf -> ShelfScreen(vm, state, padding)
                             section != null -> ProfileSectionScreen(vm, state, section, padding)
                             else -> ProfileScreen(vm, state, padding, onSaveProfile)
                         }
@@ -349,6 +397,8 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
+        state.echo?.let { EchoDialog(vm, state, it) }
+        state.openedInvite?.let { InviteDialog(vm, it) }
         state.viewing?.let { MediaViewer(it, onClose = vm::closeMedia) }
         // Свой PRISM — камера и редактор во весь экран, поверх всего
         if (state.creatingPrism) PrismCreateFlow(vm, state)

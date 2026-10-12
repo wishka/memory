@@ -77,6 +77,8 @@ data class CommunityGoal(
     val metric: GoalMetric,
     val joined: Boolean = false,
     val mine: Double = 0.0,
+    /** Кто предложил: 0 — сообщество; свой номер — ваша цель. */
+    val authorId: Int = 0,
 ) {
     val progress: Float get() = (total / target).toFloat().coerceIn(0f, 1f)
 }
@@ -179,8 +181,13 @@ data class Mission(
     val target: Int,
     val joined: Boolean = false,
     val finds: List<MissionFind> = emptyList(),
+    /** Откроется после стольких км бега, ходьбы и велосипеда; 0 — открыта сразу. */
+    val unlockKm: Double = 0.0,
+    /** Кто придумал: 0 — сообщество; свой номер — ваша миссия района. */
+    val authorId: Int = 0,
 ) {
     fun mineCount(meId: Int) = finds.count { it.authorId == meId }
+    fun locked(movedKm: Double) = unlockKm > 0 && movedKm < unlockKm
 }
 
 // ---------- 5. Клады ----------
@@ -393,6 +400,14 @@ data class TogetherState(
 
     // ---------- Миссии ----------
 
+    /** Своя миссия района — право, которое открывают находки (Unlock.OwnMission). */
+    fun createMission(m: Mission): TogetherState? =
+        if (m.title.isBlank() || missions.any { it.id == m.id }) null else copy(missions = listOf(m.copy(joined = true, target = m.target.coerceIn(1, 20))) + missions)
+
+    /** Своя общая цель — право за вклад в чужие (Unlock.OwnGoal). */
+    fun createGoal(g: CommunityGoal): TogetherState? =
+        if (g.title.isBlank() || g.target <= 0 || goals.any { it.id == g.id }) null else copy(goals = goals + g.copy(joined = true, participants = 1))
+
     fun joinMission(id: String) = copy(missions = missions.map { if (it.id == id) it.copy(joined = true) else it })
 
     fun addFind(missionId: String, find: MissionFind) =
@@ -487,3 +502,9 @@ data class TogetherState(
         )
     }
 }
+
+/** После обновления приложения: новые демо-миссии и цели появляются и в сохранённом. */
+fun TogetherState.withNewDemo(demo: TogetherState): TogetherState = copy(
+    missions = missions + demo.missions.filter { d -> missions.none { it.id == d.id } },
+    goals = goals + demo.goals.filter { d -> goals.none { it.id == d.id } },
+)

@@ -109,6 +109,7 @@ struct MissionsSection: View {
     let geo: TogetherGeo
     @State private var adding: Mission?
     @State private var selected: String?
+    @State private var creating = false
 
     var body: some View {
         let state = model.state
@@ -120,6 +121,16 @@ struct MissionsSection: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionMap(model: model, geo: geo, pins: pins)
             TogetherHint(text: t("Задания по городу. Находки всех участников — на общей карте."))
+            if let own = state.unlocks.first(where: { $0.unlock == .ownMission }) {
+                TogetherCard {
+                    if own.open {
+                        TogetherHint(text: t("Вы открыли право придумать миссию для своего района."))
+                        GlowButton(title: t("Своя миссия")) { creating = true }
+                    } else {
+                        TogetherHint(text: "🔒 " + t("Своя миссия района") + ": " + own.unlock.how + " · " + tf("осталось %s", own.left))
+                    }
+                }
+            }
             ForEach(missions) { m in
                 missionCard(m, state: state)
             }
@@ -127,10 +138,15 @@ struct MissionsSection: View {
         .sheet(item: $adding) { m in
             AddFindSheet(model: model, geo: geo, mission: m) { adding = nil }
         }
+        .sheet(isPresented: $creating) {
+            OwnMissionSheet(model: model) { creating = false }
+        }
     }
 
     private func missionCard(_ m: Mission, state: UiState) -> some View {
         let mine = m.mineCount(state.me.id)
+        let km = state.movedKm
+        let locked = m.locked(km)
         let photos = m.finds.filter { !state.blocked.contains($0.authorId) }.compactMap(\.photo)
         return TogetherCard {
             Button { selected = selected == m.id ? nil : m.id } label: {
@@ -158,11 +174,55 @@ struct MissionsSection: View {
                     }
                 }
             }
-            HStack(spacing: 10) {
-                if !m.joined {
-                    GhostButton(title: t("Участвовать")) { model.joinMission(m.id) }
+            if locked {
+                TogetherProgress(progress: km / m.unlockKm)
+                TogetherHint(text: "🔒 " + tf("Откроется после %s км пробежек, прогулок и заездов — осталось %s км",
+                                             amountNumber(m.unlockKm), amountNumber(tenths(m.unlockKm - km))))
+            } else {
+                HStack(spacing: 10) {
+                    if !m.joined {
+                        GhostButton(title: t("Участвовать")) { model.joinMission(m.id) }
+                    }
+                    GlowButton(title: t("Добавить находку")) { adding = m }
                 }
-                GlowButton(title: t("Добавить находку")) { adding = m }
+            }
+        }
+    }
+}
+
+/// Своя миссия района: что ищем, что считается находкой, сколько найти.
+private struct OwnMissionSheet: View {
+    let model: AppModel
+    let onClose: () -> Void
+    @State private var emoji = "🗺️"
+    @State private var title = ""
+    @State private var description = ""
+    @State private var target = 5
+    @State private var error: String?
+
+    var body: some View {
+        TogetherSheet(title: t("Своя миссия")) {
+            HStack(spacing: 6) {
+                ForEach(["🗺️", "🧱", "🌳", "🎨", "🏛️", "🐦"], id: \.self) { e in
+                    Chip(text: e, active: emoji == e) { emoji = e }
+                }
+            }
+            TogetherField(placeholder: t("Что ищем? «Старые почтовые ящики»"), text: $title, limit: 60)
+                .onChange(of: title) { _, _ in error = nil }
+            TogetherField(placeholder: t("Пара слов: что считается находкой"), text: $description, limit: 300, singleLine: false)
+            TogetherCaption(text: tf("Сколько найти: %s", target))
+            HStack(spacing: 6) {
+                ForEach([3, 5, 7, 10], id: \.self) { n in
+                    Chip(text: "\(n)", active: target == n) { target = n }
+                }
+            }
+            TogetherError(text: error)
+            HStack(spacing: 10) {
+                GhostButton(title: t("Отмена"), action: onClose)
+                GlowButton(title: t("Создать"), enabled: !title.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    error = model.createMission(emoji: emoji, title: title, description: description, target: target)
+                    if error == nil { onClose() }
+                }
             }
         }
     }
@@ -227,7 +287,12 @@ struct CachesSection: View {
             SectionMap(model: model, geo: geo, pins: pins) { id in openId = Int64(id) }
             TogetherCard {
                 TogetherHint(text: t("Спрячьте маленький контейнер, оставьте подсказку — другие найдут и отметятся. Отметиться можно, только оказавшись рядом."))
-                GlowButton(title: t("Спрятать клад здесь")) { hiding = true }
+                if let right = state.unlocks.first(where: { $0.unlock == .hideCache }), !right.open {
+                    TogetherProgress(progress: right.fraction)
+                    TogetherHint(text: "🔒 " + t("Прятать клады можно, когда найдёте три чужих") + " · " + tf("осталось %s", right.left))
+                } else {
+                    GlowButton(title: t("Спрятать клад здесь")) { hiding = true }
+                }
             }
             ForEach(caches.togetherSorted { c in here?.distance(to: c.at) ?? 0 }) { c in
                 cacheCard(c, here: here)
@@ -489,6 +554,7 @@ private struct CreateOutingSheet: View {
 private struct OutingCard: View {
     let model: AppModel
     let outing: Outing
+    @State private var sharing: SharePayload?
 
     var body: some View {
         let state = model.state
@@ -518,7 +584,7 @@ private struct OutingCard: View {
                 Text(tf("%s из %s · собирает %s", o.participants.count, o.capacity, organizer.name))
                     .textStyle(.bodySmall, Palette.mist)
             }
-            HStack(spacing: 10) {
+            FlowLayout(spacing: 10) {
                 if o.organizerId == me {
                     GhostButton(title: t("Отменить вылазку")) { model.cancelOuting(o.id) }
                 } else if joined {
@@ -531,7 +597,13 @@ private struct OutingCard: View {
                 if o.organizerId != me {
                     GhostButton(title: t("Написать")) { model.writeTo(o.organizerId) }
                 }
+                if !o.full && (joined || o.organizerId == me) {
+                    GhostButton(title: t("Позвать")) {
+                        sharing = shareInvite(model, .outing, targetId: "\(o.id)", title: o.title)
+                    }
+                }
             }
         }
+        .shareSheet($sharing)
     }
 }

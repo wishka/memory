@@ -27,6 +27,28 @@ class DevicePrefs(context: Context) {
         prefs.edit().putFloat("textScale", scale).apply()
     }
 
+    /** Знакомство «выберите любимое» уже показали на этом телефоне. */
+    val onboarded: Boolean get() = prefs.getBoolean("onboarded", false)
+
+    fun setOnboarded() {
+        prefs.edit().putBoolean("onboarded", true).apply()
+    }
+
+    /** Любимое, выбранное до регистрации: попадёт на полку нового аккаунта. */
+    fun pendingPicks(): List<CatalogTitle> =
+        prefs.getString("picks", "").orEmpty().lines().filter { '\t' in it }.mapNotNull { line ->
+            val (kind, title) = line.split('\t', limit = 2)
+            Catalog.find(kind, title)
+        }
+
+    fun savePicks(picks: List<CatalogTitle>) {
+        prefs.edit().putString("picks", picks.joinToString("\n") { it.kind + "\t" + it.title }).apply()
+    }
+
+    fun clearPicks() {
+        prefs.edit().remove("picks").apply()
+    }
+
     companion object {
         /** Варианты размера текста: мелкий, обычный, крупный, очень крупный. */
         val TEXT_SCALES = listOf(0.9f, 1f, 1.15f, 1.3f)

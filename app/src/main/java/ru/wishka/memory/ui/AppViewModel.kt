@@ -54,6 +54,7 @@ import ru.wishka.memory.data.Recap
 import ru.wishka.memory.data.RecapPeriod
 import ru.wishka.memory.data.checkIn
 import ru.wishka.memory.data.isKilometers
+import ru.wishka.memory.data.*
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -74,6 +75,7 @@ enum class ProfileSection(private val ru: String) {
     Music("Моя музыка"),
     Stickers("Студия"),
     Recap("Итоги"),
+    Shelf("Полка"),
     Requests("Заявки на подписку"),
     ;
 
@@ -91,6 +93,20 @@ enum class SettingsPage(private val ru: String) {
     TextSize("Размер текста"),
     Language("Язык"),
     About("О приложении"),
+    Growth("Друзья и идеи"),
+    ;
+
+    val title: String get() = t(ru)
+}
+
+/** Разделы полки. */
+enum class ShelfTab(private val ru: String, val emoji: String) {
+    ForYou("Для вас", "✨"),
+    Films("Кино", "🎬"),
+    Books("Книги", "📖"),
+    Sport("Спорт", "🏃"),
+    Places("Места", "📍"),
+    Progress("Права", "🔓"),
     ;
 
     val title: String get() = t(ru)
@@ -177,7 +193,35 @@ data class UiState(
     /** Вкладка «Вместе»: цели, навыки, дневники, миссии, клады, вылазки, рисунок, обмен. */
     val together: TogetherState = TogetherDemo.initial(),
     val togetherSection: TogetherSection = TogetherSection.Challenges,
+    /** Полка: отметки без записи в ленте — любимое при знакомстве, «хочу посмотреть». */
+    val shelfMarks: List<ShelfMark> = emptyList(),
+    /** Рекомендации, от которых отказались («не моё»): ключи «film:дюна». */
+    val dismissedRecs: Set<String> = emptySet(),
+    /** Отклик на только что отмеченный чек-ин; null — не показываем. */
+    val echo: CheckInEcho? = null,
+    /** Журнал событий роста: приглашения, карточки, чек-ины. */
+    val growth: List<GrowthEvent> = emptyList(),
+    /** Кто вас позвал в Memory (по ссылке). */
+    val invitedBy: Invite? = null,
+    /** Приглашение, по которому только что открыли приложение: показать, к чему зовут. */
+    val openedInvite: Invite? = null,
+    /** День, когда закрыли «В этот день»: «2026-10-12». */
+    val memorySeen: String = "",
+    /** Полка: открытый раздел. */
+    val shelfTab: ShelfTab = ShelfTab.Films,
 ) {
+    /** Полка — собирается сама из чек-инов и отметок. */
+    val shelf: Shelf get() = Shelf.build(posts.datedCheckIns(me.id), shelfMarks)
+    val myCheckIns: List<Dated> get() = posts.datedCheckIns(me.id)
+    /** Подборка: kind — «film» или «book». */
+    fun recommendations(kind: String, limit: Int = 6, shelf: Shelf = this.shelf): List<Recommendation> {
+        return recommend(shelf.rated, shelf.keys + dismissedRecs, DemoTaste.ratings.filterKeys { it !in blocked }, kind, limit)
+    }
+    val runPlan: RunPlan get() = ru.wishka.memory.data.runPlan(myCheckIns)
+    val unlocks: List<UnlockProgress> get() = unlockProgress(together, me.id)
+    fun unlocked(u: Unlock): Boolean = together.unlocked(u, me.id)
+    val movedKm: Double get() = ru.wishka.memory.data.movedKm(myCheckIns)
+    val inviteCode: String get() = Invites.code(me.handle)
     val openPerson: User? get() = openPersonId?.let { Demo.person(it) }
     val openGroup: Group? get() = groups.firstOrNull { it.id == openGroupId }
     val myGroups: List<Group> get() = groups.filter { it.joined }
@@ -354,12 +398,140 @@ class AppViewModel(
         val trimmed = text.trim()
         if (trimmed.isEmpty() && media.isEmpty() && checkIn == null) return
         _state.update { s ->
-            s.copy(
+            val next = s.copy(
                 posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn)) + s.posts,
                 // Чек-ин сам засчитывается в общие цели «Вместе»
                 together = if (checkIn != null) s.together.afterCheckIn(checkIn) else s.together,
+                growth = if (checkIn != null) s.growth.logged(GrowthEvent(GrowthEventType.CheckIn, clock(), checkIn.activity)) else s.growth,
             )
+            // Отклик: что изменилось от чек-ина — полка, цели, план, что откроется дальше
+            if (checkIn == null) next else next.copy(echo = echoFor(checkIn, s, next))
         }
+    }
+
+    private fun echoFor(c: CheckIn, before: UiState, after: UiState): CheckInEcho {
+        val kind = shelfKind(c.activity)
+        val shelfAfter = after.shelf
+        val rec = if (kind == "film" || kind == "book") after.recommendations(kind, 1, shelfAfter).firstOrNull() else null
+        return checkInEcho(
+            c, before.shelf, shelfAfter, before.together, after.together,
+            if (c.activity == "run") after.runPlan else null,
+            before.movedKm, after.movedKm, rec,
+        ) { id -> Demo.person(id)?.name?.substringBefore(' ').orEmpty() }
+    }
+
+    fun dismissEcho() {
+        _state.update { it.copy(echo = null) }
+    }
+
+    // ==================== ПОЛКА, ПАМЯТЬ, РЕКОМЕНДАЦИИ ====================
+
+    fun openShelf(tab: ShelfTab = ShelfTab.Films) {
+        openProfileSection(ProfileSection.Shelf)
+        _state.update { it.copy(shelfTab = tab) }
+    }
+
+    fun selectShelfTab(tab: ShelfTab) {
+        _state.update { it.copy(shelfTab = tab) }
+    }
+
+    /** «Хочу посмотреть» / «Хочу прочитать» — в планы на полке, без записи в ленте. */
+    fun planOnShelf(kind: String, subject: String) {
+        val activity = if (kind == "book") "book" else "movie"
+        _state.update { s ->
+            if (s.shelf.keys.contains(shelfKey(activity, subject))) s
+            else s.copy(shelfMarks = s.shelfMarks + ShelfMark(activity, subject.trim(), 0, BookStatus.Want.id, clock()))
+        }
+    }
+
+    /** Оценка на полке без записи: поставить звёзды уже отмеченному. */
+    fun rateOnShelf(activity: String, subject: String, rating: Int) {
+        val r = rating.coerceIn(1, 5)
+        _state.update { s ->
+            val status = if (shelfKind(activity) == "book") BookStatus.Done.id else ""
+            s.copy(shelfMarks = s.shelfMarks + ShelfMark(activity, subject.trim(), r, status, clock()))
+        }
+    }
+
+    /** «Не моё» — больше не советовать. */
+    fun dismissRecommendation(key: String) {
+        _state.update { it.copy(dismissedRecs = it.dismissedRecs + key) }
+    }
+
+    /** Любимое из знакомства: на полку с пятью звёздами — первые рекомендации сразу. */
+    fun addFavorites(picks: List<CatalogTitle>) {
+        if (picks.isEmpty()) return
+        _state.update { s ->
+            val now = clock()
+            val marks = picks.filter { p -> s.shelfMarks.none { it.key == shelfKey(if (p.kind == "book") "book" else "movie", p.title) } }.map {
+                ShelfMark(if (it.kind == "book") "book" else "movie", it.title, 5, if (it.kind == "book") BookStatus.Done.id else "", now)
+            }
+            s.copy(shelfMarks = s.shelfMarks + marks, growth = s.growth.logged(GrowthEvent(GrowthEventType.OnboardingDone, now, picks.size.toString())))
+        }
+    }
+
+    /** «В этот день» закрыли — до завтра не показываем. */
+    fun dismissMemory() {
+        _state.update { it.copy(memorySeen = LocalDate.now().toString()) }
+    }
+
+    // ==================== ПРИГЛАШЕНИЯ И ЖУРНАЛ РОСТА ====================
+
+    /** Приглашение к действию: текст со ссылкой для «Поделиться»; в журнал — что отправили. */
+    fun invite(action: InviteAction, targetId: String = "", title: String = ""): String {
+        val s = _state.value
+        val invite = Invite(s.inviteCode, action, targetId, s.me.name.substringBefore(' '))
+        log(GrowthEventType.InviteSent, action.id + if (targetId.isNotEmpty()) ":$targetId" else "")
+        return Invites.message(invite, title)
+    }
+
+    fun logCardShared(what: String) = log(GrowthEventType.CardShared, what)
+
+    fun logFeedback(idea: Boolean) = log(GrowthEventType.Feedback, if (idea) "idea" else "bug")
+
+    private fun log(type: GrowthEventType, detail: String) {
+        _state.update { it.copy(growth = it.growth.logged(GrowthEvent(type, clock(), detail))) }
+    }
+
+    /**
+     * Открыли приложение по ссылке-приглашению. Своя ссылка — просто
+     * открываем, к чему она; чужая — запоминаем, кто позвал (если это
+     * новый человек без записей — он пришёл по приглашению).
+     */
+    fun openInvite(invite: Invite) {
+        val s = _state.value
+        val own = invite.code == s.inviteCode
+        val now = clock()
+        _state.update {
+            var growth = it.growth.logged(GrowthEvent(GrowthEventType.InviteOpened, now, invite.code))
+            var invitedBy = it.invitedBy
+            if (!own && invitedBy == null && it.myPosts.isEmpty()) {
+                invitedBy = invite
+                growth = growth.logged(GrowthEvent(GrowthEventType.JoinedByInvite, now, invite.code))
+            }
+            it.copy(growth = growth, invitedBy = invitedBy, openedInvite = if (own) null else invite)
+        }
+        routeInvite(invite)
+    }
+
+    fun dismissInvite() {
+        _state.update { it.copy(openedInvite = null) }
+    }
+
+    /** К чему зовёт приглашение — туда и ведём. */
+    private fun routeInvite(invite: Invite) {
+        val section = when (invite.action) {
+            InviteAction.Drawing -> TogetherSection.Drawing
+            InviteAction.Book -> TogetherSection.Sharing
+            InviteAction.Outing -> TogetherSection.Outings
+            InviteAction.Lesson -> TogetherSection.Skills
+            InviteAction.Journey -> TogetherSection.Journeys
+            InviteAction.Cache -> TogetherSection.Caches
+            InviteAction.Shelf -> { openShelf(ShelfTab.ForYou); return }
+            InviteAction.App -> return
+        }
+        selectTab(Tab.Together)
+        selectTogetherSection(section)
     }
 
     // ==================== ЧЕК-ИНЫ ====================
@@ -1387,12 +1559,36 @@ class AppViewModel(
     fun joinMission(id: String) { together { it.joinMission(id) } }
 
     fun addFind(missionId: String, note: String, at: LatLon, photo: Attachment?) {
+        val s = _state.value
+        // Маршрут, который открывают километры, до них закрыт
+        if (s.together.missions.firstOrNull { it.id == missionId }?.locked(s.movedKm) == true) return
         together { it.addFind(missionId, MissionFind(nextId++, meId(), note.trim().take(200), at, photo, clock())) }
+    }
+
+    /** Своя миссия района — право за пять находок. null — создана; иначе что не так. */
+    fun createMission(emoji: String, title: String, description: String, target: Int): String? {
+        if (!_state.value.unlocked(Unlock.OwnMission)) return Unlock.OwnMission.how
+        if (title.isBlank()) return t("Назовите миссию")
+        val ok = together { it.createMission(Mission("own-" + nextId++, emoji, title.trim().take(60), description.trim().take(300), target, authorId = meId())) }
+        return if (ok) null else t("Не получилось — попробуйте другое название")
+    }
+
+    /** Своя общая цель — право за вклад в две чужие. null — создана. */
+    fun createGoal(emoji: String, title: String, description: String, unit: String, target: Double): String? {
+        if (!_state.value.unlocked(Unlock.OwnGoal)) return Unlock.OwnGoal.how
+        if (title.isBlank() || unit.isBlank()) return t("Укажите название и единицу")
+        if (target <= 0) return t("Сколько нужно собрать?")
+        val ok = together {
+            it.createGoal(CommunityGoal("own-" + nextId++, emoji, title.trim().take(60), description.trim().take(300), unit.trim().take(12), target, 0.0, 1, GoalMetric.Other, authorId = meId()))
+        }
+        return if (ok) null else t("Не получилось — попробуйте другое название")
     }
 
     // ---- Клады ----
 
     fun hideCache(title: String, hint: String, difficulty: Int, size: String, at: LatLon): Boolean {
+        // Прятать — право: сначала найдите три чужих (Unlock.HideCache)
+        if (!_state.value.unlocked(Unlock.HideCache)) return false
         val id = nextId++
         val ok = together { it.hideCache(Cache(id, meId(), title.trim().take(60), hint.trim().take(300), at, difficulty.coerceIn(1, 5), size, clock())) }
         // В демо ваш клад кто-нибудь находит
@@ -1529,7 +1725,7 @@ class AppViewModel(
             it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked,
             it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins,
             it.checkInTemplates, it.followRequests, it.approvedFollowers, it.sentRequests, it.recapNotified,
-            it.together,
+            it.together, it.shelfMarks, it.dismissedRecs, it.growth, it.invitedBy, it.memorySeen,
         )
     }
 
@@ -1559,7 +1755,13 @@ class AppViewModel(
                 approvedFollowers = snapshot.approvedFollowers,
                 sentRequests = snapshot.sentRequests,
                 recapNotified = snapshot.recapNotified,
-                together = snapshot.together ?: s.together,
+                together = snapshot.together?.withNewDemo(s.together) ?: s.together,
+                shelfMarks = snapshot.shelfMarks + s.shelfMarks.filter { m -> snapshot.shelfMarks.none { it.key == m.key } },
+                dismissedRecs = snapshot.dismissedRecs,
+                // Повторное восстановление (сменили имя — аккаунт перечитан) не удваивает журнал
+                growth = (snapshot.growth + s.growth.filter { it !in snapshot.growth }).sortedBy { it.at }.takeLast(GROWTH_LOG_LIMIT),
+                invitedBy = snapshot.invitedBy ?: s.invitedBy,
+                memorySeen = snapshot.memorySeen,
             ).withMe(s.me)
         }
     }
@@ -1613,6 +1815,11 @@ data class Snapshot(
     val sentRequests: Set<Int> = emptySet(),
     val recapNotified: Set<String> = emptySet(),
     val together: TogetherState? = null,
+    val shelfMarks: List<ShelfMark> = emptyList(),
+    val dismissedRecs: Set<String> = emptySet(),
+    val growth: List<GrowthEvent> = emptyList(),
+    val invitedBy: Invite? = null,
+    val memorySeen: String = "",
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */
