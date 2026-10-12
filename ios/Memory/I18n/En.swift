@@ -73,7 +73,6 @@ let english: [String: String] = [
     "%s. Посмотрите, каким был ваш месяц": "%s. See what your month looked like",
     "%s. У вас за месяц — %s км, не отставайте!": "%s. You've done %s km this month — keep up!",
     "%s\n— %s (@%s) в Memory · PRISM": "%s\n— %s (@%s) on Memory · PRISM",
-    "%s\n— %s (@%s) в Memory · PRISM": "%s\n— %s (@%s) on Memory · PRISM",
     "+%s %s в цель «%s»": "+%s %s to the goal “%s”",
     "10 записей в ленте": "10 posts in the feed",
     "10 треков в «Моей музыке»": "10 tracks in My music",

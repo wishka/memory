@@ -75,7 +75,6 @@ val EN: Map<String, String> = hashMapOf(
     "%s. Посмотрите, каким был ваш месяц" to "%s. See what your month looked like",
     "%s. У вас за месяц — %s км, не отставайте!" to "%s. You've done %s km this month — keep up!",
     "%s\n— %s (@%s) в Memory · PRISM" to "%s\n— %s (@%s) on Memory · PRISM",
-    "%s\n— %s (@%s) в Memory · PRISM" to "%s\n— %s (@%s) on Memory · PRISM",
     "+%s %s в цель «%s»" to "+%s %s to the goal “%s”",
     "10 записей в ленте" to "10 posts in the feed",
     "10 треков в «Моей музыке»" to "10 tracks in My music",
