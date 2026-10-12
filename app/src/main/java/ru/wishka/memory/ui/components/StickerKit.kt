@@ -313,5 +313,5 @@ private fun GiphyPane(grid: Modifier, onPick: (GiphyGif) -> Unit) {
         }
     }
     Spacer(Modifier.height(6.dp))
-    Text("Powered by GIPHY", style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
+    Text("Powered by GIPHY · " + t("поиск уходит в GIPHY (США)"), style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
 }

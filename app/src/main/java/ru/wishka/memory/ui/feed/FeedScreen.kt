@@ -124,6 +124,7 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 onLike = { vm.toggleLike(post.id) },
                 onVote = { vm.votePost(post.id, it) },
                 onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
+                onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
                 following = if (mine) null else post.author.id in state.following,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
@@ -209,6 +210,8 @@ fun PostCard(
     onClosePoll: (() -> Unit)? = null,
     /** Пункты меню «⋯» (закрепить, удалить…); null — меню нет. */
     menu: (@Composable ColumnScope.(close: () -> Unit) -> Unit)? = null,
+    /** «Пожаловаться» в меню «⋯» — для чужих записей; null — пункта нет. */
+    onReport: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
@@ -236,14 +239,15 @@ fun PostCard(
                     if (following) GhostButton(t("Вы подписаны"), onClick = onFollow)
                     else GlowButton(t("Подписаться"), onClick = onFollow)
                 }
-                if (menu != null) {
+                if (menu != null || onReport != null) {
                     Box {
                         Box(
                             modifier = Modifier.size(36.dp).clip(CircleShape).clickable { menuOpen = true },
                             contentAlignment = Alignment.Center,
                         ) { Glyph(LineIcon.More, Palette.Mist, size = 20.dp) }
                         MemoryMenu(expanded = menuOpen, onDismiss = { menuOpen = false }) {
-                            menu { menuOpen = false }
+                            menu?.invoke(this) { menuOpen = false }
+                            if (onReport != null) MenuRow(LineIcon.Flag, t("Пожаловаться"), color = Palette.PearlPink) { menuOpen = false; onReport() }
                         }
                     }
                 }

@@ -38,7 +38,8 @@ struct SettingsScreen: View {
                 case .notifications: NotificationsPage(model: model)
                 case .textSize: TextSizePage()
                 case .language: LanguagePage()
-                case .about: AboutPage()
+                case .about: AboutPage(model: model)
+                case .legal: LegalPage(model: model)
                 case .growth: GrowthPage(model: model)
                 case .sounds: SoundsPage(model: model)
                 case .wallpaper:
@@ -98,6 +99,8 @@ private struct MainSettings: View {
             NavRow(icon: .globe, title: t("Язык"), value: L10n.shared.choice.title) { model.openSettings(.language) }
             Divider()
             NavRow(icon: .info, title: t("О приложении"), value: "Memory \(appVersion)") { model.openSettings(.about) }
+            Divider()
+            NavRow(icon: .document, title: t("Документы"), value: "\(Legal.minAge)+") { model.openSettings(.legal) }
         }
         SettingsCard {
             NavRow(icon: .gift, title: t("Друзья и идеи"), value: state.inviteCode) { model.openSettings(.growth) }
@@ -263,6 +266,13 @@ private struct PrivacyPage: View {
             SwitchRow(title: t("Показывать день рождения"), isOn: privacy.showBirthday) { v in update { $0.showBirthday = v } }
         }
         Hint(text: t("«Мои подписки» — люди, на которых подписаны вы. Чтобы скрыть от одного человека всё сразу, добавьте его в чёрный список."))
+        SettingsCard {
+            SwitchRow(title: t("Персональные рекомендации"), isOn: privacy.personalRecs) { v in update { $0.personalRecs = v } }
+        }
+        Hint(text: privacy.personalRecs
+             ? t("Полка советует фильмы и книги по вашим оценкам и вкусу похожих людей. Лента рекомендациями не сортируется.")
+             : t("Рекомендации выключены: подборка «Для вас», совет после чек-ина и «Похожий вкус» не показываются."))
+        LinkRow(text: t("Как работают рекомендации")) { model.openLegal(.recommendations) }
     }
 
     private func update(_ change: (inout Privacy) -> Void) {
@@ -524,6 +534,8 @@ private struct LanguagePage: View {
 // MARK: - О приложении
 
 private struct AboutPage: View {
+    let model: AppModel
+
     var body: some View {
         SettingsCard {
             VStack(spacing: 6) {
@@ -546,11 +558,44 @@ private struct AboutPage: View {
             .padding(16)
         }
         SettingsCard {
+            NavRow(icon: .document, title: t("Документы"), value: "\(Legal.minAge)+") { model.openSettings(.legal) }
+            Divider()
+            NavRow(icon: .info, title: t("Лицензии и авторы")) { model.openLegal(.licenses) }
+        }
+        Hint(text: t("Карты — Apple Maps. Гифки — Powered by GIPHY. Шрифты Unbounded и Inter — SIL Open Font License."))
+    }
+}
+
+// MARK: - Документы
+
+/// Соглашение, политика, согласие, правила, рекомендации и лицензии — те
+/// же тексты, что на сайте (docs/legal). Контакты для обращений и жалоб.
+private struct LegalPage: View {
+    let model: AppModel
+
+    var body: some View {
+        SettingsCard {
+            ForEach(Array(LegalDoc.allCases.enumerated()), id: \.element) { i, doc in
+                if i > 0 { Divider() }
+                NavRow(icon: .document, title: doc.title) { model.openLegal(doc) }
+            }
+        }
+        SettingsCard {
             VStack(alignment: .leading, spacing: 8) {
-                Caption(text: t("Шрифты"))
-                Bullet(text: t("Unbounded и Inter — под лицензией SIL Open Font License."))
+                Caption(text: t("Связаться"))
+                Bullet(text: tf("Вопросы о данных и отзыв согласия: %s", Legal.privacyEmail))
+                Bullet(text: tf("Жалобы на контент: %s — или «Пожаловаться» в меню записи, сообщения, PRISM", Legal.abuseEmail))
+                Bullet(text: tf("Оператор: %s", Legal.operatorName))
             }
             .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        SettingsCard {
+            NavRow(icon: .shield, title: t("Удалить аккаунт и отозвать согласие")) { model.openSettings(.security) }
+        }
+        Hint(text: tf("Memory — для людей от %s лет. Версия документов: %s.", Legal.minAge, Legal.version))
+        if !Legal.filled {
+            Hint(text: t("Черновик: данные оператора ещё не заполнены."))
         }
     }
 }
@@ -666,6 +711,21 @@ private struct Hint: View {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 24)
+    }
+}
+
+/// Ссылка под карточкой: «Как работают рекомендации».
+private struct LinkRow: View {
+    let text: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(text).textStyle(.bodySmall, Palette.lilac)
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
     }
 }
 

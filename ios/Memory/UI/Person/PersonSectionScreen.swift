@@ -34,7 +34,8 @@ struct PersonSectionScreen: View {
                             onComments: { model.openComments(post.id) },
                             onOpenMedia: model.openMedia,
                             onVote: { model.votePost(post.id, $0) },
-                            onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil
+                            onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil,
+                            onReport: model.isMine(post) ? nil : { model.reportPost(post) }
                         )
                     }
                 } else {

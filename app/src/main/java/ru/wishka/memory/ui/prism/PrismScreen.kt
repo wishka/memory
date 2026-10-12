@@ -97,6 +97,7 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
             onComments = { vm.openPrismComments(prism.id) },
             onShare = { sharePrism(context, prism) },
             onSave = { vm.togglePrismSave(prism.id) },
+            onReport = if (prism.author.id == state.me.id) null else ({ vm.reportPrism(prism) }),
         )
     }
 
@@ -186,6 +187,7 @@ private fun PrismPage(
     onComments: () -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit,
+    onReport: (() -> Unit)? = null,
 ) {
     var paused by remember(prism.id) { mutableStateOf(false) }
     var time by remember(prism.id) { mutableLongStateOf(0L) }
@@ -278,6 +280,7 @@ private fun PrismPage(
             SideButton(LineIcon.Share, t("Поделиться"), onShare)
             SideButton(if (prism.saved) LineIcon.BookmarkFilled else LineIcon.Bookmark, if (prism.saved) t("В закладках") else t("Сохранить"), onSave)
             if (mine) SideButton(LineIcon.Trash, t("Удалить"), onDelete)
+            if (onReport != null) SideButton(LineIcon.Flag, t("Пожаловаться"), onReport)
         }
 
         // Автор, подпись и музыка

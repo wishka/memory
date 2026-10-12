@@ -58,7 +58,8 @@ struct FeedScreen: View {
                         onOpenMedia: model.openMedia,
                         onVote: { model.votePost(post.id, $0) },
                         onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil,
-                        menu: ownMenu(post)
+                        menu: ownMenu(post),
+                        onReport: model.isMine(post) ? nil : { model.reportPost(post) }
                     )
                 }
             }
@@ -138,8 +139,16 @@ struct PostCard: View {
     var onClosePoll: (() -> Void)? = nil
     /// Пункты меню «⋯» (закрепить, удалить…); пусто — меню нет.
     var menu: [GlassAction] = []
+    /// Пожаловаться на чужую запись — пункт в меню «⋯»; nil — пункта нет.
+    var onReport: (() -> Void)? = nil
 
     @State private var showMenu = false
+
+    /// Меню «⋯»: свои пункты и «Пожаловаться» для чужой записи.
+    private var menuItems: [GlassAction] {
+        guard let onReport else { return menu }
+        return menu + [GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true, action: onReport)]
+    }
 
     var body: some View {
         GlassCard {
@@ -154,7 +163,7 @@ struct PostCard: View {
                             GlowButton(title: t("Подписаться"), action: onFollow)
                         }
                     }
-                    if !menu.isEmpty {
+                    if !menu.isEmpty || onReport != nil {
                         Button { showMenu = true } label: {
                             Glyph(kind: .more, color: Palette.mist, size: 20)
                                 .frame(width: 36, height: 36)
@@ -217,7 +226,7 @@ struct PostCard: View {
             .padding(16)
         }
         .cardPadding()
-        .glassActions($showMenu, cancel: true, actions: menu)
+        .glassActions($showMenu, cancel: true, actions: menuItems)
     }
 
     @ViewBuilder

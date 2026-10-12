@@ -41,7 +41,8 @@ struct GroupScreen: View {
                             pinned: post.id == group.pinnedPostId,
                             onVote: { model.votePost(post.id, $0) },
                             onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil,
-                            menu: menu(post)
+                            menu: menu(post),
+                            onReport: model.isMine(post) ? nil : { model.reportPost(post) }
                         )
                     }
                 }

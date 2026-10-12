@@ -18,9 +18,10 @@ struct MemoryApp: App {
     }
 }
 
-/// Что сейчас на экране: заставка, знакомство, вход или само приложение.
+/// Что сейчас на экране: заставка, знакомство, вход, согласие с
+/// документами или само приложение.
 private enum Stage: Equatable {
-    case splash, onboarding, auth, main
+    case splash, onboarding, auth, consent, main
 }
 
 struct RootView: View {
@@ -46,7 +47,12 @@ struct RootView: View {
         // долю секунды мелькнул бы экран входа у уже вошедшего человека
         if !splashDone || auth.checking { return .splash }
         if auth.account == nil && !onboarded { return .onboarding }
-        return auth.account == nil ? .auth : .main
+        guard let account = auth.account else { return .auth }
+        // Документы (соглашение, правила, согласие на обработку) не приняты
+        // в текущей версии — сначала они, потом приложение. consentTick
+        // меняется, когда их приняли: так этот расчёт повторяется
+        _ = auth.consentTick
+        return auth.hasConsent(account.username) ? .main : .consent
     }
 
     var body: some View {
@@ -72,6 +78,9 @@ struct RootView: View {
                 .transition(.opacity)
             case .auth:
                 AuthScreen(auth: auth, startRegistering: registerNext)
+                    .transition(.opacity)
+            case .consent:
+                ConsentGate(onAccept: { auth.acceptDocuments() }, onLogout: { auth.logout() })
                     .transition(.opacity)
             case .main:
                 MainScreen(

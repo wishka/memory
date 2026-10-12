@@ -4,7 +4,7 @@ import UIKit
 /// Обсуждение записи или PRISM — шторка снизу: комментарии и поле ввода.
 /// total — сколько всего комментариев (у демо-записей видна только часть).
 /// Долгое нажатие на комментарий — меню: ответить, скопировать, страница
-/// автора, пожаловаться (на чужой) или удалить (свой). «Нравится» — только
+/// автора, пожаловаться (на чужой — окно жалобы) или удалить (свой). «Нравится» — только
 /// сердечком. Ответить можно и своим стикером из «Студии».
 struct CommentsSheet: View {
     let total: Int
@@ -143,10 +143,8 @@ struct CommentsSheet: View {
         if c.author.id == myId {
             list.append(GlassAction(icon: .trash, title: t("Удалить"), destructive: true) { onDelete(c.id) })
         } else {
-            list.append(GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true) {
-                onReport(c.id)
-                show(t("Жалоба отправлена. Комментарий скрыт."))
-            })
+            // Откроется окно жалобы: причина и «заблокировать автора»
+            list.append(GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true) { onReport(c.id) })
         }
         return list
     }

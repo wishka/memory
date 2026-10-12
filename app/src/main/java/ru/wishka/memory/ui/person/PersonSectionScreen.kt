@@ -73,6 +73,7 @@ fun PersonSectionScreen(vm: AppViewModel, state: UiState, person: User, section:
                     onLike = { vm.toggleLike(post.id) },
                     onVote = { vm.votePost(post.id, it) },
                     onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
+                    onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
                     onComments = { vm.openComments(post.id) },
                     onOpenMedia = vm::openMedia,
                 )

@@ -31,12 +31,13 @@ struct PersonScreen: View {
                     RoundGlyphButton(icon: .back) { model.closePerson() }
                     Text("@\(person.handle)").textStyle(.title)
                     Spacer()
-                    // «⋯»: заблокировать или разблокировать
+                    // «⋯»: заблокировать или разблокировать, пожаловаться
                     RoundGlyphButton(icon: .more) { showMenu = true }
                         .glassActions($showMenu, title: person.name, actions: [
                             blocked
                                 ? GlassAction(icon: .block, title: t("Разблокировать")) { model.unblock(person.id) }
                                 : GlassAction(icon: .block, title: t("Заблокировать"), destructive: true) { model.block(person.id) },
+                            GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true) { model.reportPerson(person) },
                         ])
                 }
                 .padding(.horizontal, 12)
@@ -130,7 +131,8 @@ struct PersonScreen: View {
                         onComments: { model.openComments(post.id) },
                         onOpenMedia: model.openMedia,
                         onVote: { model.votePost(post.id, $0) },
-                        onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil
+                        onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil,
+                        onReport: model.isMine(post) ? nil : { model.reportPost(post) }
                     )
                 }
             }

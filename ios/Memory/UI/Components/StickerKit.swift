@@ -374,7 +374,7 @@ private struct GiphyPane: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Text("Powered by GIPHY").textStyle(.label, Palette.mist)
+                Text("Powered by GIPHY · " + t("поиск уходит в GIPHY (США)")).textStyle(.label, Palette.mist)
             }
             .task(id: query) {
                 // Пока человек печатает — не дёргаем поиск на каждую букву

@@ -106,6 +106,7 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                         } else {
                             MenuRow(LineIcon.Block, t("Заблокировать"), color = Palette.Lilac) { menu = false; vm.block(person.id) }
                         }
+                        MenuRow(LineIcon.Flag, t("Пожаловаться"), color = Palette.PearlPink) { menu = false; vm.reportPerson(person) }
                     }
                 }
             }
@@ -214,6 +215,7 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                 onLike = { vm.toggleLike(post.id) },
                 onVote = { vm.votePost(post.id, it) },
                 onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
+                onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
                 onComments = { vm.openComments(post.id) },
                 onOpenMedia = vm::openMedia,
             )

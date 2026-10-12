@@ -1,6 +1,8 @@
 package ru.wishka.memory
 
 import android.os.Bundle
+import android.widget.Toast
+import ru.wishka.memory.i18n.t
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -82,6 +84,10 @@ import ru.wishka.memory.push.AppVisibility
 import ru.wishka.memory.push.MemoryNotifications
 import ru.wishka.memory.push.PushBus
 import ru.wishka.memory.ui.components.NudgeBanner
+import ru.wishka.memory.ui.components.ConsentGate
+import ru.wishka.memory.ui.components.LegalDocViewer
+import ru.wishka.memory.ui.components.ReportDialog
+import ru.wishka.memory.data.LegalDoc
 import ru.wishka.memory.data.SoundPlayer
 import ru.wishka.memory.data.SoundPrefs
 import ru.wishka.memory.ui.components.EchoDialog
@@ -138,7 +144,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Что сейчас на экране: заставка, вход или само приложение. */
-private enum class Stage { Splash, Onboarding, Auth, Main }
+private enum class Stage { Splash, Onboarding, Auth, Consent, Main }
 
 @Composable
 fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel()) {
@@ -207,10 +213,14 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
 
     // Заставка держится, пока проверяется сохранённая сессия: иначе на
     // долю секунды мелькнул бы экран входа у уже вошедшего человека
+    // Документы (соглашение, правила, согласие на обработку) не приняты в
+    // текущей версии — сначала они, потом приложение
+    val needsConsent = account != null && remember(account.username, auth.consentTick) { !authVm.hasConsent(account.username) }
     val stage = when {
         !splashDone || auth.checking -> Stage.Splash
         account == null && !onboarded -> Stage.Onboarding
         account == null -> Stage.Auth
+        needsConsent -> Stage.Consent
         else -> Stage.Main
     }
     Crossfade(targetState = stage, animationSpec = tween(500), label = "stage") { s ->
@@ -229,6 +239,7 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
                 },
             )
             Stage.Auth -> AuthScreen(authVm, auth, startRegistering = registerNext)
+            Stage.Consent -> ConsentGate(onAccept = authVm::acceptDocuments, onLogout = authVm::logout)
             Stage.Main -> MainScreen(
                 vm,
                 onSaveProfile = authVm::saveProfile,
@@ -375,7 +386,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     myId = state.me.id,
                     onSend = { text, replyTo, sticker -> vm.addComment(id, text, replyTo, sticker) },
                     onDelete = { vm.deleteComment(id, it) },
-                    onReport = vm::reportComment,
+                    onReport = { cid -> post.commentList.firstOrNull { it.id == cid }?.let(vm::reportComment) },
                     onLike = { vm.toggleCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
@@ -391,7 +402,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     myId = state.me.id,
                     onSend = { text, replyTo, sticker -> vm.addPrismComment(id, text, replyTo, sticker) },
                     onDelete = { vm.deletePrismComment(id, it) },
-                    onReport = vm::reportComment,
+                    onReport = { cid -> prism.commentList.firstOrNull { it.id == cid }?.let(vm::reportComment) },
                     onLike = { vm.togglePrismCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
@@ -410,6 +421,18 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         state.echo?.let { EchoDialog(vm, state, it) }
         state.openedInvite?.let { InviteDialog(vm, it) }
         state.viewing?.let { MediaViewer(it, onClose = vm::closeMedia) }
+        state.reporting?.let { target ->
+            ReportDialog(
+                target,
+                onSend = { reason, note, block ->
+                    vm.report(target, reason, note, block)
+                    Toast.makeText(context, t("Спасибо. Жалоба ушла модераторам, у вас это скрыто."), Toast.LENGTH_LONG).show()
+                },
+                onDismiss = vm::cancelReport,
+                onRules = { vm.openLegal(LegalDoc.Community) },
+            )
+        }
+        state.legalDoc?.let { LegalDocViewer(it, onClose = vm::closeLegal) }
         // Свой PRISM — камера и редактор во весь экран, поверх всего
         if (state.creatingPrism) PrismCreateFlow(vm, state)
     }

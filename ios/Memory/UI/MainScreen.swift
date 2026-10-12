@@ -72,7 +72,16 @@ struct MainScreen: View {
         .animation(.easeOut(duration: 0.2), value: state.echo != nil)
         .animation(.easeOut(duration: 0.2), value: state.openedInvite != nil)
         // Обсуждение записи или PRISM — шторкой поверх любого экрана
-        .sheet(isPresented: commentsShown) { comments }
+        .sheet(isPresented: commentsShown) {
+            // Жалоба на комментарий — окном поверх самой шторки
+            comments.reportSheet(model: model)
+        }
+        // Жалоба: причина, пара слов, заблокировать автора
+        .reportSheet(model: model, active: !commentsShown.wrappedValue)
+        // Документ: соглашение, политика, правила, лицензии
+        .fullScreenCover(item: legalDoc) { doc in
+            LegalDocViewer(doc: doc) { model.closeLegal() }
+        }
         // Фото или видео — на весь экран
         .fullScreenCover(item: viewing) { attachment in
             MediaViewer(attachment: attachment) { model.closeMedia() }
@@ -105,6 +114,20 @@ struct MainScreen: View {
         )
     }
 
+    private var legalDoc: Binding<LegalDoc?> {
+        Binding(
+            get: { model.state.legalDoc },
+            set: { if $0 == nil { model.closeLegal() } }
+        )
+    }
+
+    /// Пожаловаться на комментарий: открыть окно жалобы с ним.
+    private func reportComment(_ list: [Comment], _ commentId: Int64) {
+        if let comment = list.first(where: { $0.id == commentId }) {
+            model.reportComment(comment)
+        }
+    }
+
     private var viewing: Binding<Attachment?> {
         Binding(
             get: { model.state.viewing },
@@ -128,7 +151,7 @@ struct MainScreen: View {
                 myId: state.me.id,
                 onSend: { model.addComment(id, $0, replyTo: $1, sticker: $2) },
                 onDelete: { model.deleteComment(id, $0) },
-                onReport: { model.reportComment($0) },
+                onReport: { reportComment(post.commentList, $0) },
                 onLike: { model.toggleCommentLike(id, $0) },
                 onAuthor: openAuthor,
                 stickers: state.stickers
@@ -140,7 +163,7 @@ struct MainScreen: View {
                 myId: state.me.id,
                 onSend: { model.addPrismComment(id, $0, replyTo: $1, sticker: $2) },
                 onDelete: { model.deletePrismComment(id, $0) },
-                onReport: { model.reportComment($0) },
+                onReport: { reportComment(prism.commentList, $0) },
                 onLike: { model.togglePrismCommentLike(id, $0) },
                 onAuthor: openAuthor,
                 stickers: state.stickers

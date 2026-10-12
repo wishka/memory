@@ -34,6 +34,10 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v6
 
+      # Документы для iPhone (ios/Memory/Legal) — копии docs/legal
+      - name: Документы совпадают
+        run: python3 scripts/sync_legal.py --check
+
       - name: Сборка
         env:
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
