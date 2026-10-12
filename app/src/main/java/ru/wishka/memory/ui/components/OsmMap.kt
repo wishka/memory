@@ -3,6 +3,7 @@ package ru.wishka.memory.ui.components
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
 import androidx.compose.runtime.Composable
@@ -21,7 +22,6 @@ import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.TilesOverlay
 import ru.wishka.memory.data.LatLon
 
 /** Точка на карте: значок-эмодзи в кружке. mine — своя (сиреневый ободок). */
@@ -41,7 +41,7 @@ fun OsmMap(pins: List<MapPin>, center: LatLon, me: LatLon?, modifier: Modifier =
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-            overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERTED_COLORS)
+            overlayManager.tilesOverlay.setColorFilter(NIGHT_TILES)
             controller.setZoom(zoom)
             controller.setCenter(GeoPoint(center.lat, center.lon))
             // Подпись «© OpenStreetMap contributors» — условие использования плиток OSM
@@ -90,6 +90,16 @@ fun OsmMap(pins: List<MapPin>, center: LatLon, me: LatLon?, modifier: Modifier =
         view.invalidate()
     })
 }
+
+/** Ночные плитки: цвета инвертированы (светлая карта OSM становится тёмной). */
+private val NIGHT_TILES = ColorMatrixColorFilter(
+    floatArrayOf(
+        -1f, 0f, 0f, 0f, 255f,
+        0f, -1f, 0f, 0f, 255f,
+        0f, 0f, -1f, 0f, 255f,
+        0f, 0f, 0f, 1f, 0f,
+    ),
+)
 
 /** Кружок с эмодзи для маркера. */
 private fun pinBitmap(emoji: String, ring: Int, density: Float, small: Boolean = false): Bitmap {
