@@ -279,6 +279,13 @@ private fun PasswordField(value: String, onChange: (String) -> Unit, placeholder
 private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card {
+            SwitchRow(t("Закрытый профиль"), privacy.closedProfile) { onChange(privacy.copy(closedProfile = it)) }
+        }
+        Hint(
+            if (privacy.closedProfile) t("Записи и чек-ины видят только подписчики. Новые подписчики — по заявке: принять или отклонить её можно в профиле.")
+            else t("Закройте профиль, чтобы записи и чек-ины видели только те, чью заявку вы приняли. Нынешние подписчики останутся.")
+        )
+        Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 AudiencePicker(t("Кто видит сведения о себе"), t("Город, день рождения, сайт и интересы"), privacy.profileInfo) {
                     onChange(privacy.copy(profileInfo = it))
@@ -362,8 +369,13 @@ private fun NotificationsPage(vm: AppViewModel, state: UiState) {
             Divider()
             SwitchRow(t("Новые подписчики"), n.follows, enabled = n.all) { v -> set { it.copy(follows = v) } }
             Divider()
-            SwitchRow(t("Записи в группах"), n.groups, enabled = n.all) { v -> set { it.copy(groups = v) } }
+            SwitchRow(t("Группы: новые записи и участники"), n.groups, enabled = n.all) { v -> set { it.copy(groups = v) } }
+            Divider()
+            SwitchRow(t("Друзья: чек-ины, фильмы, книги, тренировки"), n.friends, enabled = n.all) { v -> set { it.copy(friends = v) } }
+            Divider()
+            SwitchRow(t("Итоги месяца и года"), n.recap, enabled = n.all) { v -> set { it.copy(recap = v) } }
         }
+        Hint(t("Уведомления — про то, что важно именно вам: друг отметил фильм, который вы обсуждали, в вашей группе новый участник, готовы итоги месяца. Никаких «вы давно не заходили»."))
         if (mutedGroups.isNotEmpty() || mutedChats.isNotEmpty()) {
             Caption(t("Без звука"), Modifier.padding(horizontal = 24.dp))
             Card {

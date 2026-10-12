@@ -27,6 +27,8 @@ data class User(
     val followingCount: Int = 0,
     /** Своё фото вместо букв: путь к круглой обрезке в памяти приложения; "" — буквы. */
     val avatar: String = "",
+    /** Закрытый профиль: записи видят только одобренные подписчики. */
+    val closed: Boolean = false,
 ) {
     val initials: String
         get() = name.split(' ').filter { it.isNotBlank() }.take(2)
@@ -50,10 +52,18 @@ data class Attachment(
     val name: String = "",
     val size: Long = 0,
     val mime: String = "",
+    /** Голосовое сообщение: запись с микрофона, играет в пузыре с волной. */
+    val voice: Boolean = false,
+    /** Длительность звука, мс — у голосовых. */
+    val durationMs: Long = 0,
+    /** Волна голосового: уровни громкости 0…100 по порядку. */
+    val waveform: List<Int> = emptyList(),
+    /** Свой стикер из «Студии»: показывается без рамки, как картинка. */
+    val sticker: Boolean = false,
 ) {
     /** Музыка — документ со звуком: в записи он играет прямо в карточке. */
     val isAudio: Boolean
-        get() = kind == MediaKind.Document &&
+        get() = kind == MediaKind.Document && !voice &&
             (mime.startsWith("audio/") || path.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS)
 }
 
@@ -71,6 +81,8 @@ data class Comment(
     val liked: Boolean = false,
     /** Ответ кому-то в обсуждении: имя того, кому ответили; "" — просто комментарий. */
     val replyTo: String = "",
+    /** Стикер вместо текста или вместе с ним. */
+    val sticker: Attachment? = null,
 )
 
 /**
@@ -94,6 +106,8 @@ data class Post(
     val media: List<Attachment> = emptyList(),
     val commentList: List<Comment> = emptyList(),
     val createdAt: Long = 0,
+    /** Чек-ин: «смотрю фильм», «пробежал 5 км»… null — обычная запись. */
+    val checkIn: CheckIn? = null,
 )
 
 /** Минуты с момента createdAt, а для демо-данных — заданные заранее. */
@@ -292,6 +306,11 @@ data class Privacy(
     val showOnline: Boolean = true,
     /** Показывать день рождения. */
     val showBirthday: Boolean = true,
+    /**
+     * Закрытый профиль: записи и чек-ины видят только подписчики, а
+     * подписаться можно лишь по заявке, которую вы одобряете.
+     */
+    val closedProfile: Boolean = false,
 )
 
 /** Какие уведомления присылать. all = false выключает все разом. */
@@ -301,4 +320,8 @@ data class Notifications(
     val reactions: Boolean = true,
     val groups: Boolean = true,
     val follows: Boolean = true,
+    /** Что делают друзья: чек-ины, фильмы, книги, тренировки. */
+    val friends: Boolean = true,
+    /** Итоги месяца и года. */
+    val recap: Boolean = true,
 )

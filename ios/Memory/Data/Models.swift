@@ -22,8 +22,12 @@ struct User: Identifiable, Equatable, Codable {
     /// Своё фото вместо букв: имя файла круглой обрезки в папке вложений;
     /// nil или "" — буквы. Необязательное: старые сохранения читаются без него.
     var avatar: String? = nil
+    /// Закрытый профиль: записи видят только одобренные подписчики.
+    /// Необязательное — для старых сохранений; снаружи — closed.
+    var closedFlag: Bool? = nil
 
     var hasAvatar: Bool { !(avatar ?? "").isEmpty }
+    var closed: Bool { closedFlag ?? false }
 
     var initials: String {
         let letters = name.split(separator: " ").prefix(2).compactMap { $0.first }.map { String($0).uppercased() }
@@ -54,10 +58,22 @@ struct Attachment: Identifiable, Equatable, Codable, Hashable {
     /// Имя для документов: «Договор.pdf».
     var name: String = ""
     var size: Int64 = 0
+    /// Голосовое сообщение: запись с микрофона, играет в пузыре с волной.
+    /// Новые поля необязательные — старые сохранения читаются без них.
+    var voiceFlag: Bool? = nil
+    /// Длительность звука, мс — у голосовых.
+    var durationMs: Int64? = nil
+    /// Волна голосового: уровни громкости 0…100 по порядку.
+    var waveform: [Int]? = nil
+    /// Свой стикер из «Студии»: показывается без рамки, как картинка.
+    var stickerFlag: Bool? = nil
+
+    var voice: Bool { voiceFlag ?? false }
+    var sticker: Bool { stickerFlag ?? false }
 
     /// Музыка — документ со звуком: в записи он играет прямо в карточке.
     var isAudio: Bool {
-        kind == .document && audioExtensions.contains((fileName as NSString).pathExtension.lowercased())
+        kind == .document && !voice && audioExtensions.contains((fileName as NSString).pathExtension.lowercased())
     }
 }
 
@@ -78,6 +94,8 @@ struct Comment: Identifiable, Equatable, Codable {
     var likedByMe: Bool? = nil
     /// Ответ кому-то в обсуждении: имя того, кому ответили; nil — просто комментарий.
     var replyTo: String? = nil
+    /// Стикер вместо текста или вместе с ним.
+    var sticker: Attachment? = nil
 
     var likes: Int {
         get { likeCount ?? 0 }
@@ -108,6 +126,8 @@ struct Post: Identifiable, Equatable, Codable {
     var commentList: [Comment] = []
     /// Момент публикации у своих записей; у демо — nil, время из minutesAgo.
     var createdAt: Date? = nil
+    /// Чек-ин: «смотрю фильм», «пробежал 5 км»… nil — обычная запись.
+    var checkIn: CheckIn? = nil
 }
 
 /// Минуты с момента createdAt, а для демо-данных — заданные заранее.
@@ -323,6 +343,14 @@ struct Privacy: Equatable, Codable {
     var showOnline: Bool = true
     /// Показывать день рождения.
     var showBirthday: Bool = true
+    /// Закрытый профиль: записи и чек-ины видят только подписчики, а
+    /// подписаться можно лишь по заявке. Необязательное — для старых сохранений.
+    var closedProfileFlag: Bool? = nil
+
+    var closedProfile: Bool {
+        get { closedProfileFlag ?? false }
+        set { closedProfileFlag = newValue }
+    }
 }
 
 /// Какие уведомления присылать. all = false выключает все разом.
@@ -332,6 +360,20 @@ struct Notifications: Equatable, Codable {
     var reactions: Bool = true
     var groups: Bool = true
     var follows: Bool = true
+    /// Что делают друзья и итоги — необязательные, для старых сохранений.
+    var friendsFlag: Bool? = nil
+    var recapFlag: Bool? = nil
+
+    /// Что делают друзья: чек-ины, фильмы, книги, тренировки.
+    var friends: Bool {
+        get { friendsFlag ?? true }
+        set { friendsFlag = newValue }
+    }
+    /// Итоги месяца и года.
+    var recap: Bool {
+        get { recapFlag ?? true }
+        set { recapFlag = newValue }
+    }
 }
 
 /// Повторяемый генератор случайных чисел: одна и та же картинка по

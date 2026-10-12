@@ -8,6 +8,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     case prism = "PRISM"
     case chats = "Чаты"
     case groups = "Группы"
+    case together = "Вместе"
     case profile = "Профиль"
 
     var id: String { rawValue }
@@ -24,6 +25,8 @@ enum ProfileSection: String, CaseIterable {
     case saved = "Сохранённое"
     case music = "Моя музыка"
     case stickers = "Студия"
+    case recap = "Итоги"
+    case requests = "Заявки на подписку"
 
     var title: String { t(rawValue) }
 }
@@ -91,6 +94,26 @@ struct UiState: Equatable {
     var openGroupId: Int? = nil
     /// Настройки открытой группы — за шестерёнкой.
     var groupSettingsOpen = false
+    /// Свои чек-ины: шаблоны, которые человек создал сам.
+    var checkInTemplates: [CheckInTemplate] = []
+    /// Заявки на подписку к вам (закрытый профиль) — новые первыми.
+    var followRequests: [Int] = []
+    /// Кого вы одобрили: подписчики сверх демо-списка.
+    var approvedFollowers: Set<Int> = []
+    /// Ваши заявки к закрытым профилям, пока их не приняли.
+    var sentRequests: Set<Int> = []
+    /// За какой период уже напомнили об Итогах: «2026-09», «2026».
+    var recapNotified: Set<String> = []
+    /// Уведомление поверх приложения, пока оно открыто; nil — нет.
+    var banner: Nudge? = nil
+    /// Итоги: открыт месяц или год.
+    var recapPeriod: RecapPeriod = .month
+    /// Итоги: на сколько месяцев или лет назад от текущего.
+    var recapBack = 0
+    /// Вкладка «Вместе»: цели, банк времени, дневники, миссии, клады, вылазки, рисунок, обмен.
+    var together: TogetherState = TogetherDemo.initial()
+    /// Открытый раздел вкладки «Вместе».
+    var togetherSection: TogetherSection = .challenges
 
     var openPerson: User? { openPersonId.flatMap { Demo.person($0) } }
     var openGroup: MemoryGroup? { groups.first { $0.id == openGroupId } }
@@ -101,8 +124,17 @@ struct UiState: Equatable {
     var unreadTotal: Int { chats.filter { !$0.muted }.reduce(0) { $0 + $1.unread } }
     /// Список чатов: закреплённые сверху, остальные — по последнему сообщению.
     var chatList: [Chat] { chats.filter(\.onTop) + chats.filter { !$0.onTop } }
-    /// Лента без записей тех, кто в чёрном списке.
-    var feed: [Post] { posts.filter { !blocked.contains($0.author.id) } }
+    /// Лента без записей тех, кто в чёрном списке, и без записей закрытых
+    /// профилей, на которые вы не подписаны.
+    var feed: [Post] { posts.filter { !blocked.contains($0.author.id) && canSee($0.author) } }
+    /// Записи человека видны: профиль открыт, вы подписаны или это вы.
+    /// Закрытость берётся из демо-данных: в сохранённых записях автор может быть старым.
+    func canSee(_ user: User) -> Bool {
+        let closed = Demo.person(user.id)?.closed ?? user.closed
+        return !closed || following.contains(user.id) || user.id == me.id
+    }
+    /// Люди, приславшие заявку на подписку.
+    var requestPeople: [User] { followRequests.compactMap { Demo.person($0) } }
     var blockedPeople: [User] { Demo.people.filter { blocked.contains($0.id) } }
     func isBlocked(_ userId: Int) -> Bool { blocked.contains(userId) }
     /// Подписчики другого человека. Сервера нет, поэтому видны только
@@ -123,11 +155,13 @@ struct UiState: Equatable {
         return you + known
     }
     var myPosts: [Post] { posts.filter { $0.author.id == me.id } }
-    /// «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте.
-    var stories: [Post] { posts.filter { following.contains($0.author.id) && !blocked.contains($0.author.id) } }
+    /// «Истории»: свои записи и записи тех, на кого подписан, — новые сверху.
+    var stories: [Post] {
+        posts.filter { (following.contains($0.author.id) || $0.author.id == me.id) && !blocked.contains($0.author.id) }
+    }
     var followedPeople: [User] { Demo.people.filter { following.contains($0.id) } }
-    /// Кто подписан на вас (пока — демо-люди).
-    var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) } }
+    /// Кто подписан на вас: демо-люди и те, чьи заявки вы одобрили.
+    var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) || approvedFollowers.contains($0.id) } }
     /// «Сохранённое» в профиле: PRISM в закладках.
     var savedPrisms: [Prism] { prisms.filter { $0.saved } }
     func track(_ id: String) -> MusicTrack? { tracks.first { $0.id == id } }
@@ -191,6 +225,12 @@ struct Snapshot: Codable, Equatable {
     var reportedComments: Set<Int64>? = nil
     var stickers: [Sticker]? = nil
     var profilePins: [Int64]? = nil
+    var checkInTemplates: [CheckInTemplate]? = nil
+    var followRequests: [Int]? = nil
+    var approvedFollowers: Set<Int>? = nil
+    var sentRequests: Set<Int>? = nil
+    var recapNotified: Set<String>? = nil
+    var together: TogetherState? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -246,8 +286,14 @@ final class AppModel {
 
     /// Раздел профиля: нажатие на «записи», «подписчики», «подписки», «группы» или «Сохранённое».
     func openProfileSection(_ section: ProfileSection) {
+        // Поверх может быть переписка, группа или настройки — уходят, иначе раздел не виден
         state.tab = .profile
         state.openPersonId = nil
+        state.personSection = nil
+        state.settingsPage = nil
+        state.openChatId = nil
+        state.openGroupId = nil
+        state.groupSettingsOpen = false
         state.profileSection = section
     }
 
@@ -326,21 +372,47 @@ final class AppModel {
     }
 
     /// Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем.
-    func publish(_ text: String, media: [Attachment] = []) {
+    func publish(_ text: String, media: [Attachment] = [], checkIn: CheckIn? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty && media.isEmpty { return }
+        if trimmed.isEmpty && media.isEmpty && checkIn == nil { return }
         let post = Post(
             id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
-            media: Array(media.prefix(Self.maxMedia)), createdAt: clock()
+            media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn
         )
         state.posts.insert(post, at: 0)
+        // Чек-ин сам засчитывается в общие цели «Вместе»
+        if let checkIn { state.together = state.together.afterCheckIn(checkIn) }
+    }
+
+    // MARK: - Чек-ины
+
+    /// Свой чек-ин. nil — создан; иначе — что не так.
+    @discardableResult
+    func createCheckInTemplate(emoji: String, title: String, unit: String, hint: String) -> String? {
+        let name = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        if name.isEmpty { return t("Назовите чек-ин") }
+        let exists = state.checkInTemplates.contains { $0.title.lowercased() == name.lowercased() }
+            || checkInActivities.contains { t($0.title).lowercased() == name.lowercased() }
+        if exists { return t("Такой чек-ин уже есть") }
+        let template = CheckInTemplate(
+            id: "custom-" + String(UUID().uuidString.prefix(8)).lowercased(),
+            emoji: emoji.isEmpty ? "⭐" : emoji, title: name,
+            unit: String(unit.trimmingCharacters(in: .whitespaces).prefix(12)),
+            hint: String(hint.trimmingCharacters(in: .whitespaces).prefix(60))
+        )
+        state.checkInTemplates.insert(template, at: 0)
+        return nil
+    }
+
+    func deleteCheckInTemplate(_ id: String) {
+        state.checkInTemplates.removeAll { $0.id == id }
     }
 
     /// Комментарий к записи в ленте или в группе.
-    func addComment(_ postId: Int64, _ text: String, replyTo: String? = nil) {
+    func addComment(_ postId: Int64, _ text: String, replyTo: String? = nil, sticker: Attachment? = nil) {
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
-        if trimmed.isEmpty { return }
-        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo)
+        if trimmed.isEmpty && sticker == nil { return }
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo, sticker: sticker)
         updatePosts(postId) { p in
             p.comments += 1
             p.commentList.append(comment)
@@ -411,14 +483,69 @@ final class AppModel {
         state.viewing = nil
     }
 
-    /// Подписаться или отписаться: записи человека появятся в «Историях» или уйдут оттуда.
+    /// Подписаться или отписаться: записи человека появятся в «Историях» или
+    /// уйдут оттуда. На закрытый профиль уходит заявка; повторное нажатие —
+    /// отозвать её. В демо заявку принимают через несколько секунд.
     func toggleFollow(_ userId: Int) {
         if userId == state.me.id { return }
+        if let person = Demo.person(userId), person.closed, !state.following.contains(userId) {
+            if state.sentRequests.contains(userId) {
+                acceptTasks.removeValue(forKey: userId)?.cancel()
+                state.sentRequests.remove(userId)
+                return
+            }
+            state.sentRequests.insert(userId)
+            scheduleAcceptance(userId)
+            return
+        }
         if state.following.contains(userId) {
             state.following.remove(userId)
         } else {
             state.following.insert(userId)
         }
+    }
+
+    /// Таймеры демо-ответа на заявки: один на человека.
+    @ObservationIgnored private var acceptTasks: [Int: Task<Void, Never>] = [:]
+
+    /// В демо закрытый профиль принимает заявку через 12–30 секунд.
+    private func scheduleAcceptance(_ userId: Int) {
+        guard demoReplies else { return }
+        acceptTasks.removeValue(forKey: userId)?.cancel()
+        acceptTasks[userId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64.random(in: 12_000_000_000...30_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.acceptTasks[userId] = nil
+            self.acceptSentRequest(userId)
+        }
+    }
+
+    /// Закрытый профиль принял вашу заявку: вы подписаны, записи видны.
+    func acceptSentRequest(_ userId: Int) {
+        guard state.sentRequests.contains(userId) else { return }
+        state.sentRequests.remove(userId)
+        state.following.insert(userId)
+        if let person = Demo.person(userId) { notify(Nudges.requestAccepted(person)) }
+    }
+
+    /// Одобрить заявку: человек становится подписчиком.
+    func approveRequest(_ userId: Int) {
+        state.followRequests.removeAll { $0 == userId }
+        state.approvedFollowers.insert(userId)
+    }
+
+    /// Отклонить заявку: человек просто останется без доступа.
+    func declineRequest(_ userId: Int) {
+        state.followRequests.removeAll { $0 == userId }
+    }
+
+    /// Новая заявка к вам — когда профиль закрыт.
+    func receiveFollowRequest(_ userId: Int) {
+        guard let person = Demo.person(userId), state.privacy.closedProfile,
+              !state.followRequests.contains(userId), !state.blocked.contains(userId),
+              !state.followers.contains(where: { $0.id == userId }) else { return }
+        state.followRequests.insert(userId, at: 0)
+        notify(Nudges.followRequest(person, common: person.interests.filter { state.me.interests.contains($0) }))
     }
 
     // MARK: - Чаты
@@ -472,6 +599,10 @@ final class AppModel {
             let reply = Demo.replies[self.replyIndex % Demo.replies.count]
             self.replyIndex += 1
             self.append(chatId, Message(id: self.newId(), fromMe: false, text: reply, time: Self.now()))
+            // Открытая переписка — ответ и так на экране
+            if let chat = self.state.chats.first(where: { $0.id == chatId }), !chat.muted, self.state.openChatId != chatId {
+                self.notify(Nudges.message(chat.peer, reply, chatId: chatId))
+            }
         }
     }
 
@@ -607,10 +738,10 @@ final class AppModel {
         updatePrism(prismId) { $0.saved.toggle() }
     }
 
-    func addPrismComment(_ prismId: Int64, _ text: String, replyTo: String? = nil) {
+    func addPrismComment(_ prismId: Int64, _ text: String, replyTo: String? = nil, sticker: Attachment? = nil) {
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
-        if trimmed.isEmpty { return }
-        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo)
+        if trimmed.isEmpty && sticker == nil { return }
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo, sticker: sticker)
         updatePrism(prismId) { p in
             p.comments += 1
             p.commentList.append(comment)
@@ -942,6 +1073,10 @@ final class AppModel {
 
     /// После выхода состояние сбрасывается: следующий вошедший не увидит чужие черновики и переписку.
     func reset() {
+        lifeTask?.cancel()
+        lifeTask = nil
+        acceptTasks.values.forEach { $0.cancel() }
+        acceptTasks = [:]
         state = UiState()
     }
 
@@ -977,7 +1112,12 @@ final class AppModel {
         state.notifications = notifications
     }
 
+    /// Открыли профиль — ждущие заявки одобряются сами: подписаться может любой.
     func setPrivacy(_ privacy: Privacy) {
+        if !privacy.closedProfile && !state.followRequests.isEmpty {
+            state.approvedFollowers.formUnion(state.followRequests)
+            state.followRequests = []
+        }
         state.privacy = privacy
     }
 
@@ -998,6 +1138,552 @@ final class AppModel {
         state.applyMe(me)
     }
 
+    // MARK: - Уведомления и итоги
+
+    /// Куда уходят персональные уведомления. MemoryApp показывает их
+    /// системным уведомлением, когда приложение свёрнуто, а пока оно
+    /// открыто — плашкой сверху (state.banner).
+    @ObservationIgnored var onNudge: ((Nudge) -> Void)?
+
+    /// Отправить уведомление, если такой раздел не выключен в настройках.
+    func notify(_ nudge: Nudge) {
+        guard Nudges.allowed(nudge, state.notifications) else { return }
+        if let onNudge { onNudge(nudge) } else { state.banner = nudge }
+    }
+
+    func showBanner(_ nudge: Nudge) { state.banner = nudge }
+
+    func dismissBanner() { state.banner = nil }
+
+    /// Нажатие на уведомление: туда, о чём оно.
+    func openNudge(_ nudge: Nudge) {
+        dismissBanner()
+        switch nudge.target {
+        case .post:
+            if let post = state.findPost(nudge.targetId), post.author.id == state.me.id {
+                openProfileSection(.posts)
+            } else {
+                selectTab(.feed)
+            }
+        case .group:
+            selectTab(.groups)
+            openGroup(Int(nudge.targetId))
+        case .person:
+            openPerson(Int(nudge.targetId))
+        case .chat:
+            if state.chats.contains(where: { $0.id == Int(nudge.targetId) }) { openChat(Int(nudge.targetId)) } else { selectTab(.chats) }
+        case .recap:
+            // targetId — год × 100 + месяц; месяц 0 — итоги года
+            let year = Int(nudge.targetId / 100)
+            let month = Int(nudge.targetId % 100)
+            let now = Calendar.current.dateComponents([.year, .month], from: Date())
+            let thisYear = now.year ?? year
+            let thisMonth = now.month ?? month
+            if year == 0 {
+                openRecap(.month)
+            } else if month == 0 {
+                openRecap(.year, back: max(0, thisYear - year))
+            } else {
+                openRecap(.month, back: max(0, (thisYear * 12 + thisMonth) - (year * 12 + month)))
+            }
+        case .requests:
+            openProfileSection(.requests)
+        case .together:
+            selectTab(.together)
+            let sections = TogetherSection.allCases
+            let index = Int(nudge.targetId)
+            if sections.indices.contains(index) { selectTogetherSection(sections[index]) }
+        }
+    }
+
+    /// Итоги месяца или года; back — на сколько периодов назад от текущего.
+    func openRecap(_ period: RecapPeriod, back: Int = 0) {
+        openProfileSection(.recap)
+        state.recapPeriod = period
+        state.recapBack = back
+    }
+
+    func setRecapPeriod(_ period: RecapPeriod) {
+        state.recapPeriod = period
+        state.recapBack = 0
+    }
+
+    func setRecapBack(_ back: Int) { state.recapBack = max(0, back) }
+
+    /// Итоги за период.
+    func recap(_ period: RecapPeriod, year: Int, month: Int) -> Recap {
+        Recap.compute(me: state.me, posts: state.posts, prisms: state.prisms, period: period, year: year, month: month)
+    }
+
+    /// В начале месяца — уведомление об итогах прошлого (если было что
+    /// считать), в январе — ещё и об итогах года. Один раз на период.
+    func checkRecapReady(today: Date = Date()) {
+        let previous = Recap.previousMonth(today)
+        var list = [recap(.month, year: previous.year, month: previous.month)]
+        let c = Calendar.current.dateComponents([.year, .month], from: today)
+        if c.month == 1 { list.append(recap(.year, year: (c.year ?? 2026) - 1, month: 0)) }
+        for r in list where !state.recapNotified.contains(r.key) && !r.empty {
+            state.recapNotified.insert(r.key)
+            notify(Nudges.recap(r))
+        }
+    }
+
+    @ObservationIgnored private var lifeTask: Task<Void, Never>?
+
+    /// Жизнь вокруг, пока нет сервера: друзья отмечают чек-ины, в группы
+    /// приходят люди, вашим записям ставят «нравится», при закрытом
+    /// профиле приходят заявки. Каждое событие — с персональным уведомлением.
+    func startDemoLife() {
+        guard lifeTask == nil else { return }
+        // Заявки, отправленные до перезапуска, тоже дождутся ответа
+        state.sentRequests.forEach { scheduleAcceptance($0) }
+        lifeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            while !Task.isCancelled {
+                guard let self else { return }
+                var rng = SystemRandomNumberGenerator()
+                self.demoEvent(using: &rng)
+                try? await Task.sleep(nanoseconds: UInt64.random(in: 35_000_000_000...75_000_000_000))
+                if Task.isCancelled { return }
+                self.togetherEvent(using: &rng)
+                try? await Task.sleep(nanoseconds: UInt64.random(in: 35_000_000_000...75_000_000_000))
+            }
+        }
+    }
+
+    /// Всё, что вы сами писали, — чтобы понять, что вы обсуждали.
+    func myTexts() -> [String] {
+        let meId = state.me.id
+        let all: [Post] = state.posts + state.groups.flatMap(\.posts)
+        var texts: [String] = []
+        for post in all {
+            if post.author.id == meId { texts.append(post.text) }
+            for c in post.commentList where c.author.id == meId { texts.append(c.text) }
+        }
+        for prism in state.prisms {
+            for c in prism.commentList where c.author.id == meId { texts.append(c.text) }
+        }
+        for chat in state.chats {
+            for m in chat.messages where m.fromMe { texts.append(m.text) }
+        }
+        return texts
+    }
+
+    /// Ваши километры за текущий месяц — для «не отставайте».
+    private func myKmThisMonth() -> Double {
+        let now = Calendar.current.dateComponents([.year, .month], from: clock())
+        return state.posts.filter { p in
+            guard p.author.id == state.me.id, let d = p.createdAt else { return false }
+            let c = Calendar.current.dateComponents([.year, .month], from: d)
+            return c.year == now.year && c.month == now.month
+        }
+        .compactMap(\.checkIn).filter { isKilometers($0.unit) }.reduce(0) { $0 + $1.amount }
+    }
+
+    /// Одно событие демо-жизни. Отдельно от цикла — чтобы проверять в тестах.
+    func demoEvent<G: RandomNumberGenerator>(using rng: inout G) {
+        let friends = state.followedPeople.filter { !state.blocked.contains($0.id) }
+        let joined = state.groups.filter { $0.joined && !$0.muted }
+        let mine = state.myPosts
+        let requesters = Demo.people.filter { p in
+            !state.blocked.contains(p.id) && !state.followRequests.contains(p.id) && !state.followers.contains { $0.id == p.id }
+        }
+        var options: [Int] = []
+        if !friends.isEmpty { options += [0, 0, 0, 0] }
+        if !joined.isEmpty { options += [1, 1] }
+        if !mine.isEmpty { options += [2, 2] }
+        if state.privacy.closedProfile && !requesters.isEmpty { options.append(3) }
+        guard let pick = options.randomElement(using: &rng) else { return }
+        switch pick {
+        case 0:
+            friendCheckIn(friends.randomElement(using: &rng)!, using: &rng)
+        case 1:
+            let group = joined.randomElement(using: &rng)!
+            let name = Demo.newcomers.randomElement(using: &rng)!
+            let person = User(id: 500 + Int.random(in: 0..<1000, using: &rng), name: name,
+                              handle: name.lowercased().replacingOccurrences(of: " ", with: "."))
+            state.groups = state.groups.map { g in
+                var g = g
+                if g.id == group.id { g.members += 1 }
+                return g
+            }
+            notify(Nudges.groupMember(group, person))
+        case 2:
+            let post = mine.randomElement(using: &rng)!
+            let fans = Demo.people.filter { !state.blocked.contains($0.id) }
+            let fan = fans.randomElement(using: &rng)!
+            state.posts = state.posts.map { p in
+                var p = p
+                if p.id == post.id { p.likes += 1 }
+                return p
+            }
+            notify(Nudges.liked(fan, post))
+        default:
+            receiveFollowRequest(requesters.randomElement(using: &rng)!.id)
+        }
+    }
+
+    /// Друг отметил чек-ин: запись в ленте и уведомление — с тем, что вы обсуждали.
+    private func friendCheckIn<G: RandomNumberGenerator>(_ friend: User, using rng: inout G) {
+        let texts = myTexts()
+        let kinds = ["movie", "movie", "series", "book", "run", "bike", "walk", "coffee", "place", "concert"]
+        let kind = kinds.randomElement(using: &rng)!
+        guard let activity = checkInActivities.first(where: { $0.id == kind }) else { return }
+        func pick(_ list: [String]) -> String {
+            // Что вы обсуждали — в приоритете: ради этого и уведомление
+            let talked = list.filter { Nudges.discussed($0, texts) }
+            if !talked.isEmpty && Double.random(in: 0..<1, using: &rng) < 0.75 { return talked.randomElement(using: &rng)! }
+            return list.randomElement(using: &rng)!
+        }
+        let subject: String
+        switch kind {
+        case "movie": subject = pick(Demo.movies)
+        case "series": subject = pick(Demo.series)
+        case "book": subject = pick(Demo.books)
+        case "coffee", "place": subject = pick(Demo.places)
+        case "concert": subject = pick(["Сплин", "Мумий Тролль", "Земфира", "Би-2"])
+        default: subject = pick(["Набережная", "Парк", "Вокруг дома"])
+        }
+        let amount: Double
+        switch kind {
+        case "run": amount = Double(3 + Int.random(in: 0..<10, using: &rng))
+        case "bike": amount = Double(10 + Int.random(in: 0..<30, using: &rng))
+        case "walk": amount = Double(2 + Int.random(in: 0..<8, using: &rng))
+        case "book": amount = Double(20 + Int.random(in: 0..<80, using: &rng))
+        default: amount = 0
+        }
+        let c = activity.checkIn(subject, amount)
+        let id = newId()
+        state.posts.insert(Post(id: id, author: friend, text: "", minutesAgo: 0, likes: Int.random(in: 0..<6, using: &rng), createdAt: clock(), checkIn: c), at: 0)
+        notify(Nudges.friendCheckIn(friend, c, discussed: Nudges.discussed(subject, texts), myKm: myKmThisMonth(), postId: id))
+    }
+
+    // MARK: - Вместе
+
+    func selectTogetherSection(_ section: TogetherSection) {
+        state.togetherSection = section
+    }
+
+    /// Изменить состояние «Вместе»; nil из правила — ничего не меняется. true — изменилось.
+    @discardableResult
+    private func together(_ change: (TogetherState) -> TogetherState?) -> Bool {
+        guard let next = change(state.together) else { return false }
+        state.together = next
+        return true
+    }
+
+    private var meId: Int { state.me.id }
+
+    /// Позже, в демо: ответ «с той стороны». В тестах не срабатывает.
+    private func later(_ from: Double, _ to: Double, _ block: @escaping (AppModel) -> Void) {
+        guard demoReplies else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Double.random(in: from...to) * 1_000_000_000))
+            guard let self else { return }
+            block(self)
+        }
+    }
+
+    /// Сообщение человеку от вашего имени — без открытия переписки: так
+    /// договорённость об обмене или вылазке остаётся в чате.
+    private func messageTo(_ userId: Int, _ text: String) {
+        guard let person = Demo.person(userId) else { return }
+        let chatId: Int
+        if let existing = state.chats.first(where: { $0.peer.id == userId }) {
+            chatId = existing.id
+        } else {
+            chatId = (state.chats.map(\.id).max() ?? 0) + 1
+            state.chats.insert(Chat(id: chatId, peer: person, messages: []), at: 0)
+        }
+        append(chatId, Message(id: newId(), fromMe: true, text: text, time: Self.now()))
+    }
+
+    /// Где вы: демо-точки один раз переезжают к вам.
+    func setLocation(_ here: LatLon) {
+        let me = meId
+        together { $0.relocate(here, meId: me) }
+    }
+
+    // MARK: Цели
+
+    func joinGoal(_ id: String) { together { $0.joinGoal(id) } }
+
+    func contribute(_ id: String, _ amount: Double) { together { $0.contribute(id, amount) } }
+
+    // MARK: Навыки
+
+    func addSkill(teach: Bool, _ skill: String) { together { $0.addSkill(teach: teach, skill) } }
+
+    func removeSkill(teach: Bool, _ skill: String) { together { $0.removeSkill(teach: teach, skill) } }
+
+    /// Предложить обмен. give — чему научите вы, get — чему научат вас (""
+    /// — ничему). nil — предложено; иначе — что не так (не хватает часов).
+    @discardableResult
+    func proposeDeal(_ personId: Int, give: String, get: String, minutes: Int) -> String? {
+        let id = newId()
+        let now = clock()
+        let ok = together { $0.propose(id: id, personId: personId, give: give, get: get, minutes: minutes, now: now) }
+        if !ok {
+            return give.isEmpty && !get.isEmpty
+                ? t("Не хватает часов в банке времени — научите кого-нибудь сами")
+                : t("Выберите, чему учите или чему хотите научиться")
+        }
+        let text: String
+        if !give.isEmpty && !get.isEmpty {
+            text = tf("Привет! Давай обмен: я научу «%s», а ты меня — «%s». По %s.", give, get, minutesTitle(minutes))
+        } else if !get.isEmpty {
+            text = tf("Привет! Научишь меня «%s»? %s — расплачусь часами из банка времени.", get, minutesTitle(minutes))
+        } else {
+            text = tf("Привет! Могу научить «%s» — %s.", give, minutesTitle(minutes))
+        }
+        messageTo(personId, text)
+        // В демо человек соглашается через полминуты
+        later(15, 40) { model in
+            guard let deal = model.state.together.deals.first(where: { $0.id == id }), deal.status == .proposed else { return }
+            model.together { $0.setDeal(id, .agreed) }
+            if let person = Demo.person(personId) { model.notify(Nudges.dealAgreed(person, deal)) }
+        }
+        return nil
+    }
+
+    func setDeal(_ id: Int64, _ status: DealStatus) { together { $0.setDeal(id, status) } }
+
+    // MARK: Дневники
+
+    @discardableResult
+    func startJourney(emoji: String, title: String, days: Int) -> Bool {
+        let id = newId()
+        let me = meId
+        let now = clock()
+        return together { $0.startJourney(id: id, me: me, emoji: emoji, title: title, days: days, now: now) }
+    }
+
+    func addJourneyEntry(_ journeyId: Int64, text: String, media: [Attachment]) {
+        let entryId = newId()
+        let now = clock()
+        together { $0.addEntry(journeyId, entryId: entryId, text: text, media: media, now: now) }
+        // В демо к новой записи приходит совет
+        later(20, 60) { model in
+            var rng = SystemRandomNumberGenerator()
+            model.demoTip(journeyId, entryId, using: &rng)
+        }
+    }
+
+    private func demoTip<G: RandomNumberGenerator>(_ journeyId: Int64, _ entryId: Int64, using rng: inout G) {
+        guard let journey = state.together.journeys.first(where: { $0.id == journeyId }),
+              let entry = journey.entries.first(where: { $0.id == entryId }),
+              let adviser = Demo.people.filter({ !state.blocked.contains($0.id) && $0.id != journey.authorId }).randomElement(using: &rng),
+              let advice = TogetherDemo.tips.randomElement(using: &rng) else { return }
+        let tip = Tip(id: newId(), authorId: adviser.id, text: advice, createdAt: clock())
+        together { $0.addTip(journeyId, entryId, tip) }
+        notify(Nudges.tipReceived(adviser, journey, day: entry.day))
+    }
+
+    func addTip(_ journeyId: Int64, _ entryId: Int64, _ text: String) {
+        let tip = Tip(id: newId(), authorId: meId, text: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500)), createdAt: clock())
+        together { $0.addTip(journeyId, entryId, tip) }
+    }
+
+    func toggleHelpful(_ journeyId: Int64, _ entryId: Int64, _ tipId: Int64) {
+        together { $0.toggleHelpful(journeyId, entryId, tipId) }
+    }
+
+    // MARK: Миссии
+
+    func joinMission(_ id: String) { together { $0.joinMission(id) } }
+
+    func addFind(_ missionId: String, note: String, at: LatLon, photo: Attachment?) {
+        let find = MissionFind(id: newId(), authorId: meId, note: String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)),
+                               at: at, photo: photo, createdAt: clock())
+        together { $0.addFind(missionId, find) }
+    }
+
+    // MARK: Клады
+
+    @discardableResult
+    func hideCache(title: String, hint: String, difficulty: Int, size: String, at: LatLon) -> Bool {
+        let id = newId()
+        let cache = GeoCache(
+            id: id, authorId: meId,
+            title: String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60)),
+            hint: String(hint.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)),
+            at: at, difficulty: min(5, max(1, difficulty)), size: size, createdAt: clock()
+        )
+        let ok = together { $0.hideCache(cache) }
+        // В демо ваш клад кто-нибудь находит
+        if ok {
+            later(60, 180) { model in
+                guard let finder = Demo.people.filter({ !model.state.blocked.contains($0.id) }).randomElement(),
+                      model.state.together.caches.contains(where: { $0.id == id }) else { return }
+                let log = CacheLog(id: model.newId(), authorId: finder.id, text: t("Нашёл! Отличное место."), createdAt: model.clock())
+                model.state.together.caches = model.state.together.caches.map { c in
+                    var c = c
+                    if c.id == id { c.logs.append(log) }
+                    return c
+                }
+                if let found = model.state.together.caches.first(where: { $0.id == id }) {
+                    model.notify(Nudges.cacheFound(finder, found))
+                }
+            }
+        }
+        return ok
+    }
+
+    /// true — отметились; false — вы далеко или уже нашли.
+    @discardableResult
+    func findCache(_ id: Int64, text: String, here: LatLon?) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let log = CacheLog(id: newId(), authorId: meId, text: String((trimmed.isEmpty ? t("Нашёл!") : trimmed).prefix(300)), createdAt: clock())
+        return together { $0.findCache(id, log, here: here) }
+    }
+
+    // MARK: Вылазки
+
+    @discardableResult
+    func createOuting(emoji: String, title: String, description: String, place: String, startsAt: Date, capacity: Int, at: LatLon?) -> Bool {
+        let id = newId()
+        let me = meId
+        func clip(_ s: String, _ n: Int) -> String { String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(n)) }
+        let outing = Outing(id: id, organizerId: me, emoji: emoji, title: clip(title, 60), description: clip(description, 500),
+                            place: clip(place, 80), startsAt: startsAt, capacity: capacity, participants: [me], at: at)
+        let ok = together { $0.createOuting(outing) }
+        // В демо к вылазке присоединяются
+        if ok {
+            later(30, 90) { model in
+                guard let current = model.state.together.outings.first(where: { $0.id == id }), !current.full,
+                      let guest = Demo.people.first(where: { !current.participants.contains($0.id) && !model.state.blocked.contains($0.id) })
+                else { return }
+                model.state.together.outings = model.state.together.outings.map { o in
+                    var o = o
+                    if o.id == id && !o.full { o.participants.append(guest.id) }
+                    return o
+                }
+                model.notify(Nudges.outingJoined(guest, current))
+            }
+        }
+        return ok
+    }
+
+    func toggleOuting(_ id: Int64) {
+        let me = meId
+        together { $0.toggleOuting(id, me: me) }
+    }
+
+    func cancelOuting(_ id: Int64) {
+        let me = meId
+        together { $0.cancelOuting(id, me: me) }
+    }
+
+    // MARK: Рисунок
+
+    /// Новый рисунок; ответ — его номер, nil — пустая тема.
+    @discardableResult
+    func startDrawing(title: String, turns: Int) -> Int64? {
+        let id = newId()
+        let me = meId
+        let now = clock()
+        let ok = together { $0.startDrawing(id: id, title: title, turns: turns, me: me, now: now) }
+        return ok ? id : nil
+    }
+
+    /// Свой ход: передать дальше. В демо друг дорисует и вернёт.
+    func drawTurn(_ id: Int64, strokes: [DrawStroke], passTo: Int?) {
+        let me = meId
+        together { $0.drawTurn(id, me: me, strokes: strokes, passTo: passTo) }
+        guard let drawing = state.together.drawings.first(where: { $0.id == id }),
+              let friendId = drawing.waitingFor, friendId != me else { return }
+        later(20, 50) { model in
+            guard let friend = Demo.person(friendId) else { return }
+            let colors: [UInt32] = [0xBC92CD, 0x8CC4FF, 0xFF9EDE, 0xFFD86B, 0x7BE0B0]
+            var random = SeededRandom(Int(model.clock().timeIntervalSince1970 * 1000))
+            let color = colors[random.nextInt(colors.count)]
+            let strokes = TogetherDemo.demoStrokes(&random, color: color)
+            model.together { $0.drawTurn(id, me: friendId, strokes: strokes, passTo: me) }
+            if let updated = model.state.together.drawings.first(where: { $0.id == id }) {
+                model.notify(Nudges.drawingTurn(friend, updated))
+            }
+        }
+    }
+
+    // MARK: Обмен
+
+    @discardableResult
+    func addShare(kind: ShareKind, title: String, description: String, photo: Attachment?) -> Bool {
+        let me = meId
+        let item = ShareItem(
+            id: newId(), kind: kind,
+            title: String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)),
+            description: String(description.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500)),
+            ownerId: me, holderId: me, photo: photo, createdAt: clock()
+        )
+        return together { $0.addShare(item) }
+    }
+
+    /// Попросить книгу или семена. В демо владелец передаёт через полминуты.
+    func requestShare(_ id: Int64) {
+        let me = meId
+        together { $0.requestShare(id, me: me) }
+        guard let item = state.together.shares.first(where: { $0.id == id }), item.requestedBy == me else { return }
+        messageTo(item.holderId, tf("Привет! Можно мне «%s»? Заберу, когда удобно.", item.title))
+        later(15, 45) { model in
+            guard let current = model.state.together.shares.first(where: { $0.id == id }),
+                  current.status == .requested, current.requestedBy == me,
+                  let giver = Demo.person(current.holderId) else { return }
+            model.together { $0.handOver(id, to: me) }
+            model.notify(Nudges.shareHanded(giver, current))
+        }
+    }
+
+    func handOver(_ id: Int64, to: Int) {
+        together { $0.handOver(id, to: to) }
+    }
+
+    func offerHelp(_ id: Int64) {
+        let me = meId
+        together { $0.offerHelp(id, me: me) }
+        if let item = state.together.shares.first(where: { $0.id == id }) {
+            messageTo(item.ownerId, tf("Привет! Могу помочь починить «%s». Когда удобно?", item.title))
+        }
+    }
+
+    func markFixed(_ id: Int64) { together { $0.markFixed(id) } }
+
+    /// Событие «Вместе» в демо: шкалы растут, к вашим вещам и записям приходят люди.
+    func togetherEvent<G: RandomNumberGenerator>(using rng: inout G) {
+        // Общие шкалы растут всегда — сообщество не спит
+        var goals = state.together.goals
+        for i in goals.indices {
+            let step = goals[i].target * (0.0002 + Double.random(in: 0..<1, using: &rng) * 0.0008)
+            goals[i].total = min(goals[i].target, goals[i].total + step)
+            goals[i].participants += Int.random(in: 0..<4, using: &rng)
+        }
+        state.together.goals = goals
+        let me = meId
+        let people = Demo.people.filter { !state.blocked.contains($0.id) }
+        let myEntries: [(Int64, Int64)] = state.together.journeys.filter { $0.authorId == me }
+            .flatMap { j in j.entries.map { (j.id, $0.id) } }
+        let myShares = state.together.shares.filter { $0.holderId == me && $0.status == .available && $0.kind != .repair }
+        var options: [Int] = []
+        if !myEntries.isEmpty { options.append(0) }
+        if !myShares.isEmpty { options.append(1) }
+        guard !people.isEmpty, let pick = options.randomElement(using: &rng) else { return }
+        if pick == 0 {
+            guard let pair = myEntries.randomElement(using: &rng) else { return }
+            demoTip(pair.0, pair.1, using: &rng)
+        } else {
+            guard let item = myShares.randomElement(using: &rng), let asker = people.randomElement(using: &rng) else { return }
+            state.together.shares = state.together.shares.map { x in
+                var x = x
+                if x.id == item.id {
+                    x.status = .requested
+                    x.requestedBy = asker.id
+                }
+                return x
+            }
+            notify(Nudges.shareRequested(asker, item))
+        }
+    }
+
     // MARK: - Сохранение
 
     /// То, что сохраняется на телефоне между запусками (см. StateStore).
@@ -1007,7 +1693,10 @@ final class AppModel {
             following: state.following, notifications: state.notifications.all, nextId: nextId,
             notify: state.notifications, privacy: state.privacy, blocked: state.blocked,
             tracks: state.tracks, playlists: state.playlists, reportedComments: state.reportedComments,
-            stickers: state.stickers, profilePins: state.profilePins
+            stickers: state.stickers, profilePins: state.profilePins,
+            checkInTemplates: state.checkInTemplates, followRequests: state.followRequests,
+            approvedFollowers: state.approvedFollowers, sentRequests: state.sentRequests,
+            recapNotified: state.recapNotified, together: state.together
         )
     }
 
@@ -1034,6 +1723,12 @@ final class AppModel {
         s.reportedComments = snapshot.reportedComments ?? []
         s.stickers = snapshot.stickers ?? []
         s.profilePins = snapshot.profilePins ?? []
+        s.checkInTemplates = snapshot.checkInTemplates ?? []
+        s.followRequests = snapshot.followRequests ?? []
+        s.approvedFollowers = snapshot.approvedFollowers ?? []
+        s.sentRequests = snapshot.sentRequests ?? []
+        s.recapNotified = snapshot.recapNotified ?? []
+        s.together = snapshot.together ?? s.together
         s.applyMe(s.me)
         state = s
     }

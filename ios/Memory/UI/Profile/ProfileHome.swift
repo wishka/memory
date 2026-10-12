@@ -144,7 +144,7 @@ private struct PinnedTile: View {
         Button(action: onTap) {
             ZStack(alignment: .bottomLeading) {
                 Group {
-                    if let visual = post.media.first(where: { $0.kind != .document }) {
+                    if let visual = post.media.first(where: { $0.kind != .document && !$0.sticker }) {
                         MediaTile(attachment: visual, maxPixel: 400)
                     } else if let seed = post.artSeed {
                         Nebula(seed: seed)
@@ -313,7 +313,7 @@ struct ProfileContentTabs: View {
     var body: some View {
         let state = model.state
         let myPrisms = state.myPrisms
-        let media = state.myPosts.flatMap { $0.media.filter { $0.kind != .document } } + myPrisms.compactMap(\.cover)
+        let media = state.myPosts.flatMap { $0.media.filter { $0.kind != .document && !$0.sticker } } + myPrisms.compactMap(\.cover)
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Chip(text: tf("Записи · %s", state.myPosts.count), active: tab == 0) { tab = 0 }

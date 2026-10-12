@@ -226,6 +226,8 @@ struct AttachButton: View {
     var size: CGFloat = 44
     /// «Музыка» в меню — трек из «Моей музыки» или файл; nil — пункта нет.
     var onMusic: (() -> Void)? = nil
+    /// «Стикер» в меню — свои стикеры из «Студии»; nil — пункта нет.
+    var onSticker: (() -> Void)? = nil
     let onPicked: ([Attachment]) -> Void
 
     @State private var showGallery = false
@@ -246,6 +248,9 @@ struct AttachButton: View {
         }
         if let onMusic {
             items.append(GlassAction(icon: .music, title: t("Музыка"), action: onMusic))
+        }
+        if let onSticker {
+            items.append(GlassAction(icon: .sticker, title: t("Стикер"), action: onSticker))
         }
         return items
     }

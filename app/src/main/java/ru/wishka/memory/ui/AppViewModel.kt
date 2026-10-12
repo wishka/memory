@@ -3,6 +3,10 @@ package ru.wishka.memory.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +29,36 @@ import ru.wishka.memory.data.Notifications
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.Privacy
 import ru.wishka.memory.data.User
+import ru.wishka.memory.data.Cache
+import ru.wishka.memory.data.CacheLog
+import ru.wishka.memory.data.DealStatus
+import ru.wishka.memory.data.DrawStroke
+import ru.wishka.memory.data.LatLon
+import ru.wishka.memory.data.MissionFind
+import ru.wishka.memory.data.Outing
+import ru.wishka.memory.data.ShareItem
+import ru.wishka.memory.data.ShareKind
+import ru.wishka.memory.data.ShareStatus
+import ru.wishka.memory.data.Tip
+import ru.wishka.memory.data.TogetherDemo
+import ru.wishka.memory.data.TogetherSection
+import ru.wishka.memory.data.TogetherState
+import ru.wishka.memory.data.minutesTitle
+import ru.wishka.memory.data.CHECK_IN_ACTIVITIES
+import ru.wishka.memory.data.CheckIn
+import ru.wishka.memory.data.CheckInTemplate
+import ru.wishka.memory.data.Nudge
+import ru.wishka.memory.data.NudgeTarget
+import ru.wishka.memory.data.Nudges
+import ru.wishka.memory.data.Recap
+import ru.wishka.memory.data.RecapPeriod
+import ru.wishka.memory.data.checkIn
+import ru.wishka.memory.data.isKilometers
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.UUID
+import kotlin.random.Random
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 import java.time.LocalTime
@@ -39,6 +73,8 @@ enum class ProfileSection(private val ru: String) {
     Saved("Сохранённое"),
     Music("Моя музыка"),
     Stickers("Студия"),
+    Recap("Итоги"),
+    Requests("Заявки на подписку"),
     ;
 
     /** Название на выбранном языке. */
@@ -67,6 +103,7 @@ enum class Tab(private val ru: String) {
     Prism("PRISM"),
     Chats("Чаты"),
     Groups("Группы"),
+    Together("Вместе"),
     Profile("Профиль"),
     ;
 
@@ -121,6 +158,25 @@ data class UiState(
     val openGroupId: Int? = null,
     /** Настройки открытой группы — за шестерёнкой. */
     val groupSettingsOpen: Boolean = false,
+    /** Свои чек-ины: шаблоны, которые человек создал сам. */
+    val checkInTemplates: List<CheckInTemplate> = emptyList(),
+    /** Заявки на подписку к вам (закрытый профиль) — новые первыми. */
+    val followRequests: List<Int> = emptyList(),
+    /** Кого вы одобрили: подписчики сверх демо-списка. */
+    val approvedFollowers: Set<Int> = emptySet(),
+    /** Ваши заявки к закрытым профилям, пока их не приняли. */
+    val sentRequests: Set<Int> = emptySet(),
+    /** За какой период уже напомнили об Итогах: «2026-09», «2026». */
+    val recapNotified: Set<String> = emptySet(),
+    /** Уведомление поверх приложения, пока оно открыто; null — нет. */
+    val banner: Nudge? = null,
+    /** Итоги: открыт месяц или год. */
+    val recapPeriod: RecapPeriod = RecapPeriod.Month,
+    /** Итоги: на сколько месяцев или лет назад от текущего. */
+    val recapBack: Int = 0,
+    /** Вкладка «Вместе»: цели, навыки, дневники, миссии, клады, вылазки, рисунок, обмен. */
+    val together: TogetherState = TogetherDemo.initial(),
+    val togetherSection: TogetherSection = TogetherSection.Challenges,
 ) {
     val openPerson: User? get() = openPersonId?.let { Demo.person(it) }
     val openGroup: Group? get() = groups.firstOrNull { it.id == openGroupId }
@@ -131,8 +187,15 @@ data class UiState(
     val unreadTotal: Int get() = chats.filterNot { it.muted }.sumOf { it.unread }
     /** Список чатов: закреплённые сверху, остальные — по последнему сообщению. */
     val chatList: List<Chat> get() = chats.sortedByDescending { it.onTop }
-    /** Лента без записей тех, кто в чёрном списке. */
-    val feed: List<Post> get() = posts.filter { it.author.id !in blocked }
+    /**
+     * Лента без записей тех, кто в чёрном списке, и без записей закрытых
+     * профилей, на которые вы не подписаны.
+     */
+    val feed: List<Post> get() = posts.filter { it.author.id !in blocked && canSee(it.author) }
+    /** Записи человека видны: профиль открыт, вы подписаны или это вы. */
+    fun canSee(user: User): Boolean = !user.closed || user.id in following || user.id == me.id
+    /** Люди, приславшие заявку на подписку. */
+    val requestPeople: List<User> get() = followRequests.mapNotNull { Demo.person(it) }
     val blockedPeople: List<User> get() = Demo.people.filter { it.id in blocked }
     fun isBlocked(userId: Int): Boolean = userId in blocked
     /**
@@ -147,11 +210,11 @@ data class UiState(
         (if (user.id in Demo.followers) listOf(me) else emptyList()) +
             Demo.people.filter { it.id != user.id && it.id !in blocked && (it.id + user.id) % 2 == 0 }
     val myPosts: List<Post> get() = posts.filter { it.author.id == me.id }
-    /** «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте. */
-    val stories: List<Post> get() = posts.filter { it.author.id in following && it.author.id !in blocked }
+    /** «Истории»: свои записи и записи тех, на кого подписан, — новые сверху, как и в ленте. */
+    val stories: List<Post> get() = posts.filter { (it.author.id in following || it.author.id == me.id) && it.author.id !in blocked }
     val followedPeople: List<User> get() = Demo.people.filter { it.id in following }
-    /** Кто подписан на вас (пока — демо-люди). */
-    val followers: List<User> get() = Demo.people.filter { it.id in Demo.followers }
+    /** Кто подписан на вас: демо-люди и те, чьи заявки вы одобрили. */
+    val followers: List<User> get() = Demo.people.filter { it.id in Demo.followers || it.id in approvedFollowers }
     /** «Сохранённое» в профиле: PRISM в закладках. */
     val savedPrisms: List<Prism> get() = prisms.filter { it.saved }
     fun track(id: String): MusicTrack? = tracks.firstOrNull { it.id == id }
@@ -202,7 +265,13 @@ class AppViewModel(
 
     /** Раздел профиля: нажатие на «записи», «подписчики», «подписки», «группы» или «Сохранённое». */
     fun openProfileSection(section: ProfileSection) {
-        _state.update { it.copy(tab = Tab.Profile, profileSection = section, openPersonId = null) }
+        // Поверх может быть переписка, группа или настройки — уходят, иначе раздел не виден
+        _state.update {
+            it.copy(
+                tab = Tab.Profile, profileSection = section, openPersonId = null, personSection = null,
+                settingsPage = null, openChatId = null, openGroupId = null, groupSettingsOpen = false,
+            )
+        }
     }
 
     fun closeProfileSection() {
@@ -281,20 +350,43 @@ class AppViewModel(
     }
 
     /** Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем. */
-    fun publish(text: String, media: List<Attachment> = emptyList()) {
+    fun publish(text: String, media: List<Attachment> = emptyList(), checkIn: CheckIn? = null) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && media.isEmpty()) return
+        if (trimmed.isEmpty() && media.isEmpty() && checkIn == null) return
         _state.update { s ->
-            s.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock())) + s.posts)
+            s.copy(
+                posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn)) + s.posts,
+                // Чек-ин сам засчитывается в общие цели «Вместе»
+                together = if (checkIn != null) s.together.afterCheckIn(checkIn) else s.together,
+            )
         }
     }
 
+    // ==================== ЧЕК-ИНЫ ====================
+
+    /** Свой чек-ин. null — создан; иначе — что не так. */
+    fun createCheckInTemplate(emoji: String, title: String, unit: String, hint: String): String? {
+        val name = title.trim().take(40)
+        if (name.isEmpty()) return t("Назовите чек-ин")
+        val s = _state.value
+        if (s.checkInTemplates.any { it.title.equals(name, ignoreCase = true) } ||
+            CHECK_IN_ACTIVITIES.any { t(it.title).equals(name, ignoreCase = true) }
+        ) return t("Такой чек-ин уже есть")
+        val template = CheckInTemplate("custom-" + UUID.randomUUID().toString().take(8), emoji.ifBlank { "⭐" }, name, unit.trim().take(12), hint.trim().take(60))
+        _state.update { it.copy(checkInTemplates = listOf(template) + it.checkInTemplates) }
+        return null
+    }
+
+    fun deleteCheckInTemplate(id: String) {
+        _state.update { s -> s.copy(checkInTemplates = s.checkInTemplates.filterNot { it.id == id }) }
+    }
+
     /** Комментарий к записи в ленте или в группе. */
-    fun addComment(postId: Long, text: String, replyTo: String = "") {
+    fun addComment(postId: Long, text: String, replyTo: String = "", sticker: Attachment? = null) {
         val trimmed = text.trim().take(1000)
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty() && sticker == null) return
         _state.update { s ->
-            val comment = Comment(nextId++, s.me, trimmed, createdAt = clock(), replyTo = replyTo)
+            val comment = Comment(nextId++, s.me, trimmed, createdAt = clock(), replyTo = replyTo, sticker = sticker)
             fun Post.withComment() = if (id == postId) copy(comments = comments + 1, commentList = commentList + comment) else this
             s.copy(
                 posts = s.posts.map { it.withComment() },
@@ -356,12 +448,70 @@ class AppViewModel(
         _state.update { it.copy(viewing = null) }
     }
 
-    /** Подписаться или отписаться: записи человека появятся в «Историях» или уйдут оттуда. */
+    /**
+     * Подписаться или отписаться: записи человека появятся в «Историях» или
+     * уйдут оттуда. На закрытый профиль уходит заявка; повторное нажатие —
+     * отозвать её. В демо заявку принимают через несколько секунд.
+     */
     fun toggleFollow(userId: Int) {
-        if (userId == _state.value.me.id) return
+        val s0 = _state.value
+        if (userId == s0.me.id) return
+        val person = Demo.person(userId)
+        if (person != null && person.closed && userId !in s0.following) {
+            if (userId in s0.sentRequests) {
+                acceptJobs.remove(userId)?.cancel()
+                _state.update { it.copy(sentRequests = it.sentRequests - userId) }
+                return
+            }
+            _state.update { it.copy(sentRequests = it.sentRequests + userId) }
+            scheduleAcceptance(userId)
+            return
+        }
         _state.update { s ->
             s.copy(following = if (userId in s.following) s.following - userId else s.following + userId)
         }
+    }
+
+    /** Таймеры демо-ответа на заявки: один на человека. */
+    private val acceptJobs = mutableMapOf<Int, Job>()
+
+    /** В демо закрытый профиль принимает заявку через 12–30 секунд. */
+    private fun scheduleAcceptance(userId: Int) {
+        if (!demoReplies) return
+        acceptJobs.remove(userId)?.cancel()
+        acceptJobs[userId] = viewModelScope.launch {
+            delay(Random.nextLong(12_000, 30_000))
+            acceptJobs.remove(userId)
+            acceptSentRequest(userId)
+        }
+    }
+
+    /** Закрытый профиль принял вашу заявку: вы подписаны, записи видны. */
+    fun acceptSentRequest(userId: Int) {
+        if (userId !in _state.value.sentRequests) return
+        _state.update { it.copy(sentRequests = it.sentRequests - userId, following = it.following + userId) }
+        Demo.person(userId)?.let { notify(Nudges.requestAccepted(it)) }
+    }
+
+    /** Одобрить заявку: человек становится подписчиком. */
+    fun approveRequest(userId: Int) {
+        _state.update { it.copy(followRequests = it.followRequests - userId, approvedFollowers = it.approvedFollowers + userId) }
+    }
+
+    /** Отклонить заявку: человек не узнает об этом, просто останется без доступа. */
+    fun declineRequest(userId: Int) {
+        _state.update { it.copy(followRequests = it.followRequests - userId) }
+    }
+
+    /** Новая заявка к вам — когда профиль закрыт. */
+    fun receiveFollowRequest(userId: Int) {
+        val s = _state.value
+        val person = Demo.person(userId) ?: return
+        if (!s.privacy.closedProfile || userId in s.followRequests || userId in s.blocked ||
+            s.followers.any { it.id == userId }
+        ) return
+        _state.update { it.copy(followRequests = listOf(userId) + it.followRequests) }
+        notify(Nudges.followRequest(person, person.interests.filter { it in s.me.interests }))
     }
 
     // ==================== ЧАТЫ ====================
@@ -414,6 +564,10 @@ class AppViewModel(
             setTyping(chatId, false)
             val reply = Demo.replies[replyIndex++ % Demo.replies.size]
             append(chatId, Message(nextId++, fromMe = false, text = reply, time = now()))
+            _state.value.chats.firstOrNull { it.id == chatId }?.let { chat ->
+                // Открытая переписка — ответ и так на экране
+                if (!chat.muted && _state.value.openChatId != chatId) notify(Nudges.message(chat.peer, reply, chatId))
+            }
         }
     }
 
@@ -543,11 +697,11 @@ class AppViewModel(
         updatePrism(prismId) { it.copy(saved = !it.saved) }
     }
 
-    fun addPrismComment(prismId: Long, text: String, replyTo: String = "") {
+    fun addPrismComment(prismId: Long, text: String, replyTo: String = "", sticker: Attachment? = null) {
         val trimmed = text.trim().take(1000)
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty() && sticker == null) return
         val me = _state.value.me
-        val comment = Comment(nextId++, me, trimmed, createdAt = clock(), replyTo = replyTo)
+        val comment = Comment(nextId++, me, trimmed, createdAt = clock(), replyTo = replyTo, sticker = sticker)
         updatePrism(prismId) { it.copy(comments = it.comments + 1, commentList = it.commentList + comment) }
     }
 
@@ -856,6 +1010,10 @@ class AppViewModel(
 
     /** После выхода состояние сбрасывается: следующий вошедший не увидит чужие черновики и переписку. */
     fun reset() {
+        lifeJob?.cancel()
+        lifeJob = null
+        acceptJobs.values.forEach { it.cancel() }
+        acceptJobs.clear()
         _state.value = UiState()
     }
 
@@ -890,8 +1048,13 @@ class AppViewModel(
         _state.update { it.copy(notifications = notifications) }
     }
 
+    /** Открыли профиль — ждущие заявки одобряются сами: теперь подписаться может любой. */
     fun setPrivacy(privacy: Privacy) {
-        _state.update { it.copy(privacy = privacy) }
+        _state.update {
+            if (!privacy.closedProfile && it.followRequests.isNotEmpty())
+                it.copy(privacy = privacy, approvedFollowers = it.approvedFollowers + it.followRequests, followRequests = emptyList())
+            else it.copy(privacy = privacy)
+        }
     }
 
     /**
@@ -907,11 +1070,467 @@ class AppViewModel(
         _state.update { s -> s.copy(blocked = s.blocked - userId) }
     }
 
+    // ==================== УВЕДОМЛЕНИЯ И ИТОГИ ====================
+
+    /** Очередь: уведомление дождётся, пока экран начнёт их принимать (после заставки). */
+    private val _nudges = Channel<Nudge>(Channel.BUFFERED)
+
+    /**
+     * Персональные уведомления. MainActivity показывает их системным
+     * уведомлением, когда приложение свёрнуто, а пока оно открыто —
+     * плашкой сверху (state.banner).
+     */
+    val nudges: Flow<Nudge> = _nudges.receiveAsFlow()
+
+    /** Отправить уведомление, если такой раздел не выключен в настройках. */
+    fun notify(nudge: Nudge) {
+        if (!Nudges.allowed(nudge, _state.value.notifications)) return
+        _nudges.trySend(nudge)
+    }
+
+    fun showBanner(nudge: Nudge) {
+        _state.update { it.copy(banner = nudge) }
+    }
+
+    fun dismissBanner() {
+        _state.update { it.copy(banner = null) }
+    }
+
+    /** Нажатие на уведомление: туда, о чём оно. */
+    fun openNudge(nudge: Nudge) {
+        dismissBanner()
+        when (nudge.target) {
+            NudgeTarget.Post -> {
+                val post = _state.value.findPost(nudge.targetId)
+                if (post != null && post.author.id == _state.value.me.id) openProfileSection(ProfileSection.Posts)
+                else selectTab(Tab.Feed)
+            }
+            NudgeTarget.Group -> { selectTab(Tab.Groups); openGroup(nudge.targetId.toInt()) }
+            NudgeTarget.Person -> openPerson(nudge.targetId.toInt())
+            NudgeTarget.Chat -> if (_state.value.chats.any { it.id == nudge.targetId.toInt() }) openChat(nudge.targetId.toInt()) else selectTab(Tab.Chats)
+            NudgeTarget.Recap -> {
+                // targetId — год × 100 + месяц; месяц 0 — итоги года
+                val year = (nudge.targetId / 100).toInt()
+                val month = (nudge.targetId % 100).toInt()
+                val today = LocalDate.now()
+                if (year == 0) openRecap(RecapPeriod.Month)
+                else if (month == 0) openRecap(RecapPeriod.Year, (today.year - year).coerceAtLeast(0))
+                else openRecap(RecapPeriod.Month, ((today.year * 12 + today.monthValue) - (year * 12 + month)).coerceAtLeast(0))
+            }
+            NudgeTarget.Requests -> openProfileSection(ProfileSection.Requests)
+            NudgeTarget.Together -> {
+                selectTab(Tab.Together)
+                TogetherSection.entries.getOrNull(nudge.targetId.toInt())?.let(::selectTogetherSection)
+            }
+        }
+    }
+
+    /** Итоги месяца или года; back — на сколько периодов назад от текущего. */
+    fun openRecap(period: RecapPeriod, back: Int = 0) {
+        openProfileSection(ProfileSection.Recap)
+        _state.update { it.copy(recapPeriod = period, recapBack = back) }
+    }
+
+    fun setRecapPeriod(period: RecapPeriod) {
+        _state.update { it.copy(recapPeriod = period, recapBack = 0) }
+    }
+
+    fun setRecapBack(back: Int) {
+        _state.update { it.copy(recapBack = back.coerceAtLeast(0)) }
+    }
+
+    /** Итоги за период: прошлый (законченный) или текущий месяц, год. */
+    fun recap(period: RecapPeriod, year: Int, month: Int): Recap =
+        _state.value.let { Recap.compute(it.me, it.posts, it.prisms, period, year, month) }
+
+    /**
+     * В начале месяца — уведомление об итогах прошлого (если было что
+     * считать), в январе — ещё и об итогах года. Один раз на период.
+     */
+    fun checkRecapReady(today: LocalDate = LocalDate.now()) {
+        val (y, m) = Recap.previousMonth(today)
+        val list = buildList {
+            add(recap(RecapPeriod.Month, y, m))
+            if (today.monthValue == 1) add(recap(RecapPeriod.Year, today.year - 1, 0))
+        }
+        for (r in list) {
+            if (r.key in _state.value.recapNotified || r.empty) continue
+            _state.update { it.copy(recapNotified = it.recapNotified + r.key) }
+            notify(Nudges.recap(r))
+        }
+    }
+
+    private var lifeJob: Job? = null
+
+    /**
+     * Жизнь вокруг, пока нет сервера: друзья отмечают чек-ины, в группы
+     * приходят люди, вашим записям ставят «нравится», при закрытом
+     * профиле приходят заявки. Каждое событие — с персональным
+     * уведомлением. В тестах не запускается.
+     */
+    fun startDemoLife() {
+        if (lifeJob != null) return
+        // Заявки, отправленные до перезапуска, тоже дождутся ответа
+        _state.value.sentRequests.forEach { scheduleAcceptance(it) }
+        lifeJob = viewModelScope.launch {
+            delay(25_000)
+            while (true) {
+                demoEvent(Random.Default)
+                delay(Random.nextLong(35_000, 75_000))
+                togetherEvent(Random.Default)
+                delay(Random.nextLong(35_000, 75_000))
+            }
+        }
+    }
+
+    /** Всё, что вы сами писали: записи, комментарии, сообщения — чтобы понять, что вы обсуждали. */
+    fun myTexts(): List<String> {
+        val s = _state.value
+        val all = s.posts + s.groups.flatMap { it.posts }
+        return all.filter { it.author.id == s.me.id }.map { it.text } +
+            all.flatMap { it.commentList }.filter { it.author.id == s.me.id }.map { it.text } +
+            s.prisms.flatMap { it.commentList }.filter { it.author.id == s.me.id }.map { it.text } +
+            s.chats.flatMap { c -> c.messages.filter { it.fromMe }.map { it.text } }
+    }
+
+    /** Ваши километры за текущий месяц — для «не отставайте». */
+    private fun myKmThisMonth(): Double {
+        val s = _state.value
+        val now = Instant.ofEpochMilli(clock()).atZone(ZoneId.systemDefault()).toLocalDate()
+        return s.posts.filter { p ->
+            p.author.id == s.me.id && p.createdAt > 0 &&
+                Instant.ofEpochMilli(p.createdAt).atZone(ZoneId.systemDefault()).toLocalDate().let { it.year == now.year && it.month == now.month }
+        }.mapNotNull { it.checkIn }.filter { isKilometers(it.unit) }.sumOf { it.amount }
+    }
+
+    /** Одно событие демо-жизни. Отдельно от цикла — чтобы проверять в тестах. */
+    fun demoEvent(random: Random) {
+        val s = _state.value
+        val friends = s.followedPeople.filter { it.id !in s.blocked }
+        val joined = s.groups.filter { it.joined && !it.muted }
+        val mine = s.myPosts
+        val requesters = Demo.people.filter { p -> p.id !in s.blocked && p.id !in s.followRequests && s.followers.none { it.id == p.id } }
+        val options = buildList {
+            if (friends.isNotEmpty()) repeat(4) { add(0) }
+            if (joined.isNotEmpty()) repeat(2) { add(1) }
+            if (mine.isNotEmpty()) repeat(2) { add(2) }
+            if (s.privacy.closedProfile && requesters.isNotEmpty()) add(3)
+        }
+        if (options.isEmpty()) return
+        when (options[random.nextInt(options.size)]) {
+            0 -> friendCheckIn(friends[random.nextInt(friends.size)], random)
+            1 -> {
+                val group = joined[random.nextInt(joined.size)]
+                val name = Demo.newcomers[random.nextInt(Demo.newcomers.size)]
+                val person = User(500 + random.nextInt(1000), name, name.lowercase().replace(' ', '.'), hue = random.nextFloat())
+                _state.update { st -> st.copy(groups = st.groups.map { if (it.id == group.id) it.copy(members = it.members + 1) else it }) }
+                notify(Nudges.groupMember(group, person))
+            }
+            2 -> {
+                val post = mine[random.nextInt(mine.size)]
+                val fans = Demo.people.filter { it.id !in s.blocked }
+                val fan = fans[random.nextInt(fans.size)]
+                _state.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) it.copy(likes = it.likes + 1) else it }) }
+                notify(Nudges.liked(fan, post))
+            }
+            else -> receiveFollowRequest(requesters[random.nextInt(requesters.size)].id)
+        }
+    }
+
+    /** Друг отметил чек-ин: запись в ленте и уведомление — с тем, что вы обсуждали, если такое есть. */
+    private fun friendCheckIn(friend: User, random: Random) {
+        val texts = myTexts()
+        val kinds = listOf("movie", "movie", "series", "book", "run", "bike", "walk", "coffee", "place", "concert")
+        val kind = kinds[random.nextInt(kinds.size)]
+        val activity = CHECK_IN_ACTIVITIES.first { it.id == kind }
+        fun pick(list: List<String>): String {
+            // Что вы обсуждали — в приоритете: ради этого и уведомление
+            val talked = list.filter { Nudges.discussed(it, texts) }
+            return if (talked.isNotEmpty() && random.nextFloat() < 0.75f) talked[random.nextInt(talked.size)]
+            else list[random.nextInt(list.size)]
+        }
+        val subject = when (kind) {
+            "movie" -> pick(Demo.movies)
+            "series" -> pick(Demo.series)
+            "book" -> pick(Demo.books)
+            "coffee", "place" -> pick(Demo.places)
+            "concert" -> pick(listOf("Сплин", "Мумий Тролль", "Земфира", "Би-2"))
+            else -> pick(listOf("Набережная", "Парк", "Вокруг дома"))
+        }
+        val amount = when (kind) {
+            "run" -> 3 + random.nextInt(10).toDouble()
+            "bike" -> 10 + random.nextInt(30).toDouble()
+            "walk" -> 2 + random.nextInt(8).toDouble()
+            "book" -> 20 + random.nextInt(80).toDouble()
+            else -> 0.0
+        }
+        val c = activity.checkIn(subject, amount)
+        val id = nextId++
+        _state.update { st ->
+            st.copy(posts = listOf(Post(id, friend, "", 0, likes = random.nextInt(6), createdAt = clock(), checkIn = c)) + st.posts)
+        }
+        notify(Nudges.friendCheckIn(friend, c, Nudges.discussed(subject, texts), myKmThisMonth(), id))
+    }
+
+    // ==================== ВМЕСТЕ ====================
+
+    fun selectTogetherSection(section: TogetherSection) {
+        _state.update { it.copy(togetherSection = section) }
+    }
+
+    private fun together(change: (TogetherState) -> TogetherState?): Boolean {
+        var ok = false
+        _state.update { s -> change(s.together)?.let { ok = true; s.copy(together = it) } ?: s }
+        return ok
+    }
+
+    private fun meId() = _state.value.me.id
+
+    /** Позже, в демо: ответ «с той стороны». В тестах сразу не срабатывает. */
+    private fun later(from: Long, to: Long, block: () -> Unit) {
+        if (!demoReplies) return
+        viewModelScope.launch {
+            delay(Random.nextLong(from, to))
+            block()
+        }
+    }
+
+    /**
+     * Сообщение человеку от вашего имени — без открытия переписки: так
+     * договорённость об обмене или вылазке остаётся в чате.
+     */
+    private fun messageTo(userId: Int, text: String) {
+        val person = Demo.person(userId) ?: return
+        val existing = _state.value.chats.firstOrNull { it.peer.id == userId }
+        val chatId = existing?.id ?: ((_state.value.chats.maxOfOrNull { it.id } ?: 0) + 1).also { id ->
+            _state.update { s -> s.copy(chats = listOf(Chat(id, person, emptyList())) + s.chats) }
+        }
+        append(chatId, Message(nextId++, fromMe = true, text = text, time = now()))
+    }
+
+    /** Где вы: демо-точки один раз переезжают к вам. */
+    fun setLocation(here: LatLon) {
+        together { it.relocate(here, meId()) }
+    }
+
+    // ---- Цели ----
+
+    fun joinGoal(id: String) { together { it.joinGoal(id) } }
+
+    fun contribute(id: String, amount: Double) { together { it.contribute(id, amount) } }
+
+    // ---- Навыки ----
+
+    fun addSkill(teach: Boolean, skill: String) { together { it.addSkill(teach, skill) } }
+
+    fun removeSkill(teach: Boolean, skill: String) { together { it.removeSkill(teach, skill) } }
+
+    /**
+     * Предложить обмен. give — чему научите вы, get — чему научат вас (""
+     * — ничему). null — предложено; иначе — что не так (не хватает часов).
+     */
+    fun proposeDeal(personId: Int, give: String, get: String, minutes: Int): String? {
+        val id = nextId++
+        val ok = together { it.propose(id, personId, give, get, minutes, clock()) }
+        if (!ok) return if (give.isEmpty() && get.isNotEmpty()) t("Не хватает часов в банке времени — научите кого-нибудь сами") else t("Выберите, чему учите или чему хотите научиться")
+        messageTo(
+            personId,
+            when {
+                give.isNotEmpty() && get.isNotEmpty() -> tf("Привет! Давай обмен: я научу «%s», а ты меня — «%s». По %s.", give, get, minutesTitle(minutes))
+                get.isNotEmpty() -> tf("Привет! Научишь меня «%s»? %s — расплачусь часами из банка времени.", get, minutesTitle(minutes))
+                else -> tf("Привет! Могу научить «%s» — %s.", give, minutesTitle(minutes))
+            },
+        )
+        // В демо человек соглашается через полминуты
+        later(15_000, 40_000) {
+            val deal = _state.value.together.deals.firstOrNull { it.id == id } ?: return@later
+            if (deal.status != DealStatus.Proposed) return@later
+            together { it.setDeal(id, DealStatus.Agreed) }
+            Demo.person(personId)?.let { notify(Nudges.dealAgreed(it, deal)) }
+        }
+        return null
+    }
+
+    fun setDeal(id: Long, status: DealStatus) { together { it.setDeal(id, status) } }
+
+    // ---- Дневники ----
+
+    fun startJourney(emoji: String, title: String, days: Int): Boolean =
+        together { it.startJourney(nextId++, meId(), emoji, title, days, clock()) }
+
+    fun addJourneyEntry(journeyId: Long, text: String, media: List<Attachment>) {
+        val entryId = nextId++
+        together { it.addEntry(journeyId, entryId, text, media, clock()) }
+        // В демо к новой записи приходит совет
+        later(20_000, 60_000) { demoTip(journeyId, entryId, Random.Default) }
+    }
+
+    private fun demoTip(journeyId: Long, entryId: Long, random: Random) {
+        val journey = _state.value.together.journeys.firstOrNull { it.id == journeyId } ?: return
+        val entry = journey.entries.firstOrNull { it.id == entryId } ?: return
+        val adviser = Demo.people.filter { it.id !in _state.value.blocked && it.id != journey.authorId }.let { if (it.isEmpty()) return else it[random.nextInt(it.size)] }
+        val tip = Tip(nextId++, adviser.id, TogetherDemo.tips[random.nextInt(TogetherDemo.tips.size)], createdAt = clock())
+        together { it.addTip(journeyId, entryId, tip) }
+        notify(Nudges.tipReceived(adviser, journey, entry.day))
+    }
+
+    fun addTip(journeyId: Long, entryId: Long, text: String) {
+        together { it.addTip(journeyId, entryId, Tip(nextId++, meId(), text.trim().take(500), createdAt = clock())) }
+    }
+
+    fun toggleHelpful(journeyId: Long, entryId: Long, tipId: Long) {
+        together { it.toggleHelpful(journeyId, entryId, tipId) }
+    }
+
+    // ---- Миссии ----
+
+    fun joinMission(id: String) { together { it.joinMission(id) } }
+
+    fun addFind(missionId: String, note: String, at: LatLon, photo: Attachment?) {
+        together { it.addFind(missionId, MissionFind(nextId++, meId(), note.trim().take(200), at, photo, clock())) }
+    }
+
+    // ---- Клады ----
+
+    fun hideCache(title: String, hint: String, difficulty: Int, size: String, at: LatLon): Boolean {
+        val id = nextId++
+        val ok = together { it.hideCache(Cache(id, meId(), title.trim().take(60), hint.trim().take(300), at, difficulty.coerceIn(1, 5), size, clock())) }
+        // В демо ваш клад кто-нибудь находит
+        if (ok) later(60_000, 180_000) {
+            val finder = Demo.people.filter { it.id !in _state.value.blocked }.randomOrNull() ?: return@later
+            if (_state.value.together.caches.none { it.id == id }) return@later
+            _state.update { s ->
+                s.copy(together = s.together.copy(caches = s.together.caches.map {
+                    if (it.id == id) it.copy(logs = it.logs + CacheLog(nextId++, finder.id, t("Нашёл! Отличное место."), clock())) else it
+                }))
+            }
+            _state.value.together.caches.firstOrNull { it.id == id }?.let { notify(Nudges.cacheFound(finder, it)) }
+        }
+        return ok
+    }
+
+    /** true — отметились; false — вы далеко или уже нашли. */
+    fun findCache(id: Long, text: String, here: LatLon?): Boolean =
+        together { it.findCache(id, CacheLog(nextId++, meId(), text.trim().ifEmpty { t("Нашёл!") }.take(300), clock()), here) }
+
+    // ---- Вылазки ----
+
+    fun createOuting(emoji: String, title: String, description: String, place: String, startsAt: Long, capacity: Int, at: LatLon?): Boolean {
+        val id = nextId++
+        val me = meId()
+        val ok = together { it.createOuting(Outing(id, me, emoji, title.trim().take(60), description.trim().take(500), place.trim().take(80), startsAt, capacity, listOf(me), at)) }
+        // В демо к вылазке присоединяются
+        if (ok) later(30_000, 90_000) {
+            val outing = _state.value.together.outings.firstOrNull { it.id == id } ?: return@later
+            if (outing.full) return@later
+            val guest = Demo.people.firstOrNull { it.id !in outing.participants && it.id !in _state.value.blocked } ?: return@later
+            together { it.copy(outings = it.outings.map { o -> if (o.id == id && !o.full) o.copy(participants = o.participants + guest.id) else o }) }
+            notify(Nudges.outingJoined(guest, outing))
+        }
+        return ok
+    }
+
+    fun toggleOuting(id: Long) { together { it.toggleOuting(id, meId()) } }
+
+    fun cancelOuting(id: Long) { together { it.cancelOuting(id, meId()) } }
+
+    // ---- Рисунок ----
+
+    fun startDrawing(title: String, turns: Int): Long? {
+        val id = nextId++
+        return if (together { it.startDrawing(id, title, turns, meId(), clock()) }) id else null
+    }
+
+    /** Свой ход: передать дальше. В демо друг дорисует и вернёт. */
+    fun drawTurn(id: Long, strokes: List<DrawStroke>, passTo: Int?) {
+        together { it.drawTurn(id, meId(), strokes, passTo) }
+        val drawing = _state.value.together.drawings.firstOrNull { it.id == id } ?: return
+        val friendId = drawing.waitingFor ?: return
+        if (friendId == meId()) return
+        later(20_000, 50_000) {
+            val friend = Demo.person(friendId) ?: return@later
+            val colors = listOf(0xFFBC92CD.toInt(), 0xFF8CC4FF.toInt(), 0xFFFF9EDE.toInt(), 0xFFFFD86B.toInt(), 0xFF7BE0B0.toInt())
+            val random = Random(clock())
+            together { it.drawTurn(id, friendId, TogetherDemo.demoStrokes(random, colors[random.nextInt(colors.size)]), meId()) }
+            _state.value.together.drawings.firstOrNull { it.id == id }?.let { notify(Nudges.drawingTurn(friend, it)) }
+        }
+    }
+
+    // ---- Обмен ----
+
+    fun addShare(kind: ShareKind, title: String, description: String, photo: Attachment?): Boolean {
+        val me = meId()
+        return together { it.addShare(ShareItem(nextId++, kind, title.trim().take(80), description.trim().take(500), me, me, photo = photo, createdAt = clock())) }
+    }
+
+    /** Попросить книгу или семена. В демо владелец передаёт через полминуты. */
+    fun requestShare(id: Long) {
+        val me = meId()
+        together { it.requestShare(id, me) }
+        val item = _state.value.together.shares.firstOrNull { it.id == id } ?: return
+        if (item.requestedBy != me) return
+        messageTo(item.holderId, tf("Привет! Можно мне «%s»? Заберу, когда удобно.", item.title))
+        later(15_000, 45_000) {
+            val current = _state.value.together.shares.firstOrNull { it.id == id } ?: return@later
+            if (current.status != ShareStatus.Requested || current.requestedBy != me) return@later
+            val giver = Demo.person(current.holderId) ?: return@later
+            together { it.handOver(id, me) }
+            notify(Nudges.shareHanded(giver, current))
+        }
+    }
+
+    fun handOver(id: Long, to: Int) {
+        together { it.handOver(id, to) }
+    }
+
+    fun offerHelp(id: Long) {
+        together { it.offerHelp(id, meId()) }
+        _state.value.together.shares.firstOrNull { it.id == id }?.let {
+            messageTo(it.ownerId, tf("Привет! Могу помочь починить «%s». Когда удобно?", it.title))
+        }
+    }
+
+    fun markFixed(id: Long) { together { it.markFixed(id) } }
+
+    /** Событие «Вместе» в демо: шкалы растут, к вашим вещам и вылазкам приходят люди. */
+    fun togetherEvent(random: Random) {
+        // Общие шкалы растут всегда — сообщество не спит
+        _state.update { s ->
+            s.copy(together = s.together.copy(goals = s.together.goals.map { g ->
+                g.copy(total = (g.total + g.target * (0.0002 + random.nextDouble() * 0.0008)).coerceAtMost(g.target), participants = g.participants + random.nextInt(4))
+            }))
+        }
+        val s = _state.value
+        val me = s.me.id
+        val people = Demo.people.filter { it.id !in s.blocked }
+        val myEntries = s.together.journeys.filter { it.authorId == me }.flatMap { j -> j.entries.map { j.id to it.id } }
+        val myShares = s.together.shares.filter { it.holderId == me && it.status == ShareStatus.Available && it.kind != ShareKind.Repair }
+        val options = buildList {
+            if (myEntries.isNotEmpty()) add(0)
+            if (myShares.isNotEmpty()) add(1)
+        }
+        if (options.isEmpty() || people.isEmpty()) return
+        when (options[random.nextInt(options.size)]) {
+            0 -> myEntries[random.nextInt(myEntries.size)].let { (j, e) -> demoTip(j, e, random) }
+            else -> {
+                val item = myShares[random.nextInt(myShares.size)]
+                val asker = people[random.nextInt(people.size)]
+                together { it.copy(shares = it.shares.map { x -> if (x.id == item.id) x.copy(status = ShareStatus.Requested, requestedBy = asker.id) else x }) }
+                notify(Nudges.shareRequested(asker, item))
+            }
+        }
+    }
+
     // ==================== СОХРАНЕНИЕ ====================
 
     /** То, что сохраняется на телефоне между запусками (см. StateStore). */
     fun snapshot(): Snapshot = _state.value.let {
-        Snapshot(it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked, it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins)
+        Snapshot(
+            it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked,
+            it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins,
+            it.checkInTemplates, it.followRequests, it.approvedFollowers, it.sentRequests, it.recapNotified,
+            it.together,
+        )
     }
 
     /**
@@ -935,6 +1554,12 @@ class AppViewModel(
                 reportedComments = snapshot.reportedComments,
                 stickers = snapshot.stickers,
                 profilePins = snapshot.profilePins,
+                checkInTemplates = snapshot.checkInTemplates,
+                followRequests = snapshot.followRequests,
+                approvedFollowers = snapshot.approvedFollowers,
+                sentRequests = snapshot.sentRequests,
+                recapNotified = snapshot.recapNotified,
+                together = snapshot.together ?: s.together,
             ).withMe(s.me)
         }
     }
@@ -956,6 +1581,8 @@ fun messagePreview(message: Message): String {
     val a = message.attachments
     return when {
         a.isEmpty() -> ""
+        a.size == 1 && a[0].voice -> t("Голосовое сообщение") + " · " + ru.wishka.memory.data.durationTitle(a[0].durationMs)
+        a.all { it.sticker } -> t("Стикер")
         a.all { it.kind == ru.wishka.memory.data.MediaKind.Photo } -> if (a.size == 1) t("Фото") else tf("%s фото", a.size)
         a.all { it.kind == ru.wishka.memory.data.MediaKind.Video } -> if (a.size == 1) t("Видео") else tf("%s видео", a.size)
         a.all { it.kind == ru.wishka.memory.data.MediaKind.Document } ->
@@ -980,6 +1607,12 @@ data class Snapshot(
     val reportedComments: Set<Long> = emptySet(),
     val stickers: List<Sticker> = emptyList(),
     val profilePins: List<Long> = emptyList(),
+    val checkInTemplates: List<CheckInTemplate> = emptyList(),
+    val followRequests: List<Int> = emptyList(),
+    val approvedFollowers: Set<Int> = emptySet(),
+    val sentRequests: Set<Int> = emptySet(),
+    val recapNotified: Set<String> = emptySet(),
+    val together: TogetherState? = null,
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

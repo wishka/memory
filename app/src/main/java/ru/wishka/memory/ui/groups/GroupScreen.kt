@@ -38,6 +38,8 @@ import androidx.compose.ui.platform.LocalContext
 import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.ui.components.AttachButton
+import ru.wishka.memory.ui.components.StickerPicker
+import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.components.GroupCover
 import ru.wishka.memory.ui.components.MenuRow
 import ru.wishka.memory.ui.components.MusicChooser
@@ -68,6 +70,7 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
     var text by rememberSaveable(group.id) { mutableStateOf("") }
     var media by remember(group.id) { mutableStateOf<List<Attachment>>(emptyList()) }
     var choosingMusic by remember { mutableStateOf(false) }
+    var choosingSticker by remember { mutableStateOf(false) }
     val picker = rememberMediaPicker { picked -> media = (media + picked).take(AppViewModel.MAX_MEDIA) }
     val canPost = group.joined && (!group.onlyOwnerPosts || group.mine)
     val visible = group.posts.filter { it.author.id !in state.blocked }
@@ -131,7 +134,7 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            AttachButton(picker, documents = true, size = 40.dp, onMusic = { choosingMusic = true })
+                            AttachButton(picker, documents = true, size = 40.dp, onMusic = { choosingMusic = true }, onSticker = { choosingSticker = true })
                             Spacer(Modifier.width(10.dp))
                             Text(
                                 if (media.isEmpty()) t("Фото, видео, документы, музыка")
@@ -187,6 +190,14 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
         item { Spacer(Modifier.height(8.dp)) }
     }
 
+    if (choosingSticker) {
+        StickerPicker(
+            state.stickers,
+            onPick = { media = (media + it).take(AppViewModel.MAX_MEDIA) },
+            onDismiss = { choosingSticker = false },
+            onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
+        )
+    }
     if (choosingMusic) {
         MusicChooser(
             tracks = state.tracks,

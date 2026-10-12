@@ -19,7 +19,10 @@ struct PersonScreen: View {
         let state = model.state
         let following = state.following.contains(person.id)
         let blocked = state.isBlocked(person.id)
-        let posts = blocked ? [] : state.postsOf(person.id)
+        // Закрытый профиль: записи видны только подписчикам
+        let hidden = !state.canSee(person)
+        let requested = state.sentRequests.contains(person.id)
+        let posts = blocked || hidden ? [] : state.postsOf(person.id)
         let hasInfo = !blocked && (!person.city.isEmpty || !person.birthday.isEmpty || !person.website.isEmpty || !person.interests.isEmpty)
 
         return ScrollView {
@@ -42,6 +45,12 @@ struct PersonScreen: View {
                     VStack(spacing: 10) {
                         Avatar(user: person, size: 104, ring: true, showOnline: true)
                         Text(person.name.uppercased()).textStyle(.headline).multilineTextAlignment(.center)
+                        if person.closed {
+                            HStack(spacing: 6) {
+                                Glyph(kind: .lock, color: Palette.lilac, size: 16)
+                                Text(t("Закрытый профиль")).textStyle(.labelLarge, Palette.lilac)
+                            }
+                        }
                         Text(person.online ? t("в сети") : "@\(person.handle)")
                             .textStyle(.bodySmall, person.online ? Palette.lilac : Palette.mist)
                         if !person.bio.isEmpty {
@@ -50,7 +59,9 @@ struct PersonScreen: View {
                         FadeLine().padding(.top, 4)
                         // Счётчики — кнопки: записи, подписчики и подписки человека
                         HStack {
-                            StatButton(value: posts.count, label: t("записи")) { model.openPersonSection(.posts) }
+                            StatButton(value: hidden ? state.postsOf(person.id).count : posts.count, label: t("записи")) {
+                                if !hidden { model.openPersonSection(.posts) }
+                            }
                             StatButton(value: person.followers + (following ? 1 : 0), label: t("подписчики")) {
                                 model.openPersonSection(.followers)
                             }
@@ -66,6 +77,10 @@ struct PersonScreen: View {
                             HStack(spacing: 10) {
                                 if following {
                                     GhostButton(title: t("Вы подписаны")) { model.toggleFollow(person.id) }
+                                } else if requested {
+                                    GhostButton(title: t("Заявка отправлена")) { model.toggleFollow(person.id) }
+                                } else if person.closed {
+                                    GlowButton(title: t("Отправить заявку")) { model.toggleFollow(person.id) }
                                 } else {
                                     GlowButton(title: t("Подписаться")) { model.toggleFollow(person.id) }
                                 }
@@ -91,7 +106,23 @@ struct PersonScreen: View {
                     .cardPadding()
                 }
 
-                SectionTitle(text: posts.isEmpty ? t("Записей пока нет") : tf("Записи · %s", posts.count))
+                if hidden && !blocked {
+                    GlassCard {
+                        HStack(spacing: 12) {
+                            Glyph(kind: .lock, color: Palette.lilac, size: 28)
+                            Text(requested
+                                 ? t("Заявка отправлена. Когда её примут, здесь появятся записи и чек-ины.")
+                                 : t("Это закрытый профиль. Записи и чек-ины видят только подписчики — отправьте заявку."))
+                                .textStyle(.bodySmall)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(16)
+                    }
+                    .cardPadding()
+                } else {
+                    SectionTitle(text: posts.isEmpty ? t("Записей пока нет") : tf("Записи · %s", posts.count))
+                }
                 ForEach(posts) { post in
                     PostCard(
                         post: post,

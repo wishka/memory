@@ -88,6 +88,7 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                             Tab.Prism -> LineIcon.Prism
                             Tab.Chats -> LineIcon.Chats
                             Tab.Groups -> LineIcon.Groups
+                            Tab.Together -> LineIcon.Together
                             Tab.Profile -> LineIcon.Profile
                         },
                         tint,

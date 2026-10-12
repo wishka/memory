@@ -18,7 +18,7 @@ enum Demo {
     static let mark = User(
         id: 3, name: "Марк Север", handle: "mark_north", bio: "Музыка, синтезаторы, полночь", hue: 0.75,
         city: "Казань", birthday: "2 ноября", interests: ["Музыка", "Кино"],
-        joined: "июнь 2026", followers: 532, followingCount: 98
+        joined: "июнь 2026", followers: 532, followingCount: 98, closedFlag: true
     )
     static let alina = User(
         id: 4, name: "Алина", handle: "alina.prism", bio: "Рисую свет", hue: 0.35, online: true,
@@ -133,6 +133,15 @@ enum Demo {
         Prism(id: 304, author: sofia, caption: "Байкал: лёд звенит, если по нему постучать", music: "Ice Bells — Sofia Ri", seed: 84, likes: 5120, comments: 233),
         Prism(id: 305, author: timur, caption: "Звездопад Персеиды, 20 минут в 15 секундах", music: "Meteor — Timur", seed: 85, likes: 760, comments: 28),
     ]
+
+    /// Что смотрят, читают и где бывают друзья — для их чек-инов в демо.
+    static let movies = ["Дюна", "Интерстеллар", "Солярис", "Бегущий по лезвию 2049", "Начало", "Москва слезам не верит", "Брат"]
+    static let series = ["Тьма", "Чернобыль", "Шерлок", "Очень странные дела"]
+    static let books = ["Мастер и Маргарита", "Пикник на обочине", "Задача трёх тел", "Сто лет одиночества", "Маленький принц"]
+    static let places = ["Парк Горького", "ВДНХ", "Эрмитаж", "Кофейня «Зерно»", "Новая Голландия"]
+
+    /// Новые участники групп в демо.
+    static let newcomers = ["Мария Звёздная", "Олег Тихий", "Ксения", "Илья Ветров", "Дарья Полярная", "Никита"]
 
     /// Ответы собеседника в демо-переписке — по кругу.
     static let replies = [

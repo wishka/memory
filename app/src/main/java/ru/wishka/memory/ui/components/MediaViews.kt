@@ -282,6 +282,10 @@ fun AttachButton(
     size: Dp = 44.dp,
     /** «Музыка» в меню — трек из «Моей музыки» или файл; null — пункта нет. */
     onMusic: (() -> Unit)? = null,
+    /** «Стикер» в меню — свои стикеры из «Студии»; null — пункта нет. */
+    onSticker: (() -> Unit)? = null,
+    /** «Чек-ин» в меню; null — пункта нет. */
+    onCheckIn: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
@@ -299,6 +303,8 @@ fun AttachButton(
             MenuRow(LineIcon.Video, t("Снять видео")) { open = false; picker.recordVideo() }
             if (documents) MenuRow(LineIcon.Document, t("Документ")) { open = false; picker.pickDocuments() }
             if (onMusic != null) MenuRow(LineIcon.Music, t("Музыка")) { open = false; onMusic() }
+            if (onSticker != null) MenuRow(LineIcon.Sticker, t("Стикер")) { open = false; onSticker() }
+            if (onCheckIn != null) MenuRow(LineIcon.Pin, t("Чек-ин")) { open = false; onCheckIn() }
         }
     }
 }

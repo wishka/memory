@@ -3,18 +3,22 @@ import UIKit
 
 /// Обсуждение записи или PRISM — шторка снизу: комментарии и поле ввода.
 /// total — сколько всего комментариев (у демо-записей видна только часть).
-/// Долгое нажатие на комментарий — меню: ответить, скопировать,
-/// «нравится», страница автора, пожаловаться (на чужой) или удалить (свой).
+/// Долгое нажатие на комментарий — меню: ответить, скопировать, страница
+/// автора, пожаловаться (на чужой) или удалить (свой). «Нравится» — только
+/// сердечком. Ответить можно и своим стикером из «Студии».
 struct CommentsSheet: View {
     let total: Int
     let comments: [Comment]
     let myId: Int
-    let onSend: (String, String?) -> Void
+    let onSend: (String, String?, Attachment?) -> Void
     let onDelete: (Int64) -> Void
     let onReport: (Int64) -> Void
     let onLike: (Int64) -> Void
     let onAuthor: (Int) -> Void
+    /// Свои стикеры из «Студии» — ответить стикером.
+    var stickers: [Sticker] = []
 
+    @State private var choosingSticker = false
     @State private var text = ""
     /// Кому отвечаем: имя автора комментария; nil — просто комментарий.
     @State private var replyTo: String?
@@ -78,11 +82,18 @@ struct CommentsSheet: View {
                 .padding(.top, 6)
             }
             HStack(alignment: .bottom, spacing: 10) {
+                Button { choosingSticker = true } label: {
+                    Glyph(kind: .sticker, color: Palette.lilac, size: 22)
+                        .frame(width: 46, height: 46)
+                        .glass(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(t("Стикер"))
                 GlassField(placeholder: t("Комментарий"), text: $text, limit: 1000, maxLines: 4)
                     .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .focused($focused)
                 Button {
-                    onSend(text, replyTo)
+                    onSend(text, replyTo, nil)
                     text = ""
                     replyTo = nil
                 } label: {
@@ -105,6 +116,13 @@ struct CommentsSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(Palette.night)
+        .sheet(isPresented: $choosingSticker) {
+            StickerPicker(stickers: stickers) { sticker in
+                onSend(text, replyTo, sticker)
+                text = ""
+                replyTo = nil
+            }
+        }
         .glassActions(item: $menu, title: { $0.author.name }, message: { String($0.text.prefix(80)) }) { c in
             actions(c)
         }
@@ -120,7 +138,6 @@ struct CommentsSheet: View {
                 UIPasteboard.general.string = c.text
                 show(t("Скопировано"))
             },
-            GlassAction(icon: c.liked ? .heartFilled : .heart, title: c.liked ? t("Убрать «нравится»") : t("Нравится")) { onLike(c.id) },
             GlassAction(icon: .profile, title: t("Страница автора")) { onAuthor(c.author.id) },
         ]
         if c.author.id == myId {
@@ -156,11 +173,15 @@ struct CommentsSheet: View {
                 if let to = c.replyTo, !to.isEmpty {
                     Text(tf("ответ для %s", to)).textStyle(.label, Palette.lilac)
                 }
-                Text(c.text).textStyle(.body).fixedSize(horizontal: false, vertical: true)
+                if !c.text.isEmpty {
+                    Text(c.text).textStyle(.body).fixedSize(horizontal: false, vertical: true)
+                }
+                if let sticker = c.sticker {
+                    StickerView(attachment: sticker, size: 110)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) { onLike(c.id) }
             .onLongPressGesture(minimumDuration: 0.4) {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 menu = c

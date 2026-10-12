@@ -127,9 +127,11 @@ enum class EditorTool(val title: String, val icon: LineIcon) {
 fun PrismEditor(
     initial: VideoEdit,
     tracks: List<MusicTrack>,
+    onAddTracks: (List<MusicTrack>) -> Unit,
     onBack: () -> Unit,
     onNext: (VideoEdit) -> Unit,
 ) {
+    var choosingMusic by remember { mutableStateOf(false) }
     var edit by remember { mutableStateOf(initial) }
     var tool by remember { mutableStateOf(EditorTool.Trim) }
     var selected by remember { mutableStateOf<Long?>(null) }
@@ -234,7 +236,7 @@ fun PrismEditor(
                     onChange = { o -> updateOverlay(o.id) { o } },
                     onDelete = { id -> update { e -> e.copy(overlays = e.overlays.filterNot { it.id == id }) }; selected = null },
                 )
-                EditorTool.Music -> MusicPanel(edit, tracks, ::update)
+                EditorTool.Music -> MusicPanel(edit, tracks, ::update) { choosingMusic = true }
                 EditorTool.Sound -> {
                     LabeledSlider(t("Звук видео"), edit.originalVolume, 0f..1f, percent(edit.originalVolume)) { v -> update { it.copy(originalVolume = v) } }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -290,6 +292,19 @@ fun PrismEditor(
                 }
             },
             onCancel = { editingText = null },
+        )
+    }
+
+    // Медиатека: трек скачивается в «Мою музыку» и сразу встаёт на ролик
+    if (choosingMusic) {
+        MusicPicker(
+            tracks = tracks,
+            onAddTracks = onAddTracks,
+            onPick = { picked ->
+                choosingMusic = false
+                edit = edit.copy(musicTrackId = picked.id, musicStartMs = 0)
+            },
+            onDismiss = { choosingMusic = false },
         )
     }
 }
@@ -575,10 +590,12 @@ private fun StickerPanel(
 }
 
 @Composable
-private fun MusicPanel(edit: VideoEdit, tracks: List<MusicTrack>, update: ((VideoEdit) -> VideoEdit) -> Unit) {
+private fun MusicPanel(edit: VideoEdit, tracks: List<MusicTrack>, update: ((VideoEdit) -> VideoEdit) -> Unit, onLibrary: () -> Unit) {
+    // Медиатека — открытая музыка Jamendo и Openverse прямо из редактора
+    GlowButton(t("Медиатека"), onClick = onLibrary)
     if (tracks.isEmpty()) {
         Text(
-            t("В «Моей музыке» пока нет треков. Загрузите их в профиле — и они появятся здесь."),
+            t("В «Моей музыке» пока нет треков — выберите трек в медиатеке или загрузите свои в профиле."),
             style = MaterialTheme.typography.bodyMedium,
             color = Palette.Mist,
         )

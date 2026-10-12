@@ -79,6 +79,8 @@ fun PrismCreateFlow(vm: AppViewModel, state: UiState) {
     var stage by rememberSaveable { mutableStateOf(Stage.Camera) }
     var source by rememberSaveable { mutableStateOf<String?>(null) }
     var edit by remember { mutableStateOf<VideoEdit?>(null) }
+    // Трек, выбранный при съёмке: сразу ставится в редактор
+    var captureMusic by remember { mutableStateOf<String?>(null) }
 
     fun discardSource() {
         source?.let { File(it).delete() }
@@ -116,19 +118,25 @@ fun PrismCreateFlow(vm: AppViewModel, state: UiState) {
             sourceWidth = info.width,
             sourceHeight = info.height,
             trimEndMs = minOf(info.durationMs, VideoEdit.MAX_DURATION_MS),
+            musicTrackId = captureMusic,
+            // Под музыку микрофон тише: в нём и так слышна музыка из динамика
+            originalVolume = if (captureMusic != null) 0.4f else 1f,
         )
     }
 
     Box(Modifier.fillMaxSize().background(Palette.Void)) {
         when (stage) {
             Stage.Camera -> PrismCamera(
-                onVideo = { path -> source = path; stage = Stage.Editor },
+                tracks = state.tracks,
+                onAddTracks = vm::addTracks,
+                onVideo = { path, music -> captureMusic = music?.id; source = path; stage = Stage.Editor },
                 onClose = ::close,
             )
             Stage.Editor -> edit?.let { current ->
                 PrismEditor(
                     initial = current,
                     tracks = state.tracks,
+                    onAddTracks = vm::addTracks,
                     onBack = { discardSource(); stage = Stage.Camera },
                     onNext = { edited -> edit = edited; stage = Stage.Publish },
                 )

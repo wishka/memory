@@ -5,6 +5,8 @@ import SwiftUI
 /// Скрепка — фото, видео (из галереи или с камеры) и документы. Долгое
 /// нажатие на сообщение — ответить, переслать, закрепить или удалить у
 /// себя или у всех. Закреплённое сообщение — полоской под шапкой.
+/// Пустое поле — вместо «отправить» микрофон: голосовое записывается, его
+/// можно удалить или отправить. В скрепке — свои стикеры из «Студии».
 struct ChatScreen: View {
     let model: AppModel
     let chat: Chat
@@ -22,6 +24,10 @@ struct ChatScreen: View {
     @State private var scrollTarget: Int64?
     /// Документ, открытый в просмотре (QuickLook).
     @State private var preview: URL?
+    @State private var recorder = VoiceRecorder()
+    @State private var choosingSticker = false
+    @State private var micDenied = false
+    @State private var tooShort = false
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pending.isEmpty
@@ -94,6 +100,21 @@ struct ChatScreen: View {
             inputRow
         }
         .quickLookPreview($preview)
+        .sheet(isPresented: $choosingSticker) {
+            StickerPicker(stickers: model.state.stickers, onPick: { sticker in
+                model.send(chat.id, "", attachments: [sticker], replyTo: replyTo)
+                replyTo = nil
+            }) {
+                model.closeChat()
+                model.openProfileSection(.stickers)
+            }
+        }
+        .glassActions($micDenied, title: t("Разрешите доступ к микрофону, чтобы записывать голосовые"),
+                      actions: [GlassAction(icon: .check, title: t("Понятно")) {}])
+        .glassActions($tooShort, title: t("Слишком короткое — держите запись хотя бы секунду"),
+                      actions: [GlassAction(icon: .check, title: t("Понятно")) {}])
+        .onDisappear { recorder.cancel() }
+        .onAppear { recorder.onLimit = { sendVoice() } }
         // Переслать: выбор переписки — шторкой в стиле приложения
         .glassActions(item: $forwarding, title: { _ in t("Переслать") }, cancel: true) { message in
             otherChats.map { target in
@@ -149,36 +170,54 @@ struct ChatScreen: View {
             .padding(.vertical, 10)
             .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .padding(12)
+        } else if recorder.recording {
+            RecordingBar(recorder: recorder, onCancel: { recorder.cancel() }, onSend: sendVoice)
         } else {
             messageRow
         }
     }
 
+    private func sendVoice() {
+        if let voice = recorder.finish() {
+            model.send(chat.id, "", attachments: [voice], replyTo: replyTo)
+            replyTo = nil
+        } else {
+            tooShort = true
+        }
+    }
+
     private var messageRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            AttachButton(documents: true, size: 50) { picked in
+            AttachButton(documents: true, size: 50, onSticker: { choosingSticker = true }) { picked in
                 pending = Array((pending + picked).prefix(AppModel.maxMedia))
             }
             GlassField(placeholder: t("Сообщение"), text: $text, limit: 2000, maxLines: 5)
                 .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            // Есть что отправить — «отправить»; пусто — микрофон для голосового
             Button {
-                model.send(chat.id, text, attachments: pending, replyTo: replyTo)
-                text = ""
-                pending = []
-                replyTo = nil
+                if canSend {
+                    model.send(chat.id, text, attachments: pending, replyTo: replyTo)
+                    text = ""
+                    pending = []
+                    replyTo = nil
+                } else {
+                    Task { @MainActor in
+                        if !(await recorder.start()) { micDenied = true }
+                    }
+                }
             } label: {
-                Glyph(kind: .send, color: canSend ? Palette.ink : Palette.mist)
+                Glyph(kind: canSend ? .send : .mic, color: Palette.ink)
                     .frame(width: 50, height: 50)
                     .background(
                         Circle().fill(
                             canSend
                                 ? LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)
-                                : LinearGradient(colors: [Palette.plum, Palette.plum], startPoint: .top, endPoint: .bottom)
+                                : LinearGradient(colors: [Palette.violet, Palette.plum], startPoint: .top, endPoint: .bottom)
                         )
                     )
             }
             .buttonStyle(.plain)
-            .disabled(!canSend)
+            .accessibilityLabel(canSend ? t("Отправить") : t("Записать голосовое"))
         }
         .padding(12)
     }
@@ -208,10 +247,23 @@ private struct Bubble: View {
             topTrailingRadius: 20,
             style: .continuous
         )
-        let visual = message.attachments.filter { $0.kind != .document }
+        let visual = message.attachments.filter { $0.kind != .document && !$0.sticker }
+        let stickers = message.attachments.filter(\.sticker)
         let documents = message.attachments.filter { $0.kind == .document }
+        // Только стикер — без пузыря, картинкой
+        let stickerOnly = message.text.isEmpty && !message.attachments.isEmpty && stickers.count == message.attachments.count
+            && message.replyTo == nil && message.forwardedFrom == nil
         HStack(spacing: 0) {
             if mine { Spacer(minLength: 0) }
+            if stickerOnly {
+                VStack(alignment: mine ? .trailing : .leading, spacing: 2) {
+                    ForEach(stickers) { StickerView(attachment: $0, size: 150) }
+                    Text(message.time).textStyle(.label, Palette.mist)
+                }
+                .contentShape(Rectangle())
+                .onLongPressGesture(minimumDuration: 0.4) { menu = true }
+                .glassActions($menu, actions: menuActions)
+            } else {
             VStack(alignment: .trailing, spacing: 6) {
                 if let from = message.forwardedFrom {
                     HStack(spacing: 6) {
@@ -243,9 +295,14 @@ private struct Bubble: View {
                 if !visual.isEmpty {
                     MediaGrid(items: visual, onOpen: onOpen)
                 }
+                ForEach(stickers) { StickerView(attachment: $0, size: 120) }
                 ForEach(documents) { doc in
-                    DocumentRow(attachment: doc) { onOpen(doc) }
-                        .frame(maxWidth: 260)
+                    if doc.voice {
+                        VoiceBubble(attachment: doc)
+                    } else {
+                        DocumentRow(attachment: doc) { onOpen(doc) }
+                            .frame(maxWidth: 260)
+                    }
                 }
                 VStack(alignment: .trailing, spacing: 2) {
                     if !message.text.isEmpty {
@@ -269,17 +326,22 @@ private struct Bubble: View {
             // Долгое нажатие — меню сообщения шторкой
             .onLongPressGesture(minimumDuration: 0.4) { menu = true }
             .sensoryFeedback(.impact(weight: .medium), trigger: menu)
-            .glassActions($menu, actions: [
-                GlassAction(icon: .reply, title: t("Ответить"), action: onReply),
-                GlassAction(icon: .forward, title: t("Переслать"), action: onForward),
-                GlassAction(icon: .pushpin, title: pinned ? t("Открепить") : t("Закрепить"), action: onPin),
-                GlassAction(icon: .trash, title: t("Удалить у себя"), destructive: true) { onDelete(false) },
-                GlassAction(icon: .trash, title: t("Удалить у всех"), destructive: true) { onDelete(true) },
-            ])
+            .glassActions($menu, actions: menuActions)
             // Пузырь не шире 290: длинное сообщение переносится
             .frame(maxWidth: 290, alignment: mine ? .trailing : .leading)
+            }
             if !mine { Spacer(minLength: 0) }
         }
+    }
+
+    private var menuActions: [GlassAction] {
+        [
+            GlassAction(icon: .reply, title: t("Ответить"), action: onReply),
+            GlassAction(icon: .forward, title: t("Переслать"), action: onForward),
+            GlassAction(icon: .pushpin, title: pinned ? t("Открепить") : t("Закрепить"), action: onPin),
+            GlassAction(icon: .trash, title: t("Удалить у себя"), destructive: true) { onDelete(false) },
+            GlassAction(icon: .trash, title: t("Удалить у всех"), destructive: true) { onDelete(true) },
+        ]
     }
 }
 

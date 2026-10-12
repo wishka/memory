@@ -173,6 +173,25 @@ fun ProfileScreen(
                         )
                     } else {
                         Text(me.name.uppercase(), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink)
+                        if (state.privacy.closedProfile) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable { vm.openProfileSection(ProfileSection.Requests) }
+                                    .glass(RoundedCornerShape(50))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Glyph(LineIcon.Lock, Palette.Lilac, size = 16.dp)
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    if (state.followRequests.isEmpty()) t("Закрытый профиль")
+                                    else tf("Закрытый профиль · заявки: %s", state.followRequests.size),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Palette.Lilac,
+                                )
+                            }
+                        }
                         if (me.bio.isNotBlank()) {
                             Text(me.bio, style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, textAlign = TextAlign.Center)
                         }
@@ -192,6 +211,7 @@ fun ProfileScreen(
 
         if (!editing) {
             item { ShowcaseCard(vm, state) }
+            item { RecapCard(vm, state) }
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -215,6 +235,14 @@ fun ProfileScreen(
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column {
+                        if (state.privacy.closedProfile || state.followRequests.isNotEmpty()) {
+                            Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Requests) }) {
+                                SettingRow(LineIcon.Lock, t("Заявки на подписку")) {
+                                    Text("${state.followRequests.size}", style = MaterialTheme.typography.bodyMedium, color = if (state.followRequests.isEmpty()) Palette.Mist else Palette.Lilac)
+                                }
+                            }
+                            FadeLine(Modifier.padding(horizontal = 16.dp))
+                        }
                         Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Saved) }) {
                             SettingRow(LineIcon.Bookmark, t("Сохранённое")) {
                                 Text("${state.savedPrisms.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)

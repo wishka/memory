@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.together.TogetherScreen
 import ru.wishka.memory.ui.groups.GroupScreen
 import ru.wishka.memory.ui.groups.GroupSettingsScreen
 import ru.wishka.memory.ui.groups.GroupsScreen
@@ -61,6 +62,7 @@ import ru.wishka.memory.ui.profile.ProfileScreen
 import ru.wishka.memory.ui.profile.ProfileSectionScreen
 import ru.wishka.memory.ui.profile.MusicScreen
 import ru.wishka.memory.ui.profile.StickerStudioScreen
+import ru.wishka.memory.ui.profile.RecapScreen
 import ru.wishka.memory.ui.prism.create.PrismCreateFlow
 import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.settings.AccountActions
@@ -68,9 +70,46 @@ import ru.wishka.memory.ui.settings.SettingsScreen
 import ru.wishka.memory.data.DevicePrefs
 import ru.wishka.memory.ui.splash.AtomSplash
 import ru.wishka.memory.ui.theme.MemoryTheme
+import android.Manifest
+import android.content.Intent
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.flow.MutableStateFlow
+import ru.wishka.memory.data.Nudge
+import ru.wishka.memory.push.AppVisibility
+import ru.wishka.memory.push.MemoryNotifications
+import ru.wishka.memory.push.PushBus
+import ru.wishka.memory.ui.components.NudgeBanner
 
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.foreground = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        AppVisibility.foreground = false
+    }
+
+    /** Нажали на уведомление, когда приложение уже открыто. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        MemoryNotifications.fromIntent(intent)?.let { openedNudge.value = it }
+    }
+
+    companion object {
+        /** Уведомление, по которому открыли приложение, — его откроет AppRoot. */
+        val openedNudge = MutableStateFlow<Nudge?>(null)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Только при запуске нажатием на уведомление: не при повороте и не из «Недавних»
+        val fromHistory = (intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromHistory) {
+            MemoryNotifications.fromIntent(intent)?.let { openedNudge.value = it }
+        }
         // Рисуем под системными панелями; значки панелей — светлые
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -108,6 +147,9 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
             val me = vm.state.value.me
             withContext(Dispatchers.IO) { store.load(account.username, me) }?.let(vm::restore)
             loadedFor = account.username
+            // Сохранённое на месте — можно считать итоги и оживлять демо
+            vm.checkRecapReady()
+            vm.startDemoLife()
         } else {
             vm.reset()
         }
@@ -158,6 +200,41 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
 private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) -> Unit, account: AccountActions) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
+
+    // Уведомления: приложение открыто — плашкой сверху, свёрнуто — системным
+    LaunchedEffect(vm) {
+        vm.nudges.collect { nudge ->
+            if (AppVisibility.foreground) vm.showBanner(nudge) else MemoryNotifications.show(context.applicationContext, nudge)
+        }
+    }
+    // Пуш с сервера, пока приложение открыто, — той же плашкой
+    LaunchedEffect(vm) {
+        PushBus.incoming.collect { vm.notify(it) }
+    }
+    // Выключатели уведомлений — и для пушей с сервера (их принимает служба без экрана)
+    LaunchedEffect(state.notifications) {
+        PushBus.saveSettings(context.applicationContext, state.notifications)
+    }
+    // Открыли приложение нажатием на уведомление — туда, о чём оно
+    LaunchedEffect(vm) {
+        MainActivity.openedNudge.collect { nudge ->
+            if (nudge != null) {
+                vm.openNudge(nudge)
+                MainActivity.openedNudge.value = null
+            }
+        }
+    }
+    // Android 13+: разрешение на уведомления — один раз, при первом входе
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 && !MemoryNotifications.permitted(context)) {
+            val prefs = context.getSharedPreferences("device", android.content.Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("askedNotifications", false)) {
+                prefs.edit().putBoolean("askedNotifications", true).apply()
+                askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
     val prefs = remember(context) { DevicePrefs(context.applicationContext) }
     val version = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
@@ -203,6 +280,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     Tab.Prism -> PrismScreen(vm, state, padding)
                     Tab.Chats -> ChatsScreen(vm, state, padding)
                     Tab.Groups -> GroupsScreen(vm, state, padding)
+                    Tab.Together -> TogetherScreen(vm, state, padding)
                     Tab.Profile -> {
                         val section = state.profileSection
                         val settings = state.settingsPage
@@ -210,6 +288,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                             settings != null -> SettingsScreen(vm, state, settings, padding, version, prefs, account)
                             section == ProfileSection.Music -> MusicScreen(vm, state, padding)
                             section == ProfileSection.Stickers -> StickerStudioScreen(vm, state, padding)
+                            section == ProfileSection.Recap -> RecapScreen(vm, state, padding)
                             section != null -> ProfileSectionScreen(vm, state, section, padding)
                             else -> ProfileScreen(vm, state, padding, onSaveProfile)
                         }
@@ -236,12 +315,13 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     total = post.comments,
                     comments = post.commentList.filter { it.author.id !in state.blocked && it.id !in state.reportedComments },
                     myId = state.me.id,
-                    onSend = { text, replyTo -> vm.addComment(id, text, replyTo) },
+                    onSend = { text, replyTo, sticker -> vm.addComment(id, text, replyTo, sticker) },
                     onDelete = { vm.deleteComment(id, it) },
                     onReport = vm::reportComment,
                     onLike = { vm.toggleCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
+                    stickers = state.stickers,
                 )
             }
         }
@@ -251,14 +331,23 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     total = prism.comments,
                     comments = prism.commentList.filter { it.author.id !in state.blocked && it.id !in state.reportedComments },
                     myId = state.me.id,
-                    onSend = { text, replyTo -> vm.addPrismComment(id, text, replyTo) },
+                    onSend = { text, replyTo, sticker -> vm.addPrismComment(id, text, replyTo, sticker) },
                     onDelete = { vm.deletePrismComment(id, it) },
                     onReport = vm::reportComment,
                     onLike = { vm.togglePrismCommentLike(id, it) },
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
+                    stickers = state.stickers,
                 )
             }
+        }
+        state.banner?.let { nudge ->
+            NudgeBanner(
+                nudge,
+                onOpen = { vm.openNudge(nudge) },
+                onDismiss = vm::dismissBanner,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
         }
         state.viewing?.let { MediaViewer(it, onClose = vm::closeMedia) }
         // Свой PRISM — камера и редактор во весь экран, поверх всего

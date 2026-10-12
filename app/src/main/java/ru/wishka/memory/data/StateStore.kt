@@ -61,6 +61,12 @@ class StateStore(private val context: Context) {
             .put("chats", JSONArray(s.chats.map { chat(it) }))
             .put("groups", JSONArray(s.groups.map { group(it) }))
             .put("prisms", JSONArray(s.prisms.map { prism(it) }))
+            .put("checkInTemplates", JSONArray(s.checkInTemplates.map { template(it) }))
+            .put("followRequests", JSONArray(s.followRequests))
+            .put("approvedFollowers", JSONArray(s.approvedFollowers.toList()))
+            .put("sentRequests", JSONArray(s.sentRequests.toList()))
+            .put("recapNotified", JSONArray(s.recapNotified.toList()))
+            .put("together", s.together?.let { together(it) } ?: JSONObject.NULL)
 
         fun snapshot(o: JSONObject) = Snapshot(
             posts = o.getJSONArray("posts").objects().map { post(it) },
@@ -79,6 +85,190 @@ class StateStore(private val context: Context) {
             stickers = o.optJSONArray("stickers").objects().map { sticker(it) },
             profilePins = o.optJSONArray("profilePins")?.let { a -> (0 until a.length()).map { a.getLong(it) } } ?: emptyList(),
             reportedComments = o.optJSONArray("reportedComments")?.let { a -> (0 until a.length()).map { a.getLong(it) }.toSet() } ?: emptySet(),
+            checkInTemplates = o.optJSONArray("checkInTemplates").objects().map { template(it) },
+            followRequests = o.optJSONArray("followRequests").ints(),
+            approvedFollowers = o.optJSONArray("approvedFollowers").ints().toSet(),
+            sentRequests = o.optJSONArray("sentRequests").ints().toSet(),
+            recapNotified = o.optJSONArray("recapNotified")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
+            together = o.optJSONObject("together")?.let { runCatching { together(it) }.getOrNull() },
+        )
+
+        // ---------- Вместе ----------
+
+        private fun strings(l: List<String>) = JSONArray(l)
+        private fun JSONArray?.strs(): List<String> = if (this == null) emptyList() else (0 until length()).map { getString(it) }
+        private fun latLon(p: LatLon) = JSONArray().put(p.lat).put(p.lon)
+        private fun latLon(a: JSONArray) = LatLon(a.getDouble(0), a.getDouble(1))
+        private fun JSONObject.optAttachment(key: String) = optJSONObject(key)?.let { attachment(it) }
+
+        private fun stroke(d: DrawStroke) = JSONObject()
+            .put("c", d.color).put("w", d.width.toDouble()).put("e", d.eraser)
+            .put("p", JSONArray().apply { d.points.forEach { (x, y) -> put(x.toDouble()); put(y.toDouble()) } })
+
+        private fun stroke(o: JSONObject): DrawStroke {
+            val a = o.getJSONArray("p")
+            val pts = (0 until a.length() / 2).map { a.getDouble(it * 2).toFloat() to a.getDouble(it * 2 + 1).toFloat() }
+            return DrawStroke(pts, o.getInt("c"), o.getDouble("w").toFloat(), o.optBoolean("e"))
+        }
+
+        private fun together(t: TogetherState): JSONObject = JSONObject()
+            .put("balance", t.balance)
+            .put("myTeach", strings(t.myTeach)).put("myWant", strings(t.myWant))
+            .put("anchor", latLon(t.anchor)).put("anchored", t.anchored)
+            .put("goals", JSONArray(t.goals.map { g ->
+                JSONObject().put("id", g.id).put("emoji", g.emoji).put("title", g.title).put("description", g.description)
+                    .put("unit", g.unit).put("target", g.target).put("total", g.total).put("participants", g.participants)
+                    .put("metric", g.metric.name).put("joined", g.joined).put("mine", g.mine)
+            }))
+            .put("offers", JSONArray(t.offers.map { o ->
+                JSONObject().put("personId", o.personId).put("teaches", strings(o.teaches)).put("wants", strings(o.wants)).put("about", o.about)
+            }))
+            .put("deals", JSONArray(t.deals.map { d ->
+                JSONObject().put("id", d.id).put("personId", d.personId).put("give", d.give).put("get", d.get)
+                    .put("minutes", d.minutes).put("status", d.status.name).put("createdAt", d.createdAt)
+            }))
+            .put("journeys", JSONArray(t.journeys.map { j ->
+                JSONObject().put("id", j.id).put("authorId", j.authorId).put("emoji", j.emoji).put("title", j.title)
+                    .put("days", j.days).put("createdAt", j.createdAt)
+                    .put("entries", JSONArray(j.entries.map { e ->
+                        JSONObject().put("id", e.id).put("day", e.day).put("text", e.text).put("createdAt", e.createdAt)
+                            .put("media", JSONArray(e.media.map { attachment(it) }))
+                            .put("tips", JSONArray(e.tips.map { tp ->
+                                JSONObject().put("id", tp.id).put("authorId", tp.authorId).put("text", tp.text)
+                                    .put("helpful", tp.helpful).put("markedByMe", tp.markedByMe).put("createdAt", tp.createdAt)
+                            }))
+                    }))
+            }))
+            .put("missions", JSONArray(t.missions.map { m ->
+                JSONObject().put("id", m.id).put("emoji", m.emoji).put("title", m.title).put("description", m.description)
+                    .put("target", m.target).put("joined", m.joined)
+                    .put("finds", JSONArray(m.finds.map { f ->
+                        JSONObject().put("id", f.id).put("authorId", f.authorId).put("note", f.note).put("at", latLon(f.at))
+                            .put("photo", f.photo?.let { attachment(it) } ?: JSONObject.NULL).put("createdAt", f.createdAt)
+                    }))
+            }))
+            .put("caches", JSONArray(t.caches.map { c ->
+                JSONObject().put("id", c.id).put("authorId", c.authorId).put("title", c.title).put("hint", c.hint)
+                    .put("at", latLon(c.at)).put("difficulty", c.difficulty).put("size", c.size).put("createdAt", c.createdAt)
+                    .put("foundByMe", c.foundByMe)
+                    .put("logs", JSONArray(c.logs.map { l ->
+                        JSONObject().put("id", l.id).put("authorId", l.authorId).put("text", l.text).put("createdAt", l.createdAt)
+                    }))
+            }))
+            .put("outings", JSONArray(t.outings.map { o ->
+                JSONObject().put("id", o.id).put("organizerId", o.organizerId).put("emoji", o.emoji).put("title", o.title)
+                    .put("description", o.description).put("place", o.place).put("startsAt", o.startsAt).put("capacity", o.capacity)
+                    .put("participants", JSONArray(o.participants)).put("at", o.at?.let { latLon(it) } ?: JSONObject.NULL)
+            }))
+            .put("drawings", JSONArray(t.drawings.map { d ->
+                JSONObject().put("id", d.id).put("title", d.title).put("maxTurns", d.maxTurns)
+                    .put("waitingFor", d.waitingFor ?: JSONObject.NULL).put("createdAt", d.createdAt)
+                    .put("turns", JSONArray(d.turns.map { tr ->
+                        JSONObject().put("authorId", tr.authorId).put("strokes", JSONArray(tr.strokes.map { stroke(it) }))
+                    }))
+            }))
+            .put("shares", JSONArray(t.shares.map { i ->
+                JSONObject().put("id", i.id).put("kind", i.kind.name).put("title", i.title).put("description", i.description)
+                    .put("ownerId", i.ownerId).put("holderId", i.holderId).put("status", i.status.name)
+                    .put("requestedBy", i.requestedBy ?: JSONObject.NULL).put("history", JSONArray(i.history))
+                    .put("helpers", JSONArray(i.helpers)).put("photo", i.photo?.let { attachment(it) } ?: JSONObject.NULL)
+                    .put("createdAt", i.createdAt)
+            }))
+
+        private fun together(o: JSONObject) = TogetherState(
+            balance = o.optInt("balance", 60),
+            myTeach = o.optJSONArray("myTeach").strs(),
+            myWant = o.optJSONArray("myWant").strs(),
+            anchor = o.optJSONArray("anchor")?.let { latLon(it) } ?: LatLon.DEFAULT,
+            anchored = o.optBoolean("anchored"),
+            goals = o.optJSONArray("goals").objects().map { g ->
+                CommunityGoal(
+                    g.getString("id"), g.optString("emoji"), g.optString("title"), g.optString("description"), g.optString("unit"),
+                    g.optDouble("target", 1.0), g.optDouble("total", 0.0), g.optInt("participants"),
+                    GoalMetric.entries.firstOrNull { it.name == g.optString("metric") } ?: GoalMetric.Other,
+                    g.optBoolean("joined"), g.optDouble("mine", 0.0),
+                )
+            },
+            offers = o.optJSONArray("offers").objects().map { f ->
+                SkillOffer(f.getInt("personId"), f.optJSONArray("teaches").strs(), f.optJSONArray("wants").strs(), f.optString("about"))
+            },
+            deals = o.optJSONArray("deals").objects().map { d ->
+                SkillDeal(
+                    d.getLong("id"), d.getInt("personId"), d.optString("give"), d.optString("get"), d.optInt("minutes", 30),
+                    DealStatus.entries.firstOrNull { it.name == d.optString("status") } ?: DealStatus.Proposed, d.optLong("createdAt"),
+                )
+            },
+            journeys = o.optJSONArray("journeys").objects().map { j ->
+                Journey(
+                    j.getLong("id"), j.getInt("authorId"), j.optString("emoji"), j.optString("title"), j.optInt("days", 30),
+                    j.optJSONArray("entries").objects().map { e ->
+                        JourneyEntry(
+                            e.getLong("id"), e.optInt("day", 1), e.optString("text"),
+                            e.optJSONArray("media").objects().map { attachment(it) }, e.optLong("createdAt"),
+                            e.optJSONArray("tips").objects().map { tp ->
+                                Tip(tp.getLong("id"), tp.getInt("authorId"), tp.optString("text"), tp.optInt("helpful"), tp.optBoolean("markedByMe"), tp.optLong("createdAt"))
+                            },
+                        )
+                    },
+                    j.optLong("createdAt"),
+                )
+            },
+            missions = o.optJSONArray("missions").objects().map { m ->
+                Mission(
+                    m.getString("id"), m.optString("emoji"), m.optString("title"), m.optString("description"), m.optInt("target", 5),
+                    m.optBoolean("joined"),
+                    m.optJSONArray("finds").objects().map { f ->
+                        MissionFind(f.getLong("id"), f.getInt("authorId"), f.optString("note"), latLon(f.getJSONArray("at")), f.optAttachment("photo"), f.optLong("createdAt"))
+                    },
+                )
+            },
+            caches = o.optJSONArray("caches").objects().map { c ->
+                Cache(
+                    c.getLong("id"), c.getInt("authorId"), c.optString("title"), c.optString("hint"), latLon(c.getJSONArray("at")),
+                    c.optInt("difficulty", 2), c.optString("size"), c.optLong("createdAt"),
+                    c.optJSONArray("logs").objects().map { l -> CacheLog(l.getLong("id"), l.getInt("authorId"), l.optString("text"), l.optLong("createdAt")) },
+                    c.optBoolean("foundByMe"),
+                )
+            },
+            outings = o.optJSONArray("outings").objects().map { u ->
+                Outing(
+                    u.getLong("id"), u.getInt("organizerId"), u.optString("emoji"), u.optString("title"), u.optString("description"),
+                    u.optString("place"), u.optLong("startsAt"), u.optInt("capacity", 10), u.optJSONArray("participants").ints(),
+                    u.optJSONArray("at")?.let { latLon(it) },
+                )
+            },
+            drawings = o.optJSONArray("drawings").objects().map { d ->
+                CollabDrawing(
+                    d.getLong("id"), d.optString("title"), d.optInt("maxTurns", 4),
+                    d.optJSONArray("turns").objects().map { tr -> DrawingTurn(tr.getInt("authorId"), tr.optJSONArray("strokes").objects().map { stroke(it) }) },
+                    if (d.isNull("waitingFor")) null else d.optInt("waitingFor"), d.optLong("createdAt"),
+                )
+            },
+            shares = o.optJSONArray("shares").objects().map { i ->
+                ShareItem(
+                    i.getLong("id"), ShareKind.entries.firstOrNull { it.name == i.optString("kind") } ?: ShareKind.Book,
+                    i.optString("title"), i.optString("description"), i.getInt("ownerId"), i.getInt("holderId"),
+                    ShareStatus.entries.firstOrNull { it.name == i.optString("status") } ?: ShareStatus.Available,
+                    if (i.isNull("requestedBy")) null else i.optInt("requestedBy"),
+                    i.optJSONArray("history").ints(), i.optJSONArray("helpers").ints(), i.optAttachment("photo"), i.optLong("createdAt"),
+                )
+            },
+        )
+
+        private fun template(t: CheckInTemplate) = JSONObject()
+            .put("id", t.id).put("emoji", t.emoji).put("title", t.title).put("unit", t.unit).put("hint", t.hint)
+
+        private fun template(o: JSONObject) = CheckInTemplate(
+            o.getString("id"), o.optString("emoji", "⭐"), o.optString("title"), o.optString("unit"), o.optString("hint"),
+        )
+
+        private fun checkIn(c: CheckIn) = JSONObject()
+            .put("activity", c.activity).put("emoji", c.emoji).put("title", c.title)
+            .put("subject", c.subject).put("amount", c.amount).put("unit", c.unit)
+
+        private fun checkIn(o: JSONObject) = CheckIn(
+            o.getString("activity"), o.optString("emoji"), o.optString("title"),
+            o.optString("subject"), o.optDouble("amount", 0.0), o.optString("unit"),
         )
 
         private fun track(t: MusicTrack) = JSONObject()
@@ -112,17 +302,21 @@ class StateStore(private val context: Context) {
         private fun notify(n: Notifications) = JSONObject()
             .put("all", n.all).put("messages", n.messages).put("reactions", n.reactions)
             .put("groups", n.groups).put("follows", n.follows)
+            .put("friends", n.friends).put("recap", n.recap)
 
         private fun notify(o: JSONObject) = Notifications(
             all = o.optBoolean("all", true), messages = o.optBoolean("messages", true),
             reactions = o.optBoolean("reactions", true), groups = o.optBoolean("groups", true),
             follows = o.optBoolean("follows", true),
+            friends = o.optBoolean("friends", true),
+            recap = o.optBoolean("recap", true),
         )
 
         private fun privacy(p: Privacy) = JSONObject()
             .put("profileInfo", p.profileInfo.name).put("followLists", p.followLists.name)
             .put("messages", p.messages.name).put("comments", p.comments.name)
             .put("showOnline", p.showOnline).put("showBirthday", p.showBirthday)
+            .put("closedProfile", p.closedProfile)
 
         private fun privacy(o: JSONObject) = Privacy(
             profileInfo = audience(o.optString("profileInfo")),
@@ -131,6 +325,7 @@ class StateStore(private val context: Context) {
             comments = audience(o.optString("comments")),
             showOnline = o.optBoolean("showOnline", true),
             showBirthday = o.optBoolean("showBirthday", true),
+            closedProfile = o.optBoolean("closedProfile", false),
         )
 
         private fun audience(name: String) = Audience.entries.firstOrNull { it.name == name } ?: Audience.Everyone
@@ -138,21 +333,27 @@ class StateStore(private val context: Context) {
         private fun attachment(a: Attachment) = JSONObject()
             .put("id", a.id).put("kind", a.kind.name).put("path", a.path)
             .put("name", a.name).put("size", a.size).put("mime", a.mime)
+            .put("voice", a.voice).put("durationMs", a.durationMs).put("waveform", JSONArray(a.waveform))
+            .put("sticker", a.sticker)
 
         private fun attachment(o: JSONObject) = Attachment(
             o.getString("id"), MediaKind.valueOf(o.getString("kind")), o.getString("path"),
             o.optString("name"), o.optLong("size"), o.optString("mime"),
+            voice = o.optBoolean("voice"), durationMs = o.optLong("durationMs"),
+            waveform = o.optJSONArray("waveform").ints(), sticker = o.optBoolean("sticker"),
         )
 
         private fun comment(c: Comment) = JSONObject()
             .put("id", c.id).put("author", c.author.id).put("text", c.text)
             .put("minutesAgo", c.minutesAgo).put("createdAt", c.createdAt)
             .put("likes", c.likes).put("liked", c.liked).put("replyTo", c.replyTo)
+            .put("sticker", c.sticker?.let { attachment(it) } ?: JSONObject.NULL)
 
         private fun comment(o: JSONObject) = Comment(
             o.getLong("id"), person(o.getInt("author")), o.getString("text"),
             o.optInt("minutesAgo"), o.optLong("createdAt"),
             likes = o.optInt("likes"), liked = o.optBoolean("liked"), replyTo = o.optString("replyTo"),
+            sticker = o.optJSONObject("sticker")?.let { attachment(it) },
         )
 
         private fun post(p: Post) = JSONObject()
@@ -160,6 +361,7 @@ class StateStore(private val context: Context) {
             .put("minutesAgo", p.minutesAgo).put("artSeed", p.artSeed ?: JSONObject.NULL)
             .put("likes", p.likes).put("liked", p.liked).put("comments", p.comments)
             .put("createdAt", p.createdAt)
+            .put("checkIn", p.checkIn?.let { checkIn(it) } ?: JSONObject.NULL)
             .put("media", JSONArray(p.media.map { attachment(it) }))
             .put("commentList", JSONArray(p.commentList.map { comment(it) }))
 
@@ -175,6 +377,7 @@ class StateStore(private val context: Context) {
             media = o.optJSONArray("media").objects().map { attachment(it) },
             commentList = o.optJSONArray("commentList").objects().map { comment(it) },
             createdAt = o.optLong("createdAt"),
+            checkIn = o.optJSONObject("checkIn")?.let { checkIn(it) },
         )
 
         private fun message(m: Message) = JSONObject()
@@ -242,6 +445,9 @@ class StateStore(private val context: Context) {
             cover = o.optJSONObject("cover")?.let { attachment(it) },
             createdAt = o.optLong("createdAt"),
         )
+
+        private fun JSONArray?.ints(): List<Int> =
+            if (this == null) emptyList() else (0 until length()).map { getInt(it) }
 
         private fun JSONArray?.objects(): List<JSONObject> =
             if (this == null) emptyList() else (0 until length()).map { getJSONObject(it) }

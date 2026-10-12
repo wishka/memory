@@ -62,7 +62,10 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
     }
     val following = person.id in state.following
     val blocked = state.isBlocked(person.id)
-    val posts = if (blocked) emptyList() else state.postsOf(person.id)
+    // Закрытый профиль: записи видны только подписчикам
+    val hidden = !state.canSee(person)
+    val requested = person.id in state.sentRequests
+    val posts = if (blocked || hidden) emptyList() else state.postsOf(person.id)
     var menu by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -119,6 +122,13 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                 ) {
                     Avatar(person, size = 104.dp, ring = true, showOnline = true)
                     Text(person.name.uppercase(), style = MaterialTheme.typography.headlineSmall, color = Palette.Ink)
+                    if (person.closed) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Glyph(LineIcon.Lock, Palette.Lilac, size = 16.dp)
+                            Spacer(Modifier.size(6.dp))
+                            Text(t("Закрытый профиль"), style = MaterialTheme.typography.labelLarge, color = Palette.Lilac)
+                        }
+                    }
                     Text(
                         if (person.online) t("в сети") else "@${person.handle}",
                         style = MaterialTheme.typography.bodyMedium,
@@ -131,7 +141,9 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                     FadeLine()
                     // Счётчики — кнопки: записи, подписчики и подписки человека
                     Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                        StatButton(posts.size, t("записи"), Modifier.weight(1f)) { vm.openPersonSection(ProfileSection.Posts) }
+                        StatButton(if (hidden) state.postsOf(person.id).size else posts.size, t("записи"), Modifier.weight(1f)) {
+                            if (!hidden) vm.openPersonSection(ProfileSection.Posts)
+                        }
                         StatButton(person.followers + if (following) 1 else 0, t("подписчики"), Modifier.weight(1f)) {
                             vm.openPersonSection(ProfileSection.Followers)
                         }
@@ -149,8 +161,12 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                         GhostButton(t("Разблокировать"), onClick = { vm.unblock(person.id) })
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
-                            if (following) GhostButton(t("Вы подписаны"), onClick = { vm.toggleFollow(person.id) })
-                            else GlowButton(t("Подписаться"), onClick = { vm.toggleFollow(person.id) })
+                            when {
+                                following -> GhostButton(t("Вы подписаны"), onClick = { vm.toggleFollow(person.id) })
+                                requested -> GhostButton(t("Заявка отправлена"), onClick = { vm.toggleFollow(person.id) })
+                                person.closed -> GlowButton(t("Отправить заявку"), onClick = { vm.toggleFollow(person.id) })
+                                else -> GlowButton(t("Подписаться"), onClick = { vm.toggleFollow(person.id) })
+                            }
                             GhostButton(t("Написать"), onClick = { vm.writeTo(person.id) })
                         }
                     }
@@ -169,7 +185,22 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
             }
         }
 
-        item {
+        if (hidden && !blocked) item {
+            GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Glyph(LineIcon.Lock, Palette.Lilac, size = 28.dp)
+                    Spacer(Modifier.size(12.dp))
+                    Text(
+                        if (requested) t("Заявка отправлена. Когда её примут, здесь появятся записи и чек-ины.")
+                        else t("Это закрытый профиль. Записи и чек-ины видят только подписчики — отправьте заявку."),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Palette.Ink,
+                    )
+                }
+            }
+        }
+
+        if (!hidden) item {
             Text(
                 if (posts.isEmpty()) t("ЗАПИСЕЙ ПОКА НЕТ") else tf("ЗАПИСИ · %s", posts.size),
                 style = MaterialTheme.typography.labelSmall,

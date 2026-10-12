@@ -164,6 +164,8 @@ func previewOf(_ message: Message) -> String {
     if !message.text.isEmpty { return message.text }
     let a = message.attachments
     if a.isEmpty { return "" }
+    if a.count == 1, a[0].voice { return t("Голосовое сообщение") + " · " + durationTitle(a[0].durationMs ?? 0) }
+    if a.allSatisfy(\.sticker) { return t("Стикер") }
     if a.allSatisfy({ $0.kind == .photo }) { return a.count == 1 ? t("Фото") : tf("%s фото", a.count) }
     if a.allSatisfy({ $0.kind == .video }) { return a.count == 1 ? t("Видео") : tf("%s видео", a.count) }
     if a.allSatisfy({ $0.kind == .document }) {

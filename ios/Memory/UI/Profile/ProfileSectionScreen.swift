@@ -35,6 +35,8 @@ struct ProfileSectionScreen: View {
         case .saved: return plural(state.savedPrisms.count, "ролик", "ролика", "роликов")
         case .music: return plural(state.tracks.count, "трек", "трека", "треков")
         case .stickers: return plural(state.stickers.count, "стикер", "стикера", "стикеров")
+        case .recap: return ""
+        case .requests: return plural(state.followRequests.count, "заявка", "заявки", "заявок")
         }
     }
 
@@ -87,8 +89,21 @@ struct ProfileSectionScreen: View {
                 }
             }
             .padding(.horizontal, 16)
-        case .music, .stickers:
-            // «Моя музыка» и «Студия» — свой экран (MainScreen), сюда не попадает
+        case .requests:
+            empty(state.privacy.closedProfile
+                  ? t("Профиль закрыт: подписаться на вас можно только по заявке. Одобренные увидят ваши записи и чек-ины.")
+                  : t("Профиль открыт — подписаться может любой. Закрыть его можно в настройках приватности."))
+            if state.requestPeople.isEmpty { empty(t("Новых заявок нет.")) }
+            ForEach(state.requestPeople) { person in
+                RequestRow(
+                    person: person,
+                    onOpen: { model.openPerson(person.id) },
+                    onApprove: { model.approveRequest(person.id) },
+                    onDecline: { model.declineRequest(person.id) }
+                )
+            }
+        case .music, .stickers, .recap:
+            // «Моя музыка», «Студия» и «Итоги» — свои экраны (MainScreen), сюда не попадают
             EmptyView()
         }
     }
@@ -197,5 +212,38 @@ private struct SavedTile: View {
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Заявка на подписку: принять или отклонить.
+private struct RequestRow: View {
+    let person: User
+    let onOpen: () -> Void
+    let onApprove: () -> Void
+    let onDecline: () -> Void
+
+    var body: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Button(action: onOpen) {
+                    HStack(spacing: 12) {
+                        Avatar(user: person, size: 48)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(person.name).textStyle(.title).lineLimit(1)
+                            Text("@\(person.handle)").textStyle(.bodySmall, Palette.mist).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                HStack(spacing: 10) {
+                    GlowButton(title: t("Принять"), action: onApprove)
+                    GhostButton(title: t("Отклонить"), action: onDecline)
+                }
+            }
+            .padding(12)
+        }
+        .cardPadding()
     }
 }

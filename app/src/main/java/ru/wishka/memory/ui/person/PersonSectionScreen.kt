@@ -36,7 +36,7 @@ import ru.wishka.memory.ui.theme.Palette
 @Composable
 fun PersonSectionScreen(vm: AppViewModel, state: UiState, person: User, section: ProfileSection, contentPadding: PaddingValues) {
     val blocked = state.isBlocked(person.id)
-    val posts = if (blocked) emptyList() else state.postsOf(person.id)
+    val posts = if (blocked || !state.canSee(person)) emptyList() else state.postsOf(person.id)
     val people = when (section) {
         ProfileSection.Followers -> state.followersOf(person)
         ProfileSection.Following -> state.followingOf(person)

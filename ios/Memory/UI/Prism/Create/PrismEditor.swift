@@ -57,6 +57,7 @@ struct PrismEditor: View {
     @State private var draft: TextDraft?
     @State private var rebuild: Task<Void, Never>?
     @State private var loaded = false
+    @State private var choosingMusic = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,6 +104,16 @@ struct PrismEditor: View {
                 if Task.isCancelled { return }
                 await reload(keepPosition: true)
             }
+        }
+        .fullScreenCover(isPresented: $choosingMusic) {
+            // Медиатека: трек скачивается в «Мою музыку» и сразу встаёт на ролик
+            MusicPicker(model: model, onPick: { picked in
+                choosingMusic = false
+                update { e in
+                    e.musicTrackId = picked.id
+                    e.musicStartMs = 0
+                }
+            }, onDismiss: { choosingMusic = false })
         }
         .sheet(item: $draft) { d in
             TextEditorSheet(draft: d) { done in
@@ -388,8 +399,9 @@ struct PrismEditor: View {
     @ViewBuilder
     private var musicPanel: some View {
         let tracks = model.state.tracks
+        GlowButton(title: t("Медиатека")) { choosingMusic = true }
         if tracks.isEmpty {
-            Text(t("В «Моей музыке» пока нет треков. Загрузите их в профиле — и они появятся здесь."))
+            Text(t("В «Моей музыке» пока нет треков — выберите трек в медиатеке или загрузите свои в профиле."))
                 .textStyle(.bodySmall, Palette.mist)
         }
         Chip(text: t("Без музыки"), active: edit.musicTrackId == nil) { update { $0.musicTrackId = nil } }

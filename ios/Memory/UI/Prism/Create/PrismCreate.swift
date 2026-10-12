@@ -13,13 +13,18 @@ struct PrismCreateFlow: View {
     @State private var stage: CreateStage = .camera
     @State private var edit: VideoEdit?
     @State private var failed = false
+    /// Трек, выбранный при съёмке: сразу ставится в редактор.
+    @State private var captureMusic: String?
 
     var body: some View {
         ZStack {
             Palette.void.ignoresSafeArea()
             switch stage {
             case .camera:
-                PrismCamera(onVideo: { url in open(url) }, onClose: close)
+                PrismCamera(model: model, onVideo: { url, music in
+                    captureMusic = music?.id
+                    open(url)
+                }, onClose: close)
             case .editor:
                 if let binding = Binding($edit) {
                     PrismEditor(
@@ -61,7 +66,13 @@ struct PrismCreateFlow: View {
                 failed = true
                 return
             }
-            edit = VideoEdit(sourceURL: url, sourceDurationMs: info.durationMs, sourceWidth: info.width, sourceHeight: info.height)
+            var next = VideoEdit(sourceURL: url, sourceDurationMs: info.durationMs, sourceWidth: info.width, sourceHeight: info.height)
+            if let id = captureMusic {
+                next.musicTrackId = id
+                // Под музыку микрофон тише: в нём и так слышна музыка из динамика
+                next.originalVolume = 0.4
+            }
+            edit = next
         }
     }
 

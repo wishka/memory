@@ -10,7 +10,7 @@ enum LineIcon {
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
     case gear, shield, lock, block, textSize, globe, bellOff, more, eye, check
     case flash, flip, scissors, speed, crop, filter, sliders, text, sticker, volume, rotate, mirror, pause
-    case copy, flag, search, brush, smile, undo, grid, award
+    case copy, flag, search, brush, smile, undo, grid, award, mic, together
 }
 
 struct Glyph: View {
@@ -257,6 +257,11 @@ struct Glyph: View {
             strokePath(circle(s, 0.76, 0.42, 0.08))
             strokePath(line(s, 0.1, 0.7, 0.2, 0.6))
             strokePath(line(s, 0.9, 0.7, 0.8, 0.6))
+        case .together:
+            // Два сцепленных кольца — «вместе», над ними искра
+            strokePath(circle(s, 0.38, 0.58, 0.2))
+            strokePath(circle(s, 0.62, 0.58, 0.2))
+            strokePath(diamond(s, 0.5, 0.2, 0.08))
         case .pin:
             var pin = Path()
             pin.move(to: p(s, 0.5, 0.86))
@@ -278,6 +283,15 @@ struct Glyph: View {
         case .link:
             strokePath(roundRect(s, 0.12, 0.38, 0.42, 0.24, 0.12))
             strokePath(roundRect(s, 0.46, 0.38, 0.42, 0.24, 0.12))
+        case .mic:
+            // Микрофон: капсула, дуга-держатель и ножка
+            strokePath(roundRect(s, 0.38, 0.12, 0.24, 0.44, 0.12))
+            var holder = Path()
+            holder.addArc(center: CGPoint(x: s * 0.5, y: s * 0.48), radius: s * 0.24,
+                          startAngle: .degrees(0), endAngle: .degrees(180), clockwise: false)
+            strokePath(holder)
+            strokePath(line(s, 0.5, 0.72, 0.5, 0.86))
+            strokePath(line(s, 0.36, 0.86, 0.64, 0.86))
         case .music:
             strokePath(line(s, 0.4, 0.7, 0.4, 0.22))
             strokePath(line(s, 0.4, 0.22, 0.76, 0.16))

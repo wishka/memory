@@ -11,7 +11,7 @@ struct PersonSectionScreen: View {
     var body: some View {
         let state = model.state
         let blocked = state.isBlocked(person.id)
-        let posts = blocked ? [] : state.postsOf(person.id)
+        let posts = blocked || !state.canSee(person) ? [] : state.postsOf(person.id)
         let people: [User] = section == .followers ? state.followersOf(person)
             : section == .following ? state.followingOf(person) : []
 
