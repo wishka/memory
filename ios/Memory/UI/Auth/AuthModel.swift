@@ -11,13 +11,17 @@ final class AuthModel {
     var account: Account?
     var busy = false
     var error: String?
+    /// Меняется, когда человек принял документы: корень пересчитывает, нужен ли запрос.
+    var consentTick = 0
 
     @ObservationIgnored private let auth: LocalAuth
+    @ObservationIgnored private let consents: ConsentStore
 
     @ObservationIgnored private var restoring = false
 
-    init(auth: LocalAuth = LocalAuth(store: SecureStore())) {
+    init(auth: LocalAuth = LocalAuth(store: SecureStore()), consents: ConsentStore = ConsentStore()) {
         self.auth = auth
+        self.consents = consents
     }
 
     /// Проверить сохранённую сессию и завести демо-аккаунт. Вызывается
@@ -40,8 +44,22 @@ final class AuthModel {
         run { $0.login(username: username, password: password) }
     }
 
-    func register(_ username: String, _ displayName: String, _ password: String, _ repeated: String) {
-        run { $0.register(username: username, displayName: displayName, password: password, repeatPassword: repeated) }
+    /// consented — человек отметил возраст, соглашение и согласие на
+    /// обработку: после удачной регистрации запоминаем версию документов.
+    func register(_ username: String, _ displayName: String, _ password: String, _ repeated: String, consented: Bool = false) {
+        let consents = self.consents
+        run(onOk: { account in if consented { consents.accept(account.username) } }) {
+            $0.register(username: username, displayName: displayName, password: password, repeatPassword: repeated)
+        }
+    }
+
+    /// Согласие с текущей версией документов.
+    func hasConsent(_ username: String) -> Bool { consents.accepted(username) }
+
+    func acceptDocuments() {
+        guard let account else { return }
+        consents.accept(account.username)
+        consentTick += 1
     }
 
     func logout() {
@@ -78,6 +96,7 @@ final class AuthModel {
             auth.deleteAccount(username: login, password: password)
         }.value
         if error == nil {
+            consents.forget(login)
             await MainActor.run { [weak self] in
                 self?.account = nil
                 self?.error = nil
@@ -90,7 +109,13 @@ final class AuthModel {
         error = nil
     }
 
+    /// onOk — до того, как аккаунт появится в account: согласие должно
+    /// быть записано раньше, чем корень решит, показывать ли запрос.
     private func run(_ block: @escaping (LocalAuth) -> AuthResult) {
+        run(onOk: { _ in }, block)
+    }
+
+    private func run(onOk: @escaping (Account) -> Void, _ block: @escaping (LocalAuth) -> AuthResult) {
         if busy { return }
         busy = true
         error = nil
@@ -101,7 +126,9 @@ final class AuthModel {
                 guard let self else { return }
                 self.busy = false
                 switch result {
-                case .ok(let account): self.account = account
+                case .ok(let account):
+                    onOk(account)
+                    self.account = account
                 case .error(let message): self.error = message
                 }
             }

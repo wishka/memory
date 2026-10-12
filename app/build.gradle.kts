@@ -106,6 +106,14 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // Документы (соглашение, политика, согласие, правила) — один источник:
+    // docs/legal. Его же публикует сайт; в приложении — из assets.
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(rootProject.file("docs/legal"))
+        }
+    }
 }
 
 dependencies {

@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.profile
 
+import ru.wishka.memory.data.LegalDoc
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -82,7 +83,7 @@ fun ShelfScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
     val scope = rememberCoroutineScope()
     val shelf = remember(state.posts, state.shelfMarks, state.me.id) { state.shelf }
     // Подборка и план — не на каждую перерисовку: каждый вызов заново собирает полку
-    val recs = remember(shelf, state.dismissedRecs, state.blocked) {
+    val recs = remember(shelf, state.dismissedRecs, state.blocked, state.privacy.personalRecs) {
         state.recommendations("film", shelf = shelf) to state.recommendations("book", shelf = shelf)
     }
     val plan = remember(state.posts, state.me.id) { state.runPlan }
@@ -162,6 +163,13 @@ private fun LazyListScope.forYou(
     onRate: (Pair<String, String>) -> Unit,
 ) {
     item { RunPlanCard(plan) }
+    if (!state.privacy.personalRecs) {
+        item {
+            Hint(t("Персональные рекомендации выключены в «Настройках → Приватность». Включите их, чтобы полка советовала фильмы и книги."))
+        }
+        item { RecsHow(vm) }
+        return
+    }
     val (films, books) = recs
     if (shelf.rated.size < 3) item {
         Hint(t("Оцените ещё пару фильмов или книг — подборка станет точнее. Мы советуем то, что любят люди с похожим вкусом."))
@@ -174,6 +182,7 @@ private fun LazyListScope.forYou(
         item { Caption(t("Книги для вас")) }
         items(books, key = { "b" + it.key }) { RecCard(vm, it, onSeen = { onRate("book" to it.subject) }) }
     }
+    if (films.isNotEmpty() || books.isNotEmpty()) item { RecsHow(vm) }
     // С кем совпадает вкус
     val mine = shelf.rated
     val matches = DemoTaste.ratings.filterKeys { it !in state.blocked }
@@ -197,6 +206,17 @@ private fun LazyListScope.forYou(
             }
         }
     }
+}
+
+/** «Как работают советы» — правила рекомендаций (149-ФЗ, ст. 10.2-2). */
+@Composable
+private fun RecsHow(vm: AppViewModel) {
+    Text(
+        t("Как работают рекомендации"),
+        style = MaterialTheme.typography.bodyMedium,
+        color = Palette.Lilac,
+        modifier = Modifier.padding(horizontal = 24.dp).clip(RoundedCornerShape(6.dp)).clickable { vm.openLegal(LegalDoc.Recommendations) },
+    )
 }
 
 @Composable

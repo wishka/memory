@@ -280,6 +280,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     onVote = { poll, i -> vm.voteMessage(chat.id, poll.id, i) },
                     onClosePoll = { poll -> vm.closeMessagePoll(chat.id, poll.id) },
                     onPlace = { viewingPlace = it },
+                    onReport = { vm.reportMessage(chat.id, message) },
                 )
             }
         }
@@ -518,6 +519,7 @@ private fun Bubble(
     onVote: (Poll, Int) -> Unit,
     onClosePoll: (Poll) -> Unit,
     onPlace: (SharedPlace) -> Unit,
+    onReport: () -> Unit,
 ) {
     val mine = message.fromMe
     var menu by remember { mutableStateOf(false) }
@@ -627,6 +629,10 @@ private fun Bubble(
                 MenuRow(LineIcon.Trash, t("Удалить у всех"), color = Palette.Lilac) {
                     menu = false
                     onDelete(true)
+                }
+                if (!mine) MenuRow(LineIcon.Flag, t("Пожаловаться"), color = Palette.PearlPink) {
+                    menu = false
+                    onReport()
                 }
             }
         }

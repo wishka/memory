@@ -41,6 +41,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import ru.wishka.memory.data.Audience
+import ru.wishka.memory.data.Legal
+import ru.wishka.memory.data.LegalDoc
 import ru.wishka.memory.data.NotifySound
 import ru.wishka.memory.data.NudgeKind
 import ru.wishka.memory.data.SOUND_KINDS
@@ -129,12 +131,13 @@ fun SettingsScreen(
         when (page) {
             SettingsPage.Main -> mainPage(vm, state, version, account)
             SettingsPage.Security -> item { SecurityPage(account) }
-            SettingsPage.Privacy -> item { PrivacyPage(state.privacy, vm::setPrivacy) }
+            SettingsPage.Privacy -> item { PrivacyPage(state.privacy, vm::setPrivacy) { vm.openLegal(LegalDoc.Recommendations) } }
+            SettingsPage.Legal -> item { LegalPage(vm) }
             SettingsPage.Blacklist -> blacklistPage(vm, state.blockedPeople)
             SettingsPage.Notifications -> item { NotificationsPage(vm, state) }
             SettingsPage.TextSize -> item { TextSizePage(prefs) }
             SettingsPage.Language -> item { LanguagePage(prefs) }
-            SettingsPage.About -> item { AboutPage(version) }
+            SettingsPage.About -> item { AboutPage(version, vm) }
             SettingsPage.Growth -> item { GrowthPage(vm, state, version) }
             SettingsPage.Sounds -> item { SoundsPage(state) }
             SettingsPage.Wallpaper -> item {
@@ -179,6 +182,8 @@ private fun LazyListScope.mainPage(vm: AppViewModel, state: UiState, version: St
             NavRow(LineIcon.Globe, t("Язык"), L10n.choice.title) { vm.openSettings(SettingsPage.Language) }
             Divider()
             NavRow(LineIcon.Info, t("О приложении"), "Memory $version") { vm.openSettings(SettingsPage.About) }
+            Divider()
+            NavRow(LineIcon.Document, t("Документы"), "${Legal.MIN_AGE}+") { vm.openSettings(SettingsPage.Legal) }
         }
     }
     item {
@@ -311,7 +316,7 @@ private fun PasswordField(value: String, onChange: (String) -> Unit, placeholder
 // ==================== ПРИВАТНОСТЬ ====================
 
 @Composable
-private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit) {
+private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit, onRecsDoc: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card {
             SwitchRow(t("Закрытый профиль"), privacy.closedProfile) { onChange(privacy.copy(closedProfile = it)) }
@@ -345,6 +350,19 @@ private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit) {
             SwitchRow(t("Показывать день рождения"), privacy.showBirthday) { onChange(privacy.copy(showBirthday = it)) }
         }
         Hint(t("«Мои подписки» — люди, на которых подписаны вы. Чтобы скрыть от одного человека всё сразу, добавьте его в чёрный список."))
+        Card {
+            SwitchRow(t("Персональные рекомендации"), privacy.personalRecs) { onChange(privacy.copy(personalRecs = it)) }
+        }
+        Hint(
+            if (privacy.personalRecs) t("Полка советует фильмы и книги по вашим оценкам и вкусу похожих людей. Лента рекомендациями не сортируется.")
+            else t("Рекомендации выключены: подборка «Для вас», совет после чек-ина и «Похожий вкус» не показываются.")
+        )
+        Text(
+            t("Как работают рекомендации"),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Palette.Lilac,
+            modifier = Modifier.padding(horizontal = 24.dp).clip(RoundedCornerShape(6.dp)).clickable(onClick = onRecsDoc),
+        )
     }
 }
 
@@ -550,7 +568,7 @@ private fun LanguagePage(prefs: DevicePrefs) {
 // ==================== О ПРИЛОЖЕНИИ ====================
 
 @Composable
-private fun AboutPage(version: String) {
+private fun AboutPage(version: String, vm: AppViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card {
             Column(
@@ -575,11 +593,42 @@ private fun AboutPage(version: String) {
             }
         }
         Card {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Caption(t("Шрифты"))
-                Bullet(t("Unbounded и Inter — под лицензией SIL Open Font License."))
+            NavRow(LineIcon.Document, t("Документы"), "${Legal.MIN_AGE}+") { vm.openSettings(SettingsPage.Legal) }
+            Divider()
+            NavRow(LineIcon.Info, t("Лицензии и авторы"), "") { vm.openLegal(LegalDoc.Licenses) }
+        }
+        Hint(t("Карты © участники OpenStreetMap. Гифки — Powered by GIPHY. Шрифты Unbounded и Inter — SIL Open Font License."))
+    }
+}
+
+// ==================== ДОКУМЕНТЫ ====================
+
+/**
+ * Соглашение, политика, согласие, правила, рекомендации и лицензии — те
+ * же тексты, что на сайте (docs/legal). Контакты для обращений и жалоб.
+ */
+@Composable
+private fun LegalPage(vm: AppViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Card {
+            LegalDoc.entries.forEachIndexed { i, doc ->
+                if (i > 0) Divider()
+                NavRow(LineIcon.Document, doc.title, "") { vm.openLegal(doc) }
             }
         }
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Caption(t("Связаться"))
+                Bullet(tf("Вопросы о данных и отзыв согласия: %s", Legal.PRIVACY_EMAIL))
+                Bullet(tf("Жалобы на контент: %s — или «Пожаловаться» в меню записи, сообщения, PRISM", Legal.ABUSE_EMAIL))
+                Bullet(tf("Оператор: %s", Legal.OPERATOR))
+            }
+        }
+        Card {
+            NavRow(LineIcon.Shield, t("Удалить аккаунт и отозвать согласие"), "") { vm.openSettings(SettingsPage.Security) }
+        }
+        Hint(tf("Memory — для людей от %s лет. Версия документов: %s.", Legal.MIN_AGE, Legal.VERSION))
+        if (!Legal.filled) Hint(t("Черновик: данные оператора ещё не заполнены."))
     }
 }
 

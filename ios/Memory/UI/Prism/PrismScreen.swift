@@ -35,7 +35,8 @@ struct PrismScreen: View {
                             onComments: { model.openPrismComments(prism.id) },
                             onSave: { model.togglePrismSave(prism.id) },
                             mine: prism.author.id == state.me.id && prism.video != nil,
-                            onDelete: { confirmDelete = prism }
+                            onDelete: { confirmDelete = prism },
+                            onReport: prism.author.id == state.me.id ? nil : { model.reportPrism(prism) }
                         )
                         // Ролик — ровно во весь экран: так листание «страницами» встаёт точно
                         .containerRelativeFrame([.horizontal, .vertical])
@@ -122,6 +123,8 @@ private struct PrismPage: View {
     let onSave: () -> Void
     let mine: Bool
     let onDelete: () -> Void
+    /// Пожаловаться на чужой PRISM; nil — свой, кнопки нет.
+    var onReport: (() -> Void)? = nil
 
     @State private var paused = false
     /// Ход своего видео 0…1.
@@ -278,6 +281,10 @@ private struct PrismPage: View {
             .sensoryFeedback(.selection, trigger: prism.saved)
             if mine {
                 Button(action: onDelete) { sideLabel(.trash, t("Удалить")) }
+                    .buttonStyle(.plain)
+            }
+            if let onReport {
+                Button(action: onReport) { sideLabel(.flag, t("Пожаловаться")) }
                     .buttonStyle(.plain)
             }
         }

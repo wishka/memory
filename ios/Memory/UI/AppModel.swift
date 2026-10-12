@@ -45,6 +45,7 @@ enum SettingsPage: String, CaseIterable {
     case growth = "Друзья и идеи"
     case sounds = "Звуки"
     case wallpaper = "Фон переписок"
+    case legal = "Документы"
 
     var title: String { t(rawValue) }
 }
@@ -168,12 +169,20 @@ struct UiState: Equatable {
     var backdrop: Backdrop = Backdrop.default
     /// Недавние гифки — первыми в выборе.
     var recentGifs: [Attachment] = []
+    /// Жалобы, которые ждут отправки модераторам (с сервером — уйдут им).
+    var reports: [Report] = []
+    /// На что сейчас жалуются: открыт выбор причины.
+    var reporting: ReportTarget? = nil
+    /// Открытый документ: соглашение, политика, правила…
+    var legalDoc: LegalDoc? = nil
 
     /// Полка — собирается сама из чек-инов и отметок.
     var shelf: Shelf { Shelf.build(posts.datedCheckIns(me.id), shelfMarks) }
     var myCheckIns: [Dated] { posts.datedCheckIns(me.id) }
     /// Подборка: kind — «film» или «book».
     func recommendations(_ kind: String, limit: Int = 6, shelf precomputed: Shelf? = nil) -> [Recommendation] {
+        // Персональные рекомендации выключены в «Приватности» — ничего не подбираем
+        if !privacy.personalRecs { return [] }
         let shelf = precomputed ?? self.shelf
         return recommend(shelf.rated, exclude: shelf.keys.union(dismissedRecs),
                          friends: DemoTaste.ratings.filter { !blocked.contains($0.key) }, kind: kind, limit: limit)
@@ -308,6 +317,7 @@ struct Snapshot: Codable, Equatable {
     var stickerPacks: [StickerPack]? = nil
     var backdrop: Backdrop? = nil
     var recentGifs: [Attachment]? = nil
+    var reports: [Report]? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -1476,6 +1486,94 @@ final class AppModel {
         state.blocked.remove(userId)
     }
 
+    // MARK: - Жалобы и документы
+
+    /// Сколько жалоб держим в очереди до отправки.
+    static let maxReports = 200
+
+    /// Открыть выбор причины жалобы.
+    func startReport(_ target: ReportTarget) {
+        state.reporting = target
+    }
+
+    func reportPost(_ post: Post) {
+        startReport(ReportTarget(kind: .post, id: post.id, authorId: post.author.id, authorName: post.author.name,
+                                 preview: String(post.text.prefix(80))))
+    }
+
+    func reportPrism(_ prism: Prism) {
+        startReport(ReportTarget(kind: .prism, id: prism.id, authorId: prism.author.id, authorName: prism.author.name,
+                                 preview: String(prism.caption.prefix(80))))
+    }
+
+    func reportComment(_ comment: Comment) {
+        startReport(ReportTarget(kind: .comment, id: comment.id, authorId: comment.author.id, authorName: comment.author.name,
+                                 preview: String(comment.text.prefix(80))))
+    }
+
+    /// На свои сообщения не жалуются.
+    func reportMessage(_ chatId: Int, _ message: Message) {
+        guard let peer = state.chats.first(where: { $0.id == chatId })?.peer, !message.fromMe else { return }
+        startReport(ReportTarget(kind: .message, id: message.id, authorId: peer.id, authorName: peer.name,
+                                 chatId: chatId, preview: String(previewOf(message).prefix(80))))
+    }
+
+    func reportPerson(_ user: User) {
+        startReport(ReportTarget(kind: .person, id: Int64(user.id), authorId: user.id, authorName: user.name,
+                                 preview: "@" + user.handle))
+    }
+
+    func cancelReport() {
+        state.reporting = nil
+    }
+
+    /// Жалоба: в очередь модераторам и сразу скрыть у себя то, на что
+    /// пожаловались. block — заодно заблокировать автора.
+    func report(_ target: ReportTarget, _ reason: ReportReason, note: String = "", block: Bool = false) {
+        let text = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+        let entry = Report(id: newId(), target: target, reason: reason, note: text, createdAt: clock())
+        var s = state
+        s.reports = Array((s.reports + [entry]).suffix(Self.maxReports))
+        s.reporting = nil
+        switch target.kind {
+        case .comment:
+            s.reportedComments.insert(target.id)
+        case .post:
+            s.posts.removeAll { $0.id == target.id }
+            s.groups = s.groups.map { group in
+                var g = group
+                g.posts.removeAll { $0.id == target.id }
+                return g
+            }
+            if s.commentsPostId == target.id { s.commentsPostId = nil }
+        case .prism:
+            s.prisms.removeAll { $0.id == target.id }
+            if s.commentsPrismId == target.id { s.commentsPrismId = nil }
+        case .message:
+            s.chats = s.chats.map { chat in
+                guard chat.id == target.chatId else { return chat }
+                var c = chat
+                c.messages.removeAll { $0.id == target.id }
+                if c.pinnedId == target.id { c.pinnedId = nil }
+                return c
+            }
+        case .person:
+            break
+        }
+        state = s
+        if block && target.authorId != 0 && target.authorId != state.me.id {
+            self.block(target.authorId)
+        }
+    }
+
+    func openLegal(_ doc: LegalDoc) {
+        state.legalDoc = doc
+    }
+
+    func closeLegal() {
+        state.legalDoc = nil
+    }
+
     /// Свои записи и комментарии показывают новое имя.
     private func applyMe(_ me: User) {
         state.applyMe(me)
@@ -2115,7 +2213,8 @@ final class AppModel {
             recapNotified: state.recapNotified, together: state.together,
             shelfMarks: state.shelfMarks, dismissedRecs: state.dismissedRecs, growth: state.growth,
             invitedBy: state.invitedBy, memorySeen: state.memorySeen,
-            stickerPacks: state.stickerPacks, backdrop: state.backdrop, recentGifs: state.recentGifs
+            stickerPacks: state.stickerPacks, backdrop: state.backdrop, recentGifs: state.recentGifs,
+            reports: state.reports
         )
     }
 
@@ -2161,6 +2260,7 @@ final class AppModel {
         s.stickerPacks = snapshot.stickerPacks ?? []
         s.backdrop = snapshot.backdrop ?? Backdrop.default
         s.recentGifs = snapshot.recentGifs ?? []
+        s.reports = snapshot.reports ?? []
         s.applyMe(s.me)
         state = s
     }

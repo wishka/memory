@@ -185,6 +185,7 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                 onLike = { vm.toggleGroupPostLike(group.id, post.id) },
                 onVote = { vm.votePost(post.id, it) },
                 onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
+                onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
                 onAuthor = { vm.openPerson(post.author.id) },
                 onComments = { vm.openComments(post.id) },
                 onOpenMedia = vm::openMedia,

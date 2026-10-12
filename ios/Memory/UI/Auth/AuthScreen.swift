@@ -19,6 +19,9 @@ struct AuthScreen: View {
     @State private var name = ""
     @State private var password = ""
     @State private var repeated = ""
+    /// Возраст, соглашение и согласие на обработку — три отдельные галочки.
+    @State private var consent = ConsentState()
+    @State private var openDoc: LegalDoc?
 
     private enum FieldId: Hashable { case login, name, password, repeated }
     @FocusState private var focus: FieldId?
@@ -65,6 +68,10 @@ struct AuthScreen: View {
                                     .textContentType(.newPassword)
                             }
 
+                            if registering {
+                                ConsentChecks(consent: $consent) { openDoc = $0 }
+                            }
+
                             if let error = auth.error {
                                 Text(error)
                                     .textStyle(.bodySmall, Palette.error)
@@ -74,7 +81,8 @@ struct AuthScreen: View {
 
                             GlowButton(
                                 title: auth.busy ? t("Подождите…") : registering ? t("Создать аккаунт") : t("Войти"),
-                                enabled: !auth.busy && !login.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty,
+                                enabled: !auth.busy && !login.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty
+                                    && (!registering || consent.all),
                                 fullWidth: true,
                                 action: submit
                             )
@@ -94,6 +102,8 @@ struct AuthScreen: View {
                         .textStyle(.bodySmall, Palette.mist)
                         .multilineTextAlignment(.center)
                         .padding(.top, 16)
+                    LegalLinks(docs: [.terms, .privacy]) { openDoc = $0 }
+                        .padding(.top, 8)
                     Spacer(minLength: 24)
                 }
                 .padding(.horizontal, 20)
@@ -101,6 +111,9 @@ struct AuthScreen: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
+        }
+        .fullScreenCover(item: $openDoc) { doc in
+            LegalDocViewer(doc: doc) { openDoc = nil }
         }
     }
 
@@ -134,7 +147,9 @@ struct AuthScreen: View {
         guard !auth.busy, !login.isEmpty, !password.isEmpty else { return }
         focus = nil
         if registering {
-            auth.register(login, name, password, repeated)
+            // Без трёх галочек аккаунт не создаётся (кнопка тоже неактивна)
+            guard consent.all else { return }
+            auth.register(login, name, password, repeated, consented: consent.all)
         } else {
             auth.login(login, password)
         }

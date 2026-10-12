@@ -79,6 +79,7 @@ class StateStore(private val context: Context) {
             .put("stickerPacks", JSONArray(s.stickerPacks.map { JSONObject().put("id", it.id).put("name", it.name) }))
             .put("backdrop", backdrop(s.backdrop))
             .put("recentGifs", JSONArray(s.recentGifs.map { attachment(it) }))
+            .put("reports", JSONArray(s.reports.map { report(it) }))
 
         fun snapshot(o: JSONObject) = Snapshot(
             posts = o.getJSONArray("posts").objects().map { post(it) },
@@ -117,6 +118,22 @@ class StateStore(private val context: Context) {
             stickerPacks = o.optJSONArray("stickerPacks").objects().map { StickerPack(it.optString("id"), it.optString("name")) },
             backdrop = o.optJSONObject("backdrop")?.let { backdrop(it) } ?: Backdrop.DEFAULT,
             recentGifs = o.optJSONArray("recentGifs").objects().map { attachment(it) },
+            reports = o.optJSONArray("reports").objects().map { report(it) },
+        )
+
+        private fun report(r: Report) = JSONObject()
+            .put("id", r.id).put("kind", r.target.kind.id).put("targetId", r.target.id)
+            .put("authorId", r.target.authorId).put("authorName", r.target.authorName)
+            .put("chatId", r.target.chatId).put("preview", r.target.preview)
+            .put("reason", r.reason.id).put("note", r.note).put("at", r.createdAt)
+
+        private fun report(o: JSONObject) = Report(
+            o.optLong("id"),
+            ReportTarget(
+                ReportKind.of(o.optString("kind")), o.optLong("targetId"), o.optInt("authorId"),
+                o.optString("authorName"), o.optInt("chatId"), o.optString("preview"),
+            ),
+            ReportReason.of(o.optString("reason")), o.optString("note"), o.optLong("at"),
         )
 
         // ---------- Вместе ----------
@@ -348,7 +365,7 @@ class StateStore(private val context: Context) {
             .put("profileInfo", p.profileInfo.name).put("followLists", p.followLists.name)
             .put("messages", p.messages.name).put("comments", p.comments.name)
             .put("showOnline", p.showOnline).put("showBirthday", p.showBirthday)
-            .put("closedProfile", p.closedProfile)
+            .put("closedProfile", p.closedProfile).put("personalRecs", p.personalRecs)
 
         private fun privacy(o: JSONObject) = Privacy(
             profileInfo = audience(o.optString("profileInfo")),
@@ -358,6 +375,7 @@ class StateStore(private val context: Context) {
             showOnline = o.optBoolean("showOnline", true),
             showBirthday = o.optBoolean("showBirthday", true),
             closedProfile = o.optBoolean("closedProfile", false),
+            personalRecs = o.optBoolean("personalRecs", true),
         )
 
         private fun audience(name: String) = Audience.entries.firstOrNull { it.name == name } ?: Audience.Everyone

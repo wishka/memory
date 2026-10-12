@@ -394,10 +394,19 @@ struct Privacy: Equatable, Codable {
     /// Закрытый профиль: записи и чек-ины видят только подписчики, а
     /// подписаться можно лишь по заявке. Необязательное — для старых сохранений.
     var closedProfileFlag: Bool? = nil
+    /// Персональные рекомендации на полке (по оценкам и вкусу похожих
+    /// людей). Необязательное — для старых сохранений; снаружи — personalRecs.
+    var personalRecsFlag: Bool? = nil
 
     var closedProfile: Bool {
         get { closedProfileFlag ?? false }
         set { closedProfileFlag = newValue }
+    }
+
+    /// Выключены — полка ничего не подбирает (149-ФЗ: отказ от рекомендаций).
+    var personalRecs: Bool {
+        get { personalRecsFlag ?? true }
+        set { personalRecsFlag = newValue }
     }
 }
 

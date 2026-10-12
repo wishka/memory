@@ -77,8 +77,19 @@ struct ShelfScreen: View {
     @ViewBuilder
     private func forYou(_ state: UiState, _ shelf: Shelf) -> some View {
         RunPlanCard(plan: state.runPlan)
-        let films = state.recommendations("film")
-        let books = state.recommendations("book")
+        if !state.privacy.personalRecs {
+            // Персональные рекомендации выключены в «Приватности» — ни подборки, ни «Похожего вкуса»
+            ShelfHint(text: t("Персональные рекомендации выключены в «Настройках → Приватность». Включите их, чтобы полка советовала фильмы и книги."))
+            RecsHow(model: model)
+        } else {
+            recommended(state, shelf)
+        }
+    }
+
+    @ViewBuilder
+    private func recommended(_ state: UiState, _ shelf: Shelf) -> some View {
+        let films = state.recommendations("film", shelf: shelf)
+        let books = state.recommendations("book", shelf: shelf)
         if shelf.rated.count < 3 {
             ShelfHint(text: t("Оцените ещё пару фильмов или книг — подборка станет точнее. Мы советуем то, что любят люди с похожим вкусом."))
         }
@@ -93,6 +104,9 @@ struct ShelfScreen: View {
             ForEach(books, id: \.key) { r in
                 RecCard(model: model, rec: r) { rating = RateTarget(activity: "book", subject: r.subject) }
             }
+        }
+        if !films.isEmpty || !books.isEmpty {
+            RecsHow(model: model)
         }
         // С кем совпадает вкус
         let mine = shelf.rated
@@ -483,6 +497,20 @@ private struct ShelfCaption: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// «Как работают рекомендации» — правила рекомендаций (149-ФЗ, ст. 10.2-2).
+private struct RecsHow: View {
+    let model: AppModel
+
+    var body: some View {
+        Button { model.openLegal(.recommendations) } label: {
+            Text(t("Как работают рекомендации")).textStyle(.bodySmall, Palette.lilac)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

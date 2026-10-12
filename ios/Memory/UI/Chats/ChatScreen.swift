@@ -73,7 +73,8 @@ struct ChatScreen: View {
                                 },
                                 onVote: { poll, i in model.voteMessage(chat.id, poll.id, i) },
                                 onClosePoll: { poll in model.closeMessagePoll(chat.id, poll.id) },
-                                onPlace: { viewingPlace = $0 }
+                                onPlace: { viewingPlace = $0 },
+                                onReport: { model.reportMessage(chat.id, message) }
                             )
                             .id(message.id)
                         }
@@ -307,6 +308,8 @@ private struct Bubble: View {
     let onVote: (Poll, Int) -> Void
     let onClosePoll: (Poll) -> Void
     let onPlace: (SharedPlace) -> Void
+    /// Пожаловаться на сообщение собеседника (на свои — нет).
+    var onReport: () -> Void = {}
     @State private var menu = false
 
     var body: some View {
@@ -413,13 +416,17 @@ private struct Bubble: View {
     }
 
     private var menuActions: [GlassAction] {
-        [
+        var list = [
             GlassAction(icon: .reply, title: t("Ответить"), action: onReply),
             GlassAction(icon: .forward, title: t("Переслать"), action: onForward),
             GlassAction(icon: .pushpin, title: pinned ? t("Открепить") : t("Закрепить"), action: onPin),
             GlassAction(icon: .trash, title: t("Удалить у себя"), destructive: true) { onDelete(false) },
             GlassAction(icon: .trash, title: t("Удалить у всех"), destructive: true) { onDelete(true) },
         ]
+        if !message.fromMe {
+            list.append(GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true, action: onReport))
+        }
+        return list
     }
 }
 

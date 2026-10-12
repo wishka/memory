@@ -35,6 +35,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.auth.LocalAuth
 import ru.wishka.memory.ui.components.GlassCard
+import ru.wishka.memory.ui.components.ConsentChecks
+import ru.wishka.memory.ui.components.ConsentState
+import ru.wishka.memory.ui.components.LegalDocViewer
+import ru.wishka.memory.ui.components.LegalLinks
+import ru.wishka.memory.data.LegalDoc
 import ru.wishka.memory.ui.components.GlassField
 import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.glass
@@ -57,6 +62,9 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = 
     // сохранённом состоянии активности
     var password by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("") }
+    // Возраст, соглашение и согласие на обработку — три отдельные галочки
+    val consent = remember { ConsentState() }
+    var openDoc by remember { mutableStateOf<LegalDoc?>(null) }
     val density = LocalDensity.current.density
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -120,16 +128,18 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = 
                     Field(password, { password = it.take(64) }, t("Пароль"), password = true)
                     if (registering) Field(repeat, { repeat = it.take(64) }, t("Пароль ещё раз"), password = true)
 
+                    if (registering) ConsentChecks(consent) { openDoc = it }
+
                     state.error?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                     }
 
                     GlowButton(
                         if (state.busy) t("Подождите…") else if (registering) t("Создать аккаунт") else t("Войти"),
-                        enabled = !state.busy && login.isNotBlank() && password.isNotEmpty(),
+                        enabled = !state.busy && login.isNotBlank() && password.isNotEmpty() && (!registering || consent.all),
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
-                            if (registering) vm.register(login, name, password, repeat) else vm.login(login, password)
+                            if (registering) vm.register(login, name, password, repeat, consented = consent.all) else vm.login(login, password)
                         },
                     )
 
@@ -156,8 +166,11 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = 
                 color = Palette.Mist,
                 textAlign = TextAlign.Center,
             )
+            Spacer(Modifier.height(8.dp))
+            LegalLinks(listOf(LegalDoc.Terms, LegalDoc.Privacy), onOpen = { openDoc = it })
         }
     }
+    openDoc?.let { LegalDocViewer(it) { openDoc = null } }
 }
 
 @Composable

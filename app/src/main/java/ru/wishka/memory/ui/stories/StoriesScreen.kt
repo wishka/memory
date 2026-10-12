@@ -135,6 +135,7 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                 onLike = { vm.toggleLike(post.id) },
                 onVote = { vm.votePost(post.id, it) },
                 onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
+                onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
                 following = if (post.author.id == state.me.id) null else true,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },

@@ -13,6 +13,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import ru.wishka.memory.data.Chat
+import ru.wishka.memory.data.LegalDoc
+import ru.wishka.memory.data.Report
+import ru.wishka.memory.data.ReportKind
+import ru.wishka.memory.data.ReportReason
+import ru.wishka.memory.data.ReportTarget
 import ru.wishka.memory.data.Demo
 import ru.wishka.memory.data.GROUP_TOPICS
 import ru.wishka.memory.data.Group
@@ -96,6 +101,7 @@ enum class SettingsPage(private val ru: String) {
     Growth("Друзья и идеи"),
     Sounds("Звуки"),
     Wallpaper("Фон переписок"),
+    Legal("Документы"),
     ;
 
     val title: String get() = t(ru)
@@ -217,12 +223,20 @@ data class UiState(
     val backdrop: Backdrop = Backdrop.DEFAULT,
     /** Недавние гифки — первыми в выборе. */
     val recentGifs: List<Attachment> = emptyList(),
+    /** Жалобы, которые ждут отправки модераторам (с сервером — уйдут им). */
+    val reports: List<Report> = emptyList(),
+    /** На что сейчас жалуются: открыт выбор причины. */
+    val reporting: ReportTarget? = null,
+    /** Открытый документ: соглашение, политика, правила… */
+    val legalDoc: LegalDoc? = null,
 ) {
     /** Полка — собирается сама из чек-инов и отметок. */
     val shelf: Shelf get() = Shelf.build(posts.datedCheckIns(me.id), shelfMarks)
     val myCheckIns: List<Dated> get() = posts.datedCheckIns(me.id)
     /** Подборка: kind — «film» или «book». */
     fun recommendations(kind: String, limit: Int = 6, shelf: Shelf = this.shelf): List<Recommendation> {
+        // Персональные рекомендации выключены в «Приватности» — ничего не подбираем
+        if (!privacy.personalRecs) return emptyList()
         return recommend(shelf.rated, shelf.keys + dismissedRecs, DemoTaste.ratings.filterKeys { it !in blocked }, kind, limit)
     }
     val runPlan: RunPlan get() = ru.wishka.memory.data.runPlan(myCheckIns)
@@ -1262,6 +1276,70 @@ class AppViewModel(
     private fun backdropPhotos(s: UiState): Set<String> =
         (listOf(s.backdrop) + s.chats.mapNotNull { it.backdrop }).map { it.photo }.filter { it.isNotEmpty() }.toSet()
 
+    // ==================== ЖАЛОБЫ И ДОКУМЕНТЫ ====================
+
+    /** Открыть выбор причины жалобы. */
+    fun startReport(target: ReportTarget) {
+        _state.update { it.copy(reporting = target) }
+    }
+
+    fun reportPost(post: Post) = startReport(ReportTarget(ReportKind.Post, post.id, post.author.id, post.author.name, preview = post.text.take(80)))
+
+    fun reportPrism(prism: Prism) = startReport(ReportTarget(ReportKind.Prism, prism.id, prism.author.id, prism.author.name, preview = prism.caption.take(80)))
+
+    fun reportComment(comment: Comment) = startReport(ReportTarget(ReportKind.Comment, comment.id, comment.author.id, comment.author.name, preview = comment.text.take(80)))
+
+    fun reportMessage(chatId: Int, message: Message) {
+        val peer = _state.value.chats.firstOrNull { it.id == chatId }?.peer ?: return
+        if (message.fromMe) return
+        startReport(ReportTarget(ReportKind.Message, message.id, peer.id, peer.name, chatId, messagePreview(message).take(80)))
+    }
+
+    fun reportPerson(user: User) = startReport(ReportTarget(ReportKind.Person, user.id.toLong(), user.id, user.name, preview = "@" + user.handle))
+
+    fun cancelReport() {
+        _state.update { it.copy(reporting = null) }
+    }
+
+    /**
+     * Жалоба: в очередь модераторам и сразу скрыть у себя то, на что
+     * пожаловались. block — заодно заблокировать автора.
+     */
+    fun report(target: ReportTarget, reason: ReportReason, note: String = "", block: Boolean = false) {
+        val entry = Report(nextId++, target, reason, note.trim().take(500), clock())
+        _state.update { s ->
+            val next = s.copy(reports = (s.reports + entry).takeLast(200), reporting = null)
+            when (target.kind) {
+                ReportKind.Comment -> next.copy(reportedComments = next.reportedComments + target.id)
+                ReportKind.Post -> next.copy(
+                    posts = next.posts.filterNot { it.id == target.id },
+                    groups = next.groups.map { g -> g.copy(posts = g.posts.filterNot { it.id == target.id }) },
+                    commentsPostId = if (next.commentsPostId == target.id) null else next.commentsPostId,
+                )
+                ReportKind.Prism -> next.copy(
+                    prisms = next.prisms.filterNot { it.id == target.id },
+                    commentsPrismId = if (next.commentsPrismId == target.id) null else next.commentsPrismId,
+                )
+                ReportKind.Message -> next.copy(chats = next.chats.map { c ->
+                    if (c.id != target.chatId) c
+                    else c.copy(messages = c.messages.filterNot { it.id == target.id }, pinnedId = if (c.pinnedId == target.id) null else c.pinnedId)
+                })
+                ReportKind.Person -> next
+            }
+        }
+        if (block && target.authorId != 0 && target.authorId != _state.value.me.id) {
+            block(target.authorId)
+        }
+    }
+
+    fun openLegal(doc: LegalDoc) {
+        _state.update { it.copy(legalDoc = doc) }
+    }
+
+    fun closeLegal() {
+        _state.update { it.copy(legalDoc = null) }
+    }
+
     /** Своё фото фона, которое больше нигде не стоит, — удалить копию. */
     private fun dropBackdropPhotos(before: Set<String>) {
         val now = backdropPhotos(_state.value)
@@ -1888,7 +1966,7 @@ class AppViewModel(
             it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins,
             it.checkInTemplates, it.followRequests, it.approvedFollowers, it.sentRequests, it.recapNotified,
             it.together, it.shelfMarks, it.dismissedRecs, it.growth, it.invitedBy, it.memorySeen,
-            it.stickerPacks, it.backdrop, it.recentGifs,
+            it.stickerPacks, it.backdrop, it.recentGifs, it.reports,
         )
     }
 
@@ -1928,6 +2006,7 @@ class AppViewModel(
                 stickerPacks = snapshot.stickerPacks,
                 backdrop = snapshot.backdrop,
                 recentGifs = snapshot.recentGifs,
+                reports = snapshot.reports,
             ).withMe(s.me)
         }
     }
@@ -1992,6 +2071,7 @@ data class Snapshot(
     val stickerPacks: List<StickerPack> = emptyList(),
     val backdrop: Backdrop = Backdrop.DEFAULT,
     val recentGifs: List<Attachment> = emptyList(),
+    val reports: List<Report> = emptyList(),
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */
