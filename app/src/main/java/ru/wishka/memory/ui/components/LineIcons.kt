@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award }
+enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic }
 
 @Composable
 fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -214,6 +214,15 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                     cornerRadius = CornerRadius(s * 0.12f, s * 0.12f), style = stroke)
                 drawRoundRect(color, topLeft = Offset(s * 0.46f, s * 0.38f), size = Size(s * 0.42f, s * 0.24f),
                     cornerRadius = CornerRadius(s * 0.12f, s * 0.12f), style = stroke)
+            }
+            LineIcon.Mic -> {
+                // Микрофон: капсула, дуга-держатель и ножка
+                drawRoundRect(color, topLeft = Offset(s * 0.38f, s * 0.12f), size = Size(s * 0.24f, s * 0.44f),
+                    cornerRadius = CornerRadius(s * 0.12f, s * 0.12f), style = stroke)
+                drawArc(color, startAngle = 0f, sweepAngle = 180f, useCenter = false,
+                    topLeft = Offset(s * 0.26f, s * 0.24f), size = Size(s * 0.48f, s * 0.48f), style = stroke)
+                drawLine(color, Offset(s * 0.5f, s * 0.72f), Offset(s * 0.5f, s * 0.86f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(s * 0.36f, s * 0.86f), Offset(s * 0.64f, s * 0.86f), stroke.width, StrokeCap.Round)
             }
             LineIcon.Music -> {
                 drawLine(color, Offset(s * 0.4f, s * 0.7f), Offset(s * 0.4f, s * 0.22f), stroke.width, StrokeCap.Round)

@@ -82,6 +82,9 @@ object MediaFiles {
         }
     }
 
+    /** Новый пустой файл в папке вложений — для записи голосового или картинки итогов. */
+    fun newFile(context: Context, ext: String): File = File(dir(context), "${UUID.randomUUID()}.$ext")
+
     /**
      * Пустой файл для съёмки камерой и адрес, по которому камера его
      * запишет. После съёмки — capturedAttachment().

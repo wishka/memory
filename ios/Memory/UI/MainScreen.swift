@@ -50,6 +50,15 @@ struct MainScreen: View {
                 .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
+        // Уведомление, пока приложение открыто, — плашкой сверху
+        .overlay(alignment: .top) {
+            if let nudge = state.banner {
+                NudgeBanner(nudge: nudge, onOpen: { model.openNudge(nudge) }, onDismiss: { model.dismissBanner() })
+                    .id(nudge.id)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: state.banner?.id)
         // Обсуждение записи или PRISM — шторкой поверх любого экрана
         .sheet(isPresented: commentsShown) { comments }
         // Фото или видео — на весь экран
@@ -105,22 +114,24 @@ struct MainScreen: View {
                 total: post.comments,
                 comments: post.commentList.filter { !state.isBlocked($0.author.id) && !state.reportedComments.contains($0.id) },
                 myId: state.me.id,
-                onSend: { model.addComment(id, $0, replyTo: $1) },
+                onSend: { model.addComment(id, $0, replyTo: $1, sticker: $2) },
                 onDelete: { model.deleteComment(id, $0) },
                 onReport: { model.reportComment($0) },
                 onLike: { model.toggleCommentLike(id, $0) },
-                onAuthor: openAuthor
+                onAuthor: openAuthor,
+                stickers: state.stickers
             )
         } else if let id = state.commentsPrismId, let prism = state.findPrism(id) {
             CommentsSheet(
                 total: prism.comments,
                 comments: prism.commentList.filter { !state.isBlocked($0.author.id) && !state.reportedComments.contains($0.id) },
                 myId: state.me.id,
-                onSend: { model.addPrismComment(id, $0, replyTo: $1) },
+                onSend: { model.addPrismComment(id, $0, replyTo: $1, sticker: $2) },
                 onDelete: { model.deletePrismComment(id, $0) },
                 onReport: { model.reportComment($0) },
                 onLike: { model.togglePrismCommentLike(id, $0) },
-                onAuthor: openAuthor
+                onAuthor: openAuthor,
+                stickers: state.stickers
             )
         }
     }
@@ -140,6 +151,8 @@ struct MainScreen: View {
                 MusicScreen(model: model)
             } else if model.state.profileSection == .stickers {
                 StickerStudioScreen(model: model)
+            } else if model.state.profileSection == .recap {
+                RecapScreen(model: model)
             } else if let section = model.state.profileSection {
                 ProfileSectionScreen(model: model, section: section)
             } else {

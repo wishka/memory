@@ -24,6 +24,8 @@ enum ProfileSection: String, CaseIterable {
     case saved = "Сохранённое"
     case music = "Моя музыка"
     case stickers = "Студия"
+    case recap = "Итоги"
+    case requests = "Заявки на подписку"
 
     var title: String { t(rawValue) }
 }
@@ -91,6 +93,22 @@ struct UiState: Equatable {
     var openGroupId: Int? = nil
     /// Настройки открытой группы — за шестерёнкой.
     var groupSettingsOpen = false
+    /// Свои чек-ины: шаблоны, которые человек создал сам.
+    var checkInTemplates: [CheckInTemplate] = []
+    /// Заявки на подписку к вам (закрытый профиль) — новые первыми.
+    var followRequests: [Int] = []
+    /// Кого вы одобрили: подписчики сверх демо-списка.
+    var approvedFollowers: Set<Int> = []
+    /// Ваши заявки к закрытым профилям, пока их не приняли.
+    var sentRequests: Set<Int> = []
+    /// За какой период уже напомнили об Итогах: «2026-09», «2026».
+    var recapNotified: Set<String> = []
+    /// Уведомление поверх приложения, пока оно открыто; nil — нет.
+    var banner: Nudge? = nil
+    /// Итоги: открыт месяц или год.
+    var recapPeriod: RecapPeriod = .month
+    /// Итоги: на сколько месяцев или лет назад от текущего.
+    var recapBack = 0
 
     var openPerson: User? { openPersonId.flatMap { Demo.person($0) } }
     var openGroup: MemoryGroup? { groups.first { $0.id == openGroupId } }
@@ -101,8 +119,17 @@ struct UiState: Equatable {
     var unreadTotal: Int { chats.filter { !$0.muted }.reduce(0) { $0 + $1.unread } }
     /// Список чатов: закреплённые сверху, остальные — по последнему сообщению.
     var chatList: [Chat] { chats.filter(\.onTop) + chats.filter { !$0.onTop } }
-    /// Лента без записей тех, кто в чёрном списке.
-    var feed: [Post] { posts.filter { !blocked.contains($0.author.id) } }
+    /// Лента без записей тех, кто в чёрном списке, и без записей закрытых
+    /// профилей, на которые вы не подписаны.
+    var feed: [Post] { posts.filter { !blocked.contains($0.author.id) && canSee($0.author) } }
+    /// Записи человека видны: профиль открыт, вы подписаны или это вы.
+    /// Закрытость берётся из демо-данных: в сохранённых записях автор может быть старым.
+    func canSee(_ user: User) -> Bool {
+        let closed = Demo.person(user.id)?.closed ?? user.closed
+        return !closed || following.contains(user.id) || user.id == me.id
+    }
+    /// Люди, приславшие заявку на подписку.
+    var requestPeople: [User] { followRequests.compactMap { Demo.person($0) } }
     var blockedPeople: [User] { Demo.people.filter { blocked.contains($0.id) } }
     func isBlocked(_ userId: Int) -> Bool { blocked.contains(userId) }
     /// Подписчики другого человека. Сервера нет, поэтому видны только
@@ -123,11 +150,13 @@ struct UiState: Equatable {
         return you + known
     }
     var myPosts: [Post] { posts.filter { $0.author.id == me.id } }
-    /// «Истории»: записи тех, на кого подписан, — новые сверху, как и в ленте.
-    var stories: [Post] { posts.filter { following.contains($0.author.id) && !blocked.contains($0.author.id) } }
+    /// «Истории»: свои записи и записи тех, на кого подписан, — новые сверху.
+    var stories: [Post] {
+        posts.filter { (following.contains($0.author.id) || $0.author.id == me.id) && !blocked.contains($0.author.id) }
+    }
     var followedPeople: [User] { Demo.people.filter { following.contains($0.id) } }
-    /// Кто подписан на вас (пока — демо-люди).
-    var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) } }
+    /// Кто подписан на вас: демо-люди и те, чьи заявки вы одобрили.
+    var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) || approvedFollowers.contains($0.id) } }
     /// «Сохранённое» в профиле: PRISM в закладках.
     var savedPrisms: [Prism] { prisms.filter { $0.saved } }
     func track(_ id: String) -> MusicTrack? { tracks.first { $0.id == id } }
@@ -191,6 +220,11 @@ struct Snapshot: Codable, Equatable {
     var reportedComments: Set<Int64>? = nil
     var stickers: [Sticker]? = nil
     var profilePins: [Int64]? = nil
+    var checkInTemplates: [CheckInTemplate]? = nil
+    var followRequests: [Int]? = nil
+    var approvedFollowers: Set<Int>? = nil
+    var sentRequests: Set<Int>? = nil
+    var recapNotified: Set<String>? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -246,8 +280,14 @@ final class AppModel {
 
     /// Раздел профиля: нажатие на «записи», «подписчики», «подписки», «группы» или «Сохранённое».
     func openProfileSection(_ section: ProfileSection) {
+        // Поверх может быть переписка, группа или настройки — уходят, иначе раздел не виден
         state.tab = .profile
         state.openPersonId = nil
+        state.personSection = nil
+        state.settingsPage = nil
+        state.openChatId = nil
+        state.openGroupId = nil
+        state.groupSettingsOpen = false
         state.profileSection = section
     }
 
@@ -326,21 +366,45 @@ final class AppModel {
     }
 
     /// Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем.
-    func publish(_ text: String, media: [Attachment] = []) {
+    func publish(_ text: String, media: [Attachment] = [], checkIn: CheckIn? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty && media.isEmpty { return }
+        if trimmed.isEmpty && media.isEmpty && checkIn == nil { return }
         let post = Post(
             id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
-            media: Array(media.prefix(Self.maxMedia)), createdAt: clock()
+            media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn
         )
         state.posts.insert(post, at: 0)
     }
 
+    // MARK: - Чек-ины
+
+    /// Свой чек-ин. nil — создан; иначе — что не так.
+    @discardableResult
+    func createCheckInTemplate(emoji: String, title: String, unit: String, hint: String) -> String? {
+        let name = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        if name.isEmpty { return t("Назовите чек-ин") }
+        let exists = state.checkInTemplates.contains { $0.title.lowercased() == name.lowercased() }
+            || checkInActivities.contains { t($0.title).lowercased() == name.lowercased() }
+        if exists { return t("Такой чек-ин уже есть") }
+        let template = CheckInTemplate(
+            id: "custom-" + String(UUID().uuidString.prefix(8)).lowercased(),
+            emoji: emoji.isEmpty ? "⭐" : emoji, title: name,
+            unit: String(unit.trimmingCharacters(in: .whitespaces).prefix(12)),
+            hint: String(hint.trimmingCharacters(in: .whitespaces).prefix(60))
+        )
+        state.checkInTemplates.insert(template, at: 0)
+        return nil
+    }
+
+    func deleteCheckInTemplate(_ id: String) {
+        state.checkInTemplates.removeAll { $0.id == id }
+    }
+
     /// Комментарий к записи в ленте или в группе.
-    func addComment(_ postId: Int64, _ text: String, replyTo: String? = nil) {
+    func addComment(_ postId: Int64, _ text: String, replyTo: String? = nil, sticker: Attachment? = nil) {
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
-        if trimmed.isEmpty { return }
-        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo)
+        if trimmed.isEmpty && sticker == nil { return }
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo, sticker: sticker)
         updatePosts(postId) { p in
             p.comments += 1
             p.commentList.append(comment)
@@ -411,14 +475,69 @@ final class AppModel {
         state.viewing = nil
     }
 
-    /// Подписаться или отписаться: записи человека появятся в «Историях» или уйдут оттуда.
+    /// Подписаться или отписаться: записи человека появятся в «Историях» или
+    /// уйдут оттуда. На закрытый профиль уходит заявка; повторное нажатие —
+    /// отозвать её. В демо заявку принимают через несколько секунд.
     func toggleFollow(_ userId: Int) {
         if userId == state.me.id { return }
+        if let person = Demo.person(userId), person.closed, !state.following.contains(userId) {
+            if state.sentRequests.contains(userId) {
+                acceptTasks.removeValue(forKey: userId)?.cancel()
+                state.sentRequests.remove(userId)
+                return
+            }
+            state.sentRequests.insert(userId)
+            scheduleAcceptance(userId)
+            return
+        }
         if state.following.contains(userId) {
             state.following.remove(userId)
         } else {
             state.following.insert(userId)
         }
+    }
+
+    /// Таймеры демо-ответа на заявки: один на человека.
+    @ObservationIgnored private var acceptTasks: [Int: Task<Void, Never>] = [:]
+
+    /// В демо закрытый профиль принимает заявку через 12–30 секунд.
+    private func scheduleAcceptance(_ userId: Int) {
+        guard demoReplies else { return }
+        acceptTasks.removeValue(forKey: userId)?.cancel()
+        acceptTasks[userId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64.random(in: 12_000_000_000...30_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.acceptTasks[userId] = nil
+            self.acceptSentRequest(userId)
+        }
+    }
+
+    /// Закрытый профиль принял вашу заявку: вы подписаны, записи видны.
+    func acceptSentRequest(_ userId: Int) {
+        guard state.sentRequests.contains(userId) else { return }
+        state.sentRequests.remove(userId)
+        state.following.insert(userId)
+        if let person = Demo.person(userId) { notify(Nudges.requestAccepted(person)) }
+    }
+
+    /// Одобрить заявку: человек становится подписчиком.
+    func approveRequest(_ userId: Int) {
+        state.followRequests.removeAll { $0 == userId }
+        state.approvedFollowers.insert(userId)
+    }
+
+    /// Отклонить заявку: человек просто останется без доступа.
+    func declineRequest(_ userId: Int) {
+        state.followRequests.removeAll { $0 == userId }
+    }
+
+    /// Новая заявка к вам — когда профиль закрыт.
+    func receiveFollowRequest(_ userId: Int) {
+        guard let person = Demo.person(userId), state.privacy.closedProfile,
+              !state.followRequests.contains(userId), !state.blocked.contains(userId),
+              !state.followers.contains(where: { $0.id == userId }) else { return }
+        state.followRequests.insert(userId, at: 0)
+        notify(Nudges.followRequest(person, common: person.interests.filter { state.me.interests.contains($0) }))
     }
 
     // MARK: - Чаты
@@ -472,6 +591,10 @@ final class AppModel {
             let reply = Demo.replies[self.replyIndex % Demo.replies.count]
             self.replyIndex += 1
             self.append(chatId, Message(id: self.newId(), fromMe: false, text: reply, time: Self.now()))
+            // Открытая переписка — ответ и так на экране
+            if let chat = self.state.chats.first(where: { $0.id == chatId }), !chat.muted, self.state.openChatId != chatId {
+                self.notify(Nudges.message(chat.peer, reply, chatId: chatId))
+            }
         }
     }
 
@@ -607,10 +730,10 @@ final class AppModel {
         updatePrism(prismId) { $0.saved.toggle() }
     }
 
-    func addPrismComment(_ prismId: Int64, _ text: String, replyTo: String? = nil) {
+    func addPrismComment(_ prismId: Int64, _ text: String, replyTo: String? = nil, sticker: Attachment? = nil) {
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
-        if trimmed.isEmpty { return }
-        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo)
+        if trimmed.isEmpty && sticker == nil { return }
+        let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo, sticker: sticker)
         updatePrism(prismId) { p in
             p.comments += 1
             p.commentList.append(comment)
@@ -942,6 +1065,10 @@ final class AppModel {
 
     /// После выхода состояние сбрасывается: следующий вошедший не увидит чужие черновики и переписку.
     func reset() {
+        lifeTask?.cancel()
+        lifeTask = nil
+        acceptTasks.values.forEach { $0.cancel() }
+        acceptTasks = [:]
         state = UiState()
     }
 
@@ -977,7 +1104,12 @@ final class AppModel {
         state.notifications = notifications
     }
 
+    /// Открыли профиль — ждущие заявки одобряются сами: подписаться может любой.
     func setPrivacy(_ privacy: Privacy) {
+        if !privacy.closedProfile && !state.followRequests.isEmpty {
+            state.approvedFollowers.formUnion(state.followRequests)
+            state.followRequests = []
+        }
         state.privacy = privacy
     }
 
@@ -998,6 +1130,218 @@ final class AppModel {
         state.applyMe(me)
     }
 
+    // MARK: - Уведомления и итоги
+
+    /// Куда уходят персональные уведомления. MemoryApp показывает их
+    /// системным уведомлением, когда приложение свёрнуто, а пока оно
+    /// открыто — плашкой сверху (state.banner).
+    @ObservationIgnored var onNudge: ((Nudge) -> Void)?
+
+    /// Отправить уведомление, если такой раздел не выключен в настройках.
+    func notify(_ nudge: Nudge) {
+        guard Nudges.allowed(nudge, state.notifications) else { return }
+        if let onNudge { onNudge(nudge) } else { state.banner = nudge }
+    }
+
+    func showBanner(_ nudge: Nudge) { state.banner = nudge }
+
+    func dismissBanner() { state.banner = nil }
+
+    /// Нажатие на уведомление: туда, о чём оно.
+    func openNudge(_ nudge: Nudge) {
+        dismissBanner()
+        switch nudge.target {
+        case .post:
+            if let post = state.findPost(nudge.targetId), post.author.id == state.me.id {
+                openProfileSection(.posts)
+            } else {
+                selectTab(.feed)
+            }
+        case .group:
+            selectTab(.groups)
+            openGroup(Int(nudge.targetId))
+        case .person:
+            openPerson(Int(nudge.targetId))
+        case .chat:
+            if state.chats.contains(where: { $0.id == Int(nudge.targetId) }) { openChat(Int(nudge.targetId)) } else { selectTab(.chats) }
+        case .recap:
+            // targetId — год × 100 + месяц; месяц 0 — итоги года
+            let year = Int(nudge.targetId / 100)
+            let month = Int(nudge.targetId % 100)
+            let now = Calendar.current.dateComponents([.year, .month], from: Date())
+            let thisYear = now.year ?? year
+            let thisMonth = now.month ?? month
+            if year == 0 {
+                openRecap(.month)
+            } else if month == 0 {
+                openRecap(.year, back: max(0, thisYear - year))
+            } else {
+                openRecap(.month, back: max(0, (thisYear * 12 + thisMonth) - (year * 12 + month)))
+            }
+        case .requests:
+            openProfileSection(.requests)
+        }
+    }
+
+    /// Итоги месяца или года; back — на сколько периодов назад от текущего.
+    func openRecap(_ period: RecapPeriod, back: Int = 0) {
+        openProfileSection(.recap)
+        state.recapPeriod = period
+        state.recapBack = back
+    }
+
+    func setRecapPeriod(_ period: RecapPeriod) {
+        state.recapPeriod = period
+        state.recapBack = 0
+    }
+
+    func setRecapBack(_ back: Int) { state.recapBack = max(0, back) }
+
+    /// Итоги за период.
+    func recap(_ period: RecapPeriod, year: Int, month: Int) -> Recap {
+        Recap.compute(me: state.me, posts: state.posts, prisms: state.prisms, period: period, year: year, month: month)
+    }
+
+    /// В начале месяца — уведомление об итогах прошлого (если было что
+    /// считать), в январе — ещё и об итогах года. Один раз на период.
+    func checkRecapReady(today: Date = Date()) {
+        let previous = Recap.previousMonth(today)
+        var list = [recap(.month, year: previous.year, month: previous.month)]
+        let c = Calendar.current.dateComponents([.year, .month], from: today)
+        if c.month == 1 { list.append(recap(.year, year: (c.year ?? 2026) - 1, month: 0)) }
+        for r in list where !state.recapNotified.contains(r.key) && !r.empty {
+            state.recapNotified.insert(r.key)
+            notify(Nudges.recap(r))
+        }
+    }
+
+    @ObservationIgnored private var lifeTask: Task<Void, Never>?
+
+    /// Жизнь вокруг, пока нет сервера: друзья отмечают чек-ины, в группы
+    /// приходят люди, вашим записям ставят «нравится», при закрытом
+    /// профиле приходят заявки. Каждое событие — с персональным уведомлением.
+    func startDemoLife() {
+        guard lifeTask == nil else { return }
+        // Заявки, отправленные до перезапуска, тоже дождутся ответа
+        state.sentRequests.forEach { scheduleAcceptance($0) }
+        lifeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            while !Task.isCancelled {
+                guard let self else { return }
+                var rng = SystemRandomNumberGenerator()
+                self.demoEvent(using: &rng)
+                try? await Task.sleep(nanoseconds: UInt64.random(in: 70_000_000_000...150_000_000_000))
+            }
+        }
+    }
+
+    /// Всё, что вы сами писали, — чтобы понять, что вы обсуждали.
+    func myTexts() -> [String] {
+        let meId = state.me.id
+        let all: [Post] = state.posts + state.groups.flatMap(\.posts)
+        var texts: [String] = []
+        for post in all {
+            if post.author.id == meId { texts.append(post.text) }
+            for c in post.commentList where c.author.id == meId { texts.append(c.text) }
+        }
+        for prism in state.prisms {
+            for c in prism.commentList where c.author.id == meId { texts.append(c.text) }
+        }
+        for chat in state.chats {
+            for m in chat.messages where m.fromMe { texts.append(m.text) }
+        }
+        return texts
+    }
+
+    /// Ваши километры за текущий месяц — для «не отставайте».
+    private func myKmThisMonth() -> Double {
+        let now = Calendar.current.dateComponents([.year, .month], from: clock())
+        return state.posts.filter { p in
+            guard p.author.id == state.me.id, let d = p.createdAt else { return false }
+            let c = Calendar.current.dateComponents([.year, .month], from: d)
+            return c.year == now.year && c.month == now.month
+        }
+        .compactMap(\.checkIn).filter { isKilometers($0.unit) }.reduce(0) { $0 + $1.amount }
+    }
+
+    /// Одно событие демо-жизни. Отдельно от цикла — чтобы проверять в тестах.
+    func demoEvent<G: RandomNumberGenerator>(using rng: inout G) {
+        let friends = state.followedPeople.filter { !state.blocked.contains($0.id) }
+        let joined = state.groups.filter { $0.joined && !$0.muted }
+        let mine = state.myPosts
+        let requesters = Demo.people.filter { p in
+            !state.blocked.contains(p.id) && !state.followRequests.contains(p.id) && !state.followers.contains { $0.id == p.id }
+        }
+        var options: [Int] = []
+        if !friends.isEmpty { options += [0, 0, 0, 0] }
+        if !joined.isEmpty { options += [1, 1] }
+        if !mine.isEmpty { options += [2, 2] }
+        if state.privacy.closedProfile && !requesters.isEmpty { options.append(3) }
+        guard let pick = options.randomElement(using: &rng) else { return }
+        switch pick {
+        case 0:
+            friendCheckIn(friends.randomElement(using: &rng)!, using: &rng)
+        case 1:
+            let group = joined.randomElement(using: &rng)!
+            let name = Demo.newcomers.randomElement(using: &rng)!
+            let person = User(id: 500 + Int.random(in: 0..<1000, using: &rng), name: name,
+                              handle: name.lowercased().replacingOccurrences(of: " ", with: "."))
+            state.groups = state.groups.map { g in
+                var g = g
+                if g.id == group.id { g.members += 1 }
+                return g
+            }
+            notify(Nudges.groupMember(group, person))
+        case 2:
+            let post = mine.randomElement(using: &rng)!
+            let fans = Demo.people.filter { !state.blocked.contains($0.id) }
+            let fan = fans.randomElement(using: &rng)!
+            state.posts = state.posts.map { p in
+                var p = p
+                if p.id == post.id { p.likes += 1 }
+                return p
+            }
+            notify(Nudges.liked(fan, post))
+        default:
+            receiveFollowRequest(requesters.randomElement(using: &rng)!.id)
+        }
+    }
+
+    /// Друг отметил чек-ин: запись в ленте и уведомление — с тем, что вы обсуждали.
+    private func friendCheckIn<G: RandomNumberGenerator>(_ friend: User, using rng: inout G) {
+        let texts = myTexts()
+        let kinds = ["movie", "movie", "series", "book", "run", "bike", "walk", "coffee", "place", "concert"]
+        let kind = kinds.randomElement(using: &rng)!
+        guard let activity = checkInActivities.first(where: { $0.id == kind }) else { return }
+        func pick(_ list: [String]) -> String {
+            // Что вы обсуждали — в приоритете: ради этого и уведомление
+            let talked = list.filter { Nudges.discussed($0, texts) }
+            if !talked.isEmpty && Double.random(in: 0..<1, using: &rng) < 0.75 { return talked.randomElement(using: &rng)! }
+            return list.randomElement(using: &rng)!
+        }
+        let subject: String
+        switch kind {
+        case "movie": subject = pick(Demo.movies)
+        case "series": subject = pick(Demo.series)
+        case "book": subject = pick(Demo.books)
+        case "coffee", "place": subject = pick(Demo.places)
+        case "concert": subject = pick(["Сплин", "Мумий Тролль", "Земфира", "Би-2"])
+        default: subject = pick(["Набережная", "Парк", "Вокруг дома"])
+        }
+        let amount: Double
+        switch kind {
+        case "run": amount = Double(3 + Int.random(in: 0..<10, using: &rng))
+        case "bike": amount = Double(10 + Int.random(in: 0..<30, using: &rng))
+        case "walk": amount = Double(2 + Int.random(in: 0..<8, using: &rng))
+        case "book": amount = Double(20 + Int.random(in: 0..<80, using: &rng))
+        default: amount = 0
+        }
+        let c = activity.checkIn(subject, amount)
+        let id = newId()
+        state.posts.insert(Post(id: id, author: friend, text: "", minutesAgo: 0, likes: Int.random(in: 0..<6, using: &rng), createdAt: clock(), checkIn: c), at: 0)
+        notify(Nudges.friendCheckIn(friend, c, discussed: Nudges.discussed(subject, texts), myKm: myKmThisMonth(), postId: id))
+    }
+
     // MARK: - Сохранение
 
     /// То, что сохраняется на телефоне между запусками (см. StateStore).
@@ -1007,7 +1351,10 @@ final class AppModel {
             following: state.following, notifications: state.notifications.all, nextId: nextId,
             notify: state.notifications, privacy: state.privacy, blocked: state.blocked,
             tracks: state.tracks, playlists: state.playlists, reportedComments: state.reportedComments,
-            stickers: state.stickers, profilePins: state.profilePins
+            stickers: state.stickers, profilePins: state.profilePins,
+            checkInTemplates: state.checkInTemplates, followRequests: state.followRequests,
+            approvedFollowers: state.approvedFollowers, sentRequests: state.sentRequests,
+            recapNotified: state.recapNotified
         )
     }
 
@@ -1034,6 +1381,11 @@ final class AppModel {
         s.reportedComments = snapshot.reportedComments ?? []
         s.stickers = snapshot.stickers ?? []
         s.profilePins = snapshot.profilePins ?? []
+        s.checkInTemplates = snapshot.checkInTemplates ?? []
+        s.followRequests = snapshot.followRequests ?? []
+        s.approvedFollowers = snapshot.approvedFollowers ?? []
+        s.sentRequests = snapshot.sentRequests ?? []
+        s.recapNotified = snapshot.recapNotified ?? []
         s.applyMe(s.me)
         state = s
     }

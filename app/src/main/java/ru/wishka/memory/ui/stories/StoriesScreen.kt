@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.User
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.Tab
+import ru.wishka.memory.ui.ProfileSection
+import ru.wishka.memory.ui.components.PostComposer
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.GlassCard
@@ -87,6 +89,20 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
             }
         }
 
+        // Своя история: те же чек-ины, стикеры и фото, что и в ленте
+        item {
+            PostComposer(
+                stickers = state.stickers,
+                templates = state.checkInTemplates,
+                onPublish = vm::publish,
+                onCreateTemplate = vm::createCheckInTemplate,
+                onDeleteTemplate = vm::deleteCheckInTemplate,
+                onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
+                placeholder = t("Что у вас сейчас?"),
+                hint = t("Видно в Историях и в Ленте"),
+            )
+        }
+
         if (posts.isEmpty()) {
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -114,7 +130,7 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
             PostCard(
                 post,
                 onLike = { vm.toggleLike(post.id) },
-                following = true,
+                following = if (post.author.id == state.me.id) null else true,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
                 onComments = { vm.openComments(post.id) },

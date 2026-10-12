@@ -42,6 +42,19 @@ struct ProfileScreen: View {
                             )
                         } else {
                             Text(me.name.uppercased()).textStyle(.headline).multilineTextAlignment(.center)
+                            if state.privacy.closedProfile {
+                                Button { model.openProfileSection(.requests) } label: {
+                                    HStack(spacing: 6) {
+                                        Glyph(kind: .lock, color: Palette.lilac, size: 16)
+                                        Text(state.followRequests.isEmpty ? t("Закрытый профиль") : tf("Закрытый профиль · заявки: %s", state.followRequests.count))
+                                            .textStyle(.labelLarge, Palette.lilac)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .glass(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
                             if !me.bio.isEmpty {
                                 Text(me.bio).textStyle(.bodySmall, Palette.mist).multilineTextAlignment(.center)
                             }
@@ -64,6 +77,7 @@ struct ProfileScreen: View {
 
                 if !editing {
                     ShowcaseCard(model: model)
+                    RecapCard(model: model)
 
                     GlassCard {
                         VStack(alignment: .leading, spacing: 10) {
@@ -87,6 +101,16 @@ struct ProfileScreen: View {
 
                     GlassCard {
                         VStack(spacing: 0) {
+                            if state.privacy.closedProfile || !state.followRequests.isEmpty {
+                                Button { model.openProfileSection(.requests) } label: {
+                                    SettingRow(icon: .lock, title: t("Заявки на подписку")) {
+                                        Text("\(state.followRequests.count)").textStyle(.bodySmall, state.followRequests.isEmpty ? Palette.mist : Palette.lilac)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                FadeLine().padding(.horizontal, 16)
+                            }
                             Button { model.openProfileSection(.saved) } label: {
                                 SettingRow(icon: .bookmark, title: t("Сохранённое")) {
                                     Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)

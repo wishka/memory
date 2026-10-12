@@ -218,6 +218,12 @@ private struct PrivacyPage: View {
     var body: some View {
         let privacy = model.state.privacy
         SettingsCard {
+            SwitchRow(title: t("Закрытый профиль"), isOn: privacy.closedProfile) { v in update { $0.closedProfile = v } }
+        }
+        Hint(text: privacy.closedProfile
+             ? t("Записи и чек-ины видят только подписчики. Новые подписчики — по заявке: принять или отклонить её можно в профиле.")
+             : t("Закройте профиль, чтобы записи и чек-ины видели только те, чью заявку вы приняли. Нынешние подписчики останутся."))
+        SettingsCard {
             VStack(alignment: .leading, spacing: 16) {
                 AudiencePicker(title: t("Кто видит сведения о себе"), subtitle: t("Город, день рождения, сайт и интересы"),
                                value: privacy.profileInfo) { v in update { $0.profileInfo = v } }
@@ -321,8 +327,13 @@ private struct NotificationsPage: View {
             Divider()
             SwitchRow(title: t("Новые подписчики"), isOn: n.follows, enabled: n.all) { v in update { $0.follows = v } }
             Divider()
-            SwitchRow(title: t("Записи в группах"), isOn: n.groups, enabled: n.all) { v in update { $0.groups = v } }
+            SwitchRow(title: t("Группы: новые записи и участники"), isOn: n.groups, enabled: n.all) { v in update { $0.groups = v } }
+            Divider()
+            SwitchRow(title: t("Друзья: чек-ины, фильмы, книги, тренировки"), isOn: n.friends, enabled: n.all) { v in update { $0.friends = v } }
+            Divider()
+            SwitchRow(title: t("Итоги месяца и года"), isOn: n.recap, enabled: n.all) { v in update { $0.recap = v } }
         }
+        Hint(text: t("Уведомления — про то, что важно именно вам: друг отметил фильм, который вы обсуждали, в вашей группе новый участник, готовы итоги месяца. Никаких «вы давно не заходили»."))
         if mutedGroups.isEmpty && mutedChats.isEmpty {
             Hint(text: t("Отключить уведомления отдельной группы можно на её странице, отдельной переписки — долгим нажатием в «Чатах»."))
         } else {

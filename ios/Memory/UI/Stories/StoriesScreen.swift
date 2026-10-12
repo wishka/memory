@@ -40,6 +40,9 @@ struct StoriesScreen: View {
                     }
                 }
 
+                // Своя история: те же чек-ины, стикеры и фото, что и в ленте
+                PostComposer(model: model, placeholder: t("Что у вас сейчас?"), hintText: t("Видно в Историях и в Ленте"))
+
                 if posts.isEmpty {
                     GlassCard {
                         VStack(alignment: .leading, spacing: 12) {
@@ -59,7 +62,7 @@ struct StoriesScreen: View {
                     PostCard(
                         post: post,
                         onLike: { model.toggleLike(post.id) },
-                        following: true,
+                        following: post.author.id == state.me.id ? nil : true,
                         onFollow: { model.toggleFollow(post.author.id) },
                         onAuthor: { model.openPerson(post.author.id) },
                             onComments: { model.openComments(post.id) },

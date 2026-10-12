@@ -47,7 +47,22 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import ru.wishka.memory.ui.components.RecordingBar
+import ru.wishka.memory.ui.components.StickerImage
+import ru.wishka.memory.ui.components.StickerPicker
+import ru.wishka.memory.ui.components.VoiceBubble
+import ru.wishka.memory.ui.components.VoiceRecorder
+import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.Chat
 import ru.wishka.memory.data.MediaFiles
@@ -78,6 +93,8 @@ import ru.wishka.memory.ui.theme.Palette
  * Скрепка — фото, видео (из галереи или с камеры) и документы. Долгое
  * нажатие на сообщение — ответить, переслать, закрепить или удалить у
  * себя или у всех. Закреплённое сообщение — полоской под шапкой.
+ * Пустое поле — вместо «отправить» микрофон: голосовое записывается,
+ * его можно удалить или отправить. В скрепке — свои стикеры из «Студии».
  */
 @Composable
 fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean = false) {
@@ -95,6 +112,52 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
     var forwarding by remember(chat.id) { mutableStateOf<Message?>(null) }
     val scope = rememberCoroutineScope()
     val reversed = chat.messages.asReversed()
+    val stickers = vm.state.collectAsState().value.stickers
+    var choosingSticker by remember { mutableStateOf(false) }
+
+    // Голосовое: запись, время и волна, пока пишем
+    val recorder = remember(chat.id) { VoiceRecorder(context.applicationContext) }
+    var recording by remember(chat.id) { mutableStateOf(false) }
+    var elapsed by remember { mutableLongStateOf(0L) }
+    var levels by remember { mutableStateOf<List<Int>>(emptyList()) }
+    DisposableEffect(recorder) { onDispose { recorder.cancel() } }
+    fun startRecording() {
+        if (recorder.start()) {
+            levels = emptyList()
+            elapsed = 0
+            recording = true
+        } else {
+            Toast.makeText(context, t("Микрофон недоступен"), Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun sendVoice() {
+        recording = false
+        val voice = recorder.finish()
+        if (voice != null) {
+            vm.send(chat.id, "", listOf(voice), replyTo)
+            replyTo = null
+        } else {
+            Toast.makeText(context, t("Слишком короткое — держите запись хотя бы секунду"), Toast.LENGTH_SHORT).show()
+        }
+    }
+    LaunchedEffect(recording) {
+        while (recording) {
+            val level = recorder.sample()
+            levels = levels + level
+            elapsed = recorder.elapsedMs
+            // Пять минут — предел: отправляем, что записалось
+            if (elapsed >= VoiceRecorder.MAX_MS) { sendVoice(); break }
+            delay(100)
+        }
+    }
+    // Заблокировали собеседника посреди записи — запись отменяется
+    LaunchedEffect(blocked) {
+        if (blocked && recording) { recording = false; recorder.cancel() }
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startRecording()
+        else Toast.makeText(context, t("Разрешите доступ к микрофону, чтобы записывать голосовые"), Toast.LENGTH_LONG).show()
+    }
 
     Column(
         modifier = Modifier
@@ -203,7 +266,13 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
         )
 
         // Заблокированному не пишем: вместо поля — напоминание и кнопка
-        if (blocked) {
+        if (recording && !blocked) {
+            RecordingBar(
+                elapsed, levels,
+                onCancel = { recording = false; recorder.cancel() },
+                onSend = ::sendVoice,
+            )
+        } else if (blocked) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -227,7 +296,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            AttachButton(picker, documents = true, size = 50.dp)
+            AttachButton(picker, documents = true, size = 50.dp, onSticker = { choosingSticker = true })
             GlassField(
                 text, { text = it.take(2000) }, t("Сообщение"),
                 maxLines = 5,
@@ -235,23 +304,39 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     .weight(1f)
                     .glass(RoundedCornerShape(24.dp)),
             )
+            // Есть что отправить — «отправить»; пусто — микрофон для голосового
             Box(
                 modifier = Modifier
                     .size(50.dp)
                     .clip(CircleShape)
                     .background(
-                        if (!canSend) Brush.linearGradient(listOf(Palette.Plum, Palette.Plum))
+                        if (!canSend) Brush.linearGradient(listOf(Palette.Violet, Palette.Plum))
                         else Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean))
                     )
-                    .clickable(enabled = canSend) {
-                        vm.send(chat.id, text, pending, replyTo)
-                        text = ""
-                        pending = emptyList()
-                        replyTo = null
+                    .clickable {
+                        if (canSend) {
+                            vm.send(chat.id, text, pending, replyTo)
+                            text = ""
+                            pending = emptyList()
+                            replyTo = null
+                        } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                            startRecording()
+                        } else {
+                            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        }
                     },
                 contentAlignment = Alignment.Center,
-            ) { Glyph(LineIcon.Send, if (!canSend) Palette.Mist else Palette.Ink) }
+            ) { Glyph(if (canSend) LineIcon.Send else LineIcon.Mic, Palette.Ink) }
         }
+    }
+
+    if (choosingSticker) {
+        StickerPicker(
+            stickers,
+            onPick = { sticker -> vm.send(chat.id, "", listOf(sticker), replyTo); replyTo = null },
+            onDismiss = { choosingSticker = false },
+            onOpenStudio = { vm.closeChat(); vm.openProfileSection(ProfileSection.Stickers) },
+        )
     }
 
     forwarding?.let { message ->
@@ -366,6 +451,9 @@ private fun Bubble(
 ) {
     val mine = message.fromMe
     var menu by remember { mutableStateOf(false) }
+    // Только стикер — без пузыря, картинкой
+    val stickerOnly = message.text.isEmpty() && message.attachments.isNotEmpty() && message.attachments.all { it.sticker } &&
+        message.replyTo == null && message.forwardedFrom == null
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
@@ -376,7 +464,13 @@ private fun Bubble(
             bottomEnd = if (mine) 6.dp else 20.dp,
         )
         Box {
-            Column(
+            if (stickerOnly) Column(
+                modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { menu = true }),
+                horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
+            ) {
+                message.attachments.forEach { StickerImage(it, size = 150.dp) }
+                Text(message.time, style = MaterialTheme.typography.labelSmall, color = Palette.Mist)
+            } else Column(
                 modifier = Modifier
                     .widthIn(max = 290.dp)
                     .then(
@@ -418,11 +512,14 @@ private fun Bubble(
                 }
                 val visual = message.attachments.filter { it.kind != MediaKind.Document }
                 val documents = message.attachments.filter { it.kind == MediaKind.Document }
-                if (visual.isNotEmpty()) {
-                    MediaGrid(visual, onOpen)
+                val stickers = visual.filter { it.sticker }
+                if (visual.size > stickers.size) {
+                    MediaGrid(visual - stickers.toSet(), onOpen)
                 }
+                stickers.forEach { StickerImage(it, size = 120.dp) }
                 documents.forEach { doc ->
-                    DocumentRow(doc, Modifier.fillMaxWidth(), onClick = { onOpen(doc) })
+                    if (doc.voice) VoiceBubble(doc)
+                    else DocumentRow(doc, Modifier.fillMaxWidth(), onClick = { onOpen(doc) })
                 }
                 Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
                     if (message.text.isNotEmpty()) {

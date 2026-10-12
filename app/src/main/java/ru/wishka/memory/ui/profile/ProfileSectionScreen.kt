@@ -132,8 +132,25 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                     }
                 }
             }
-            // «Моя музыка» — свой экран (MusicScreen)
-            ProfileSection.Music, ProfileSection.Stickers -> Unit
+            ProfileSection.Requests -> {
+                item {
+                    Empty(
+                        if (state.privacy.closedProfile) t("Профиль закрыт: подписаться на вас можно только по заявке. Одобренные увидят ваши записи и чек-ины.")
+                        else t("Профиль открыт — подписаться может любой. Закрыть его можно в настройках приватности.")
+                    )
+                }
+                if (state.requestPeople.isEmpty()) item { Empty(t("Новых заявок нет.")) }
+                items(state.requestPeople, key = { it.id }) { person ->
+                    RequestRow(
+                        person,
+                        onOpen = { vm.openPerson(person.id) },
+                        onApprove = { vm.approveRequest(person.id) },
+                        onDecline = { vm.declineRequest(person.id) },
+                    )
+                }
+            }
+            // «Моя музыка», «Студия» и «Итоги» — свои экраны
+            ProfileSection.Music, ProfileSection.Stickers, ProfileSection.Recap -> Unit
         }
     }
 }
@@ -146,6 +163,33 @@ private fun subtitle(state: UiState, section: ProfileSection): String = when (se
     ProfileSection.Saved -> plural(state.savedPrisms.size, "ролик", "ролика", "роликов")
     ProfileSection.Music -> plural(state.tracks.size, "трек", "трека", "треков")
     ProfileSection.Stickers -> plural(state.stickers.size, "стикер", "стикера", "стикеров")
+    ProfileSection.Recap -> ""
+    ProfileSection.Requests -> plural(state.followRequests.size, "заявка", "заявки", "заявок")
+}
+
+/** Заявка на подписку: принять или отклонить. */
+@Composable
+private fun RequestRow(person: User, onOpen: () -> Unit, onApprove: () -> Unit, onDecline: () -> Unit) {
+    GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onOpen),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Avatar(person, size = 48.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(person.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 1)
+                    Text("@${person.handle}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, maxLines = 1)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GlowButton(t("Принять"), onClick = onApprove)
+                GhostButton(t("Отклонить"), onClick = onDecline)
+            }
+        }
+    }
 }
 
 @Composable

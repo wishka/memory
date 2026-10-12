@@ -50,6 +50,10 @@ import ru.wishka.memory.ui.components.PendingAttachments
 import ru.wishka.memory.ui.components.PostMedia
 import ru.wishka.memory.ui.components.rememberMediaPicker
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.ProfileSection
+import ru.wishka.memory.ui.components.CheckInBadge
+import ru.wishka.memory.ui.components.PostComposer
+import ru.wishka.memory.ui.components.StickerRow
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.GlassCard
@@ -83,7 +87,16 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 CrystalLogo(size = 56.dp)
             }
         }
-        item { Composer(onPublish = vm::publish) }
+        item {
+            PostComposer(
+                stickers = state.stickers,
+                templates = state.checkInTemplates,
+                onPublish = vm::publish,
+                onCreateTemplate = vm::createCheckInTemplate,
+                onDeleteTemplate = vm::deleteCheckInTemplate,
+                onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
+            )
+        }
         items(state.feed, key = { it.id }) { post ->
             val mine = post.author.id == state.me.id
             PostCard(
@@ -109,56 +122,6 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
-    }
-}
-
-/**
- * Новая запись: текст, фото и видео из галереи или с камеры. Вложения
- * видны плитками под полем, крестик убирает лишнее.
- */
-@Composable
-private fun Composer(onPublish: (String, List<Attachment>) -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
-    var media by remember { mutableStateOf<List<Attachment>>(emptyList()) }
-    val picker = rememberMediaPicker { picked ->
-        media = (media + picked).take(AppViewModel.MAX_MEDIA)
-    }
-    GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-        Column {
-            GlassField(text, { text = it.take(2000) }, t("Чем хочется поделиться?"))
-            PendingAttachments(
-                media,
-                onRemove = { item ->
-                    media = media - item
-                    MediaFiles.delete(item)
-                },
-                modifier = Modifier.padding(bottom = 10.dp),
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AttachButton(picker, documents = false, size = 40.dp)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    when {
-                        media.isNotEmpty() -> plural(media.size, "вложение", "вложения", "вложений")
-                        text.isEmpty() -> t("Видят ваши подписчики")
-                        else -> "${text.length} / 2000"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Palette.Mist,
-                    modifier = Modifier.weight(1f),
-                )
-                GlowButton(t("Поделиться"), enabled = text.isNotBlank() || media.isNotEmpty(), onClick = {
-                    onPublish(text, media)
-                    text = ""
-                    media = emptyList()
-                })
-            }
-        }
     }
 }
 
@@ -228,10 +191,12 @@ fun PostCard(
                     Text(t("ЗАКРЕПЛЕНО"), style = MaterialTheme.typography.labelSmall, color = Palette.Lilac)
                 }
             }
+            post.checkIn?.let { CheckInBadge(it) }
             if (post.text.isNotEmpty()) {
                 Text(post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
             }
-            PostMedia(post.media.filter { it.kind != MediaKind.Document }, onOpen = onOpenMedia)
+            PostMedia(post.media.filter { it.kind != MediaKind.Document && !it.sticker }, onOpen = onOpenMedia)
+            StickerRow(post.media.filter { it.sticker })
             PostFiles(post.media.filter { it.kind == MediaKind.Document })
             post.artSeed?.let { seed ->
                 Nebula(

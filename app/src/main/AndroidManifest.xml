@@ -6,10 +6,14 @@
     <!-- Медиатека PRISM: поиск и прослушивание музыки Jamendo и Openverse -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Микрофон: звук роликов PRISM и голосовые сообщения -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Персональные уведомления (Android 13+ спрашивает разрешение) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
+        android:name=".MemoryApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -29,6 +33,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Пуши FCM: приёмник сообщений. Сам Firebase запускается только
+             с ключами проекта (push/PushSetup.kt), поэтому автозапуск выключен. -->
+        <service
+            android:name=".push.MemoryMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="memory_friends" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
 
         <!-- Выдаёт файлы из files/media наружу по временному разрешению:
              камере — чтобы записать снимок, другому приложению — чтобы

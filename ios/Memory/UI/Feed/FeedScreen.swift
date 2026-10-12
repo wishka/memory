@@ -32,7 +32,7 @@ struct FeedScreen: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
-                Composer { text, media in model.publish(text, media: media) }
+                PostComposer(model: model)
 
                 ForEach(state.feed) { post in
                     PostCard(
@@ -51,51 +51,6 @@ struct FeedScreen: View {
             .padding(.bottom, tabBarSpace)
         }
         .scrollDismissesKeyboard(.interactively)
-    }
-}
-
-/// Новая запись: текст, фото и видео из галереи или с камеры. Вложения
-/// видны плитками под полем, крестик убирает лишнее.
-private struct Composer: View {
-    let onPublish: (String, [Attachment]) -> Void
-    @State private var text = ""
-    @State private var media: [Attachment] = []
-
-    private var canPublish: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty
-    }
-
-    private var hint: String {
-        if !media.isEmpty { return plural(media.count, "вложение", "вложения", "вложений") }
-        return text.isEmpty ? t("Видят ваши подписчики") : "\(text.count) / 2000"
-    }
-
-    var body: some View {
-        GlassCard {
-            VStack(spacing: 0) {
-                GlassField(placeholder: t("Чем хочется поделиться?"), text: $text, limit: 2000)
-                PendingAttachments(items: media) { item in
-                    media.removeAll { $0.id == item.id }
-                    MediaFiles.delete(item)
-                }
-                .padding(.bottom, media.isEmpty ? 0 : 10)
-                HStack(spacing: 10) {
-                    AttachButton(documents: false, size: 40) { picked in
-                        media = Array((media + picked).prefix(AppModel.maxMedia))
-                    }
-                    Text(hint).textStyle(.bodySmall, Palette.mist).lineLimit(1)
-                    Spacer()
-                    GlowButton(title: t("Поделиться"), enabled: canPublish) {
-                        onPublish(text, media)
-                        text = ""
-                        media = []
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
-            }
-        }
-        .cardPadding()
     }
 }
 
@@ -147,12 +102,16 @@ struct PostCard: View {
                         Text(t("Закреплено").uppercased()).textStyle(.label, Palette.lilac)
                     }
                 }
+                if let checkIn = post.checkIn {
+                    CheckInBadge(checkIn: checkIn)
+                }
                 if !post.text.isEmpty {
                     Text(post.text)
                         .textStyle(.body)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                PostMediaView(media: post.media.filter { $0.kind != .document }, onOpen: onOpenMedia)
+                PostMediaView(media: post.media.filter { $0.kind != .document && !$0.sticker }, onOpen: onOpenMedia)
+                StickerRow(stickers: post.media.filter(\.sticker))
                 PostFiles(files: post.media.filter { $0.kind == .document })
                 if let seed = post.artSeed {
                     Nebula(seed: seed)

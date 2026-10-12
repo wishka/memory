@@ -64,13 +64,16 @@ fun CommentsSheet(
     total: Int,
     comments: List<Comment>,
     myId: Int,
-    onSend: (text: String, replyTo: String) -> Unit,
+    onSend: (text: String, replyTo: String, sticker: ru.wishka.memory.data.Attachment?) -> Unit,
     onDelete: (Long) -> Unit,
     onReport: (Long) -> Unit,
     onLike: (Long) -> Unit,
     onAuthor: (Int) -> Unit,
     onDismiss: () -> Unit,
+    /** Свои стикеры из «Студии» — ответить стикером. */
+    stickers: List<ru.wishka.memory.data.Sticker> = emptyList(),
 ) {
+    var choosingSticker by remember { mutableStateOf(false) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
@@ -146,6 +149,10 @@ fun CommentsSheet(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                Box(
+                    modifier = Modifier.size(46.dp).clip(CircleShape).glass(CircleShape).clickable { choosingSticker = true },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(LineIcon.Sticker, Palette.Lilac, size = 22.dp) }
                 GlassField(
                     text, { text = it.take(1000) }, t("Комментарий"),
                     maxLines = 4,
@@ -160,7 +167,7 @@ fun CommentsSheet(
                             else Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean))
                         )
                         .clickable(enabled = text.isNotBlank()) {
-                            onSend(text, replyTo)
+                            onSend(text, replyTo, null)
                             text = ""
                             replyTo = ""
                         },
@@ -168,6 +175,13 @@ fun CommentsSheet(
                 ) { Glyph(LineIcon.Send, if (text.isBlank()) Palette.Mist else Palette.Ink) }
             }
         }
+    }
+    if (choosingSticker) {
+        StickerPicker(
+            stickers,
+            onPick = { sticker -> onSend(text, replyTo, sticker); text = ""; replyTo = "" },
+            onDismiss = { choosingSticker = false },
+        )
     }
 }
 
@@ -206,7 +220,8 @@ private fun CommentRow(
                 if (comment.replyTo.isNotEmpty()) {
                     Text(tf("ответ для %s", comment.replyTo), style = MaterialTheme.typography.labelMedium, color = Palette.Lilac)
                 }
-                Text(comment.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+                if (comment.text.isNotEmpty()) Text(comment.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+                comment.sticker?.let { StickerImage(it, size = 110.dp) }
             }
             MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
                 MenuRow(LineIcon.Reply, t("Ответить")) { menu = false; onReply() }

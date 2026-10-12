@@ -63,12 +63,13 @@ final class AppModelTests: XCTestCase {
         let s = vm.state
         XCTAssertFalse(s.stories.isEmpty)
         XCTAssertTrue(s.stories.allSatisfy { s.following.contains($0.author.id) })
-        // Подписка на Марка (3) добавляет его записи, отписка — убирает
-        XCTAssertFalse(s.stories.contains { $0.author.id == 3 })
-        vm.toggleFollow(3)
-        XCTAssertTrue(vm.state.stories.contains { $0.author.id == 3 })
-        vm.toggleFollow(3)
-        XCTAssertFalse(vm.state.stories.contains { $0.author.id == 3 })
+        // Подписка на Тимура (5) добавляет его записи, отписка — убирает
+        // (Марк — закрытый профиль: к нему уходит заявка, см. Round10Tests)
+        XCTAssertFalse(s.stories.contains { $0.author.id == 5 })
+        vm.toggleFollow(5)
+        XCTAssertTrue(vm.state.stories.contains { $0.author.id == 5 })
+        vm.toggleFollow(5)
+        XCTAssertFalse(vm.state.stories.contains { $0.author.id == 5 })
         // На себя подписаться нельзя
         vm.toggleFollow(vm.state.me.id)
         XCTAssertFalse(vm.state.following.contains(vm.state.me.id))

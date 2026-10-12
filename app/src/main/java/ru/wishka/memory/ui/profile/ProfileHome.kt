@@ -203,7 +203,7 @@ fun ShowcaseCard(vm: AppViewModel, state: UiState) {
 
 @Composable
 private fun PinnedTile(post: Post, modifier: Modifier, onClick: () -> Unit) {
-    val visual = post.media.firstOrNull { it.kind != MediaKind.Document }
+    val visual = post.media.firstOrNull { it.kind != MediaKind.Document && !it.sticker }
     Box(
         modifier = modifier
             .aspectRatio(0.8f)
@@ -365,7 +365,7 @@ fun ProfileContentTabs(vm: AppViewModel, state: UiState) {
     var tab by rememberSaveable { mutableStateOf(0) }
     val myId = state.me.id
     val myPrisms = state.prisms.filter { it.author.id == myId }
-    val media: List<Attachment> = state.myPosts.flatMap { p -> p.media.filter { it.kind != MediaKind.Document } } +
+    val media: List<Attachment> = state.myPosts.flatMap { p -> p.media.filter { it.kind != MediaKind.Document && !it.sticker } } +
         myPrisms.mapNotNull { it.cover }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -100,12 +100,13 @@ class AppViewModelTest {
         val s = vm.state.value
         assertTrue(s.stories.isNotEmpty())
         assertTrue(s.stories.all { it.author.id in s.following })
-        // Подписка на Марка (3) добавляет его записи, отписка — убирает
-        assertFalse(s.stories.any { it.author.id == 3 })
-        vm.toggleFollow(3)
-        assertTrue(vm.state.value.stories.any { it.author.id == 3 })
-        vm.toggleFollow(3)
-        assertFalse(vm.state.value.stories.any { it.author.id == 3 })
+        // Подписка на Тимура (5) добавляет его записи, отписка — убирает
+        // (Марк — закрытый профиль: к нему уходит заявка, см. Round10Test)
+        assertFalse(s.stories.any { it.author.id == 5 })
+        vm.toggleFollow(5)
+        assertTrue(vm.state.value.stories.any { it.author.id == 5 })
+        vm.toggleFollow(5)
+        assertFalse(vm.state.value.stories.any { it.author.id == 5 })
         // На себя подписаться нельзя
         vm.toggleFollow(vm.state.value.me.id)
         assertFalse(vm.state.value.me.id in vm.state.value.following)

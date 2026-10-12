@@ -9,6 +9,7 @@ struct GroupScreen: View {
     @State private var text = ""
     @State private var media: [Attachment] = []
     @State private var choosingMusic = false
+    @State private var choosingSticker = false
 
     private var canPost: Bool { group.joined && (!group.onlyOwnerPosts || group.mine) }
 
@@ -43,6 +44,11 @@ struct GroupScreen: View {
             }
             .ignoresSafeArea(edges: .top)
             .scrollDismissesKeyboard(.interactively)
+        }
+        .sheet(isPresented: $choosingSticker) {
+            StickerPicker(stickers: model.state.stickers, onPick: { media = Array((media + [$0]).prefix(AppModel.maxMedia)) }) {
+                model.openProfileSection(.stickers)
+            }
         }
         .sheet(isPresented: $choosingMusic) {
             MusicChooser(tracks: model.state.tracks, onPicked: { picked in
@@ -127,7 +133,7 @@ struct GroupScreen: View {
                     }
                     .padding(.bottom, media.isEmpty ? 0 : 10)
                     HStack(spacing: 10) {
-                        AttachButton(documents: true, size: 40, onMusic: { choosingMusic = true }) { picked in
+                        AttachButton(documents: true, size: 40, onMusic: { choosingMusic = true }, onSticker: { choosingSticker = true }) { picked in
                             media = Array((media + picked).prefix(AppModel.maxMedia))
                         }
                         Text(media.isEmpty ? t("Фото, видео, документы, музыка") : plural(media.count, "вложение", "вложения", "вложений"))

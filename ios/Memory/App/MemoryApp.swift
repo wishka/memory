@@ -1,7 +1,10 @@
 import SwiftUI
+import UIKit
 
 @main
 struct MemoryApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         Fonts.register()
     }
@@ -29,6 +32,7 @@ struct RootView: View {
     @State private var loadedFor: String?
     @State private var saveTask: Task<Void, Never>?
     private let store = StateStore()
+    private let push = PushCenter.shared
 
     private var stage: Stage {
         // Заставка держится, пока проверяется сохранённая сессия: иначе на
@@ -86,6 +90,10 @@ struct RootView: View {
                     model.restore(snapshot)
                 }
                 loadedFor = account.username
+                // Сохранённое на месте — можно считать итоги и оживлять демо
+                model.checkRecapReady()
+                model.startDemoLife()
+                push.requestPermission()
             } else {
                 model.reset()
             }
@@ -103,6 +111,34 @@ struct RootView: View {
                 await Task.detached(priority: .utility) { store.save(login, snapshot) }.value
             }
         }
-        .task { auth.restore() }
+        .task {
+            // Уведомления: приложение открыто — плашкой сверху, свёрнуто — системным
+            model.onNudge = { nudge in
+                if UIApplication.shared.applicationState == .active {
+                    model.showBanner(nudge)
+                } else {
+                    PushCenter.shared.show(nudge)
+                }
+            }
+            auth.restore()
+        }
+        // Пуш, пока приложение открыто, — плашкой (если раздел не выключен)
+        .onChange(of: push.incoming) { _, nudge in
+            guard let nudge else { return }
+            if stage == .main { model.notify(nudge) }
+            push.incoming = nil
+        }
+        // Открыли приложение нажатием на уведомление — туда, о чём оно
+        .onChange(of: push.opened) { _, nudge in
+            guard let nudge, stage == .main else { return }
+            model.openNudge(nudge)
+            push.opened = nil
+        }
+        .onChange(of: stage) { _, current in
+            if current == .main, let nudge = push.opened {
+                model.openNudge(nudge)
+                push.opened = nil
+            }
+        }
     }
 }
