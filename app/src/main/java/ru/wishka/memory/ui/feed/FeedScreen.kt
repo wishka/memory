@@ -48,6 +48,7 @@ import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.components.AttachButton
 import ru.wishka.memory.ui.components.PendingAttachments
 import ru.wishka.memory.ui.components.PostMedia
+import ru.wishka.memory.ui.components.PollCard
 import ru.wishka.memory.ui.components.rememberMediaPicker
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.ProfileSection
@@ -107,6 +108,9 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 onCreateTemplate = vm::createCheckInTemplate,
                 onDeleteTemplate = vm::deleteCheckInTemplate,
                 onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
+                tracks = state.tracks,
+                packs = state.stickerPacks,
+                recentGifs = state.recentGifs,
             )
         }
         // «Год назад вы…»: своя запись из этого же дня — пока не закрыли сегодня
@@ -118,6 +122,8 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
             PostCard(
                 post,
                 onLike = { vm.toggleLike(post.id) },
+                onVote = { vm.votePost(post.id, it) },
+                onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
                 following = if (mine) null else post.author.id in state.following,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
@@ -197,6 +203,10 @@ fun PostCard(
     onOpenMedia: (Attachment) -> Unit = {},
     /** Закреплена в группе — метка над текстом. */
     pinned: Boolean = false,
+    /** Голос в опросе записи; null — опрос только для чтения. */
+    onVote: ((Int) -> Unit)? = null,
+    /** Завершить опрос — только у автора; null — кнопки нет. */
+    onClosePoll: (() -> Unit)? = null,
     /** Пункты меню «⋯» (закрепить, удалить…); null — меню нет. */
     menu: (@Composable ColumnScope.(close: () -> Unit) -> Unit)? = null,
 ) {
@@ -249,6 +259,7 @@ fun PostCard(
             if (post.text.isNotEmpty()) {
                 Text(post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
             }
+            post.poll?.let { poll -> PollCard(poll, onVote = { onVote?.invoke(it) }, modifier = Modifier.fillMaxWidth(), onClose = onClosePoll) }
             PostMedia(post.media.filter { it.kind != MediaKind.Document && !it.sticker }, onOpen = onOpenMedia)
             StickerRow(post.media.filter { it.sticker })
             PostFiles(post.media.filter { it.kind == MediaKind.Document })

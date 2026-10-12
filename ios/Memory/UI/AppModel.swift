@@ -43,6 +43,8 @@ enum SettingsPage: String, CaseIterable {
     case language = "Язык"
     case about = "О приложении"
     case growth = "Друзья и идеи"
+    case sounds = "Звуки"
+    case wallpaper = "Фон переписок"
 
     var title: String { t(rawValue) }
 }
@@ -160,6 +162,12 @@ struct UiState: Equatable {
     var memorySeen: String = ""
     /// Полка: открытый раздел.
     var shelfTab: ShelfTab = .films
+    /// Коллекции стикеров, как наборы в iOS.
+    var stickerPacks: [StickerPack] = []
+    /// Общий фон переписок.
+    var backdrop: Backdrop = Backdrop.default
+    /// Недавние гифки — первыми в выборе.
+    var recentGifs: [Attachment] = []
 
     /// Полка — собирается сама из чек-инов и отметок.
     var shelf: Shelf { Shelf.build(posts.datedCheckIns(me.id), shelfMarks) }
@@ -297,6 +305,9 @@ struct Snapshot: Codable, Equatable {
     var growth: [GrowthEvent]? = nil
     var invitedBy: Invite? = nil
     var memorySeen: String? = nil
+    var stickerPacks: [StickerPack]? = nil
+    var backdrop: Backdrop? = nil
+    var recentGifs: [Attachment]? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -437,13 +448,15 @@ final class AppModel {
         state.posts = state.posts.map { Self.toggled($0, postId) }
     }
 
-    /// Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем.
-    func publish(_ text: String, media: [Attachment] = [], checkIn: CheckIn? = nil) {
+    /// Новая запись: текст, фото и видео, чек-ин, опрос. Пустую (без текста и вложений) не публикуем.
+    func publish(_ text: String, media: [Attachment] = [], checkIn: CheckIn? = nil, poll: PollDraft? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty && media.isEmpty && checkIn == nil { return }
+        let built = poll.flatMap { $0.build(newId()) }
+        if trimmed.isEmpty && media.isEmpty && checkIn == nil && built == nil { return }
+        media.filter(\.isGif).forEach(rememberGif)
         let post = Post(
             id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
-            media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn
+            media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn, poll: built
         )
         let before = state
         var next = state
@@ -783,14 +796,24 @@ final class AppModel {
 
     /// Отправка. В демо собеседник «печатает» и через пару секунд отвечает —
     /// чтобы переписку можно было почувствовать без сервера.
-    func send(_ chatId: Int, _ text: String, attachments: [Attachment] = [], replyTo: ReplyRef? = nil) {
+    func send(_ chatId: Int, _ text: String, attachments: [Attachment] = [], replyTo: ReplyRef? = nil,
+              poll: PollDraft? = nil, place: SharedPlace? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty && attachments.isEmpty { return }
+        let built = poll.flatMap { $0.build(newId()) }
+        if trimmed.isEmpty && attachments.isEmpty && built == nil && place == nil { return }
         append(chatId, Message(
             id: newId(), fromMe: true, text: trimmed, time: Self.now(),
             attachments: Array(attachments.prefix(Self.maxMedia)),
-            replyTo: replyTo
+            replyTo: replyTo, poll: built, place: place
         ))
+        attachments.filter(\.isGif).forEach(rememberGif)
+        // Опрос в переписке: собеседник отвечает голосом через пару секунд
+        if let built {
+            later(4, 12) { model in
+                let pick = Int.random(in: 0..<built.options.count)
+                model.updateMessagePoll(chatId, built.id) { $0.addVotes([pick: 1]) }
+            }
+        }
         guard demoReplies else { return }
         let delays = replyDelays
         Task { @MainActor [weak self] in
@@ -894,9 +917,12 @@ final class AppModel {
               let original = from.messages.first(where: { $0.id == messageId }),
               state.chats.contains(where: { $0.id == toChatId }) else { return }
         let author = original.forwardedFrom ?? (original.fromMe ? state.me.name : from.peer.name)
+        // Пересланный опрос — новый, с чистыми голосами; место — как есть
+        let poll = original.poll.map { $0.fresh(id: newId()) }
         append(toChatId, Message(
             id: newId(), fromMe: true, text: original.text, time: Self.now(),
-            attachments: original.attachments, forwardedFrom: author
+            attachments: original.attachments, forwardedFrom: author,
+            poll: poll, place: original.place
         ))
         openChat(toChatId)
     }
@@ -1234,20 +1260,134 @@ final class AppModel {
 
     /// Запись в группе — для участников (или только для создателя, если он
     /// так решил): текст и вложения — фото, видео, документы, музыка.
-    func postInGroup(_ groupId: Int, _ text: String, media: [Attachment] = []) {
+    func postInGroup(_ groupId: Int, _ text: String, media: [Attachment] = [], poll: PollDraft? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty && media.isEmpty { return }
+        let built = poll.flatMap { $0.build(newId()) }
+        if trimmed.isEmpty && media.isEmpty && built == nil { return }
         let me = state.me
         state.groups = state.groups.map { group in
             var g = group
             if g.id == groupId && g.joined && (!g.onlyOwnerPosts || g.mine) {
                 g.posts.insert(Post(
                     id: newId(), author: me, text: trimmed, minutesAgo: 0,
-                    media: Array(media.prefix(Self.maxMedia)), createdAt: clock()
+                    media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), poll: built
                 ), at: 0)
             }
             return g
         }
+        media.filter(\.isGif).forEach(rememberGif)
+    }
+
+    // MARK: - Опросы
+
+    /// Своя ли запись — у своих опросов есть «Завершить».
+    func isMine(_ post: Post) -> Bool { post.author.id == state.me.id }
+
+    /// Изменить опрос записи — в ленте или в группе.
+    private func updatePostPoll(_ postId: Int64, _ change: (Poll) -> Poll) {
+        updatePosts(postId) { p in
+            if let poll = p.poll { p.poll = change(poll) }
+        }
+    }
+
+    private func updateMessagePoll(_ chatId: Int, _ pollId: Int64, _ change: (Poll) -> Poll) {
+        updateChat(chatId) { c in
+            c.messages = c.messages.map { m in
+                var m = m
+                if let poll = m.poll, poll.id == pollId { m.poll = change(poll) }
+                return m
+            }
+        }
+    }
+
+    /// Голос в опросе записи (ленты или группы).
+    func votePost(_ postId: Int64, _ option: Int) { updatePostPoll(postId) { $0.vote(option) } }
+
+    /// Голос в опросе сообщения.
+    func voteMessage(_ chatId: Int, _ pollId: Int64, _ option: Int) { updateMessagePoll(chatId, pollId) { $0.vote(option) } }
+
+    /// Закрыть свой опрос: голосовать больше нельзя, итоги видны всем.
+    func closePostPoll(_ postId: Int64) { updatePostPoll(postId) { $0.close() } }
+
+    func closeMessagePoll(_ chatId: Int, _ pollId: Int64) { updateMessagePoll(chatId, pollId) { $0.close() } }
+
+    // MARK: - Гифки, коллекции стикеров, фоны
+
+    /// Отправленная гифка — в «Недавние» (до 30, новые первыми).
+    func rememberGif(_ gif: Attachment) {
+        guard gif.isGif else { return }
+        let name = gif.name.isEmpty ? gif.fileName : gif.name
+        state.recentGifs = Array(([gif] + state.recentGifs.filter { !($0.name.isEmpty == false && $0.name == name) }).prefix(30))
+    }
+
+    /// Новая коллекция стикеров; nil — пустое имя или такая уже есть.
+    @discardableResult
+    func createStickerPack(_ name: String) -> StickerPack? {
+        let n = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30))
+        if n.isEmpty || state.stickerPacks.contains(where: { $0.name.lowercased() == n.lowercased() }) { return nil }
+        let pack = StickerPack(id: "pack-" + String(UUID().uuidString.prefix(8)).lowercased(), name: n)
+        state.stickerPacks.append(pack)
+        return pack
+    }
+
+    func renameStickerPack(_ id: String, _ name: String) {
+        let n = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30))
+        if n.isEmpty { return }
+        state.stickerPacks = state.stickerPacks.map { p in
+            var p = p
+            if p.id == id { p.name = n }
+            return p
+        }
+    }
+
+    /// Удалить коллекцию: стикеры остаются, просто без коллекции.
+    func deleteStickerPack(_ id: String) {
+        state.stickerPacks.removeAll { $0.id == id }
+        state.stickers = state.stickers.map { s in
+            var s = s
+            if s.packId == id { s.packId = "" }
+            return s
+        }
+    }
+
+    func moveSticker(_ stickerId: String, _ packId: String) {
+        state.stickers = state.stickers.map { s in
+            var s = s
+            if s.id == stickerId { s.packId = packId }
+            return s
+        }
+    }
+
+    /// Общий фон переписок.
+    func setBackdrop(_ backdrop: Backdrop) {
+        let before = backdropPhotos()
+        state.backdrop = backdrop
+        dropBackdropPhotos(before)
+    }
+
+    /// Свой фон у переписки; nil — как у всех.
+    func setChatBackdrop(_ chatId: Int, _ backdrop: Backdrop?) {
+        let before = backdropPhotos()
+        updateChat(chatId) { $0.backdrop = backdrop }
+        dropBackdropPhotos(before)
+    }
+
+    /// Свои фото фонов, которые сейчас где-то стоят: общий фон и фоны переписок.
+    private func backdropPhotos() -> Set<String> {
+        Set(([state.backdrop] + state.chats.compactMap(\.backdrop)).map(\.photo).filter { !$0.isEmpty })
+    }
+
+    /// Своё фото фона, которое больше нигде не стоит, — удалить копию.
+    private func dropBackdropPhotos(_ before: Set<String>) {
+        for name in before.subtracting(backdropPhotos()) {
+            try? FileManager.default.removeItem(at: MediaFiles.directory.appendingPathComponent(name))
+        }
+    }
+
+    /// Поделиться местом в переписке.
+    func sendPlace(_ chatId: Int, _ at: LatLon, title: String = "") {
+        send(chatId, "", place: SharedPlace(lat: at.lat, lon: at.lon,
+                                            title: String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))))
     }
 
     func toggleGroupPostLike(_ groupId: Int, _ postId: Int64) {
@@ -1391,6 +1531,9 @@ final class AppModel {
             }
         case .requests:
             openProfileSection(.requests)
+        case .prism:
+            selectTab(.prism)
+            if state.prisms.contains(where: { $0.id == nudge.targetId }) { state.prismStartId = nudge.targetId }
         case .together:
             selectTab(.together)
             let sections = TogetherSection.allCases
@@ -1449,6 +1592,9 @@ final class AppModel {
                 try? await Task.sleep(nanoseconds: UInt64.random(in: 35_000_000_000...75_000_000_000))
                 if Task.isCancelled { return }
                 self.togetherEvent(using: &rng)
+                try? await Task.sleep(nanoseconds: UInt64.random(in: 35_000_000_000...75_000_000_000))
+                if Task.isCancelled { return }
+                self.socialEvent(using: &rng)
                 try? await Task.sleep(nanoseconds: UInt64.random(in: 35_000_000_000...75_000_000_000))
             }
         }
@@ -1559,6 +1705,44 @@ final class AppModel {
         let id = newId()
         state.posts.insert(Post(id: id, author: friend, text: "", minutesAgo: 0, likes: Int.random(in: 0..<6, using: &rng), createdAt: clock(), checkIn: c), at: 0)
         notify(Nudges.friendCheckIn(friend, c, discussed: Nudges.discussed(subject, texts), myKm: myKmThisMonth(), postId: id))
+    }
+
+    /// Ещё одна демо-жизнь: голоса в ваших опросах, новый PRISM друга,
+    /// место от друга в переписке. Голоса приходят только в открытые опросы.
+    func socialEvent<G: RandomNumberGenerator>(using rng: inout G) {
+        let s = state
+        let friends = Demo.people.filter { !s.blocked.contains($0.id) }
+        if friends.isEmpty { return }
+        let myPolls = (s.posts + s.groups.flatMap(\.posts)).filter { $0.author.id == s.me.id && $0.poll?.closed == false }
+        let pick = myPolls.isEmpty ? 1 + Int.random(in: 0..<2, using: &rng) : Int.random(in: 0..<3, using: &rng)
+        switch pick {
+        case 0:
+            let post = myPolls[Int.random(in: 0..<myPolls.count, using: &rng)]
+            guard let poll = post.poll else { return }
+            let added = 1 + Int.random(in: 0..<4, using: &rng)
+            var votes: [Int: Int] = [:]
+            for _ in 0..<added { votes[Int.random(in: 0..<poll.options.count, using: &rng), default: 0] += 1 }
+            updatePostPoll(post.id) { $0.addVotes(votes) }
+            let groupId = s.groups.first { g in g.posts.contains { $0.id == post.id } }?.id
+            notify(Nudges.pollVotes(poll.question, added, postId: post.id, groupId: groupId))
+        case 1:
+            let friend = friends[Int.random(in: 0..<friends.count, using: &rng)]
+            let captions = ["Огни ночного города", "Закат над рекой", "Первый снег", "Звёзды над крышей", "Кофе и дождь"]
+            let prism = Prism(
+                id: newId(), author: friend, caption: t(captions[Int.random(in: 0..<captions.count, using: &rng)]),
+                music: tf("Оригинальный звук · %s", friend.name), seed: Int.random(in: 0..<1000, using: &rng),
+                likes: Int.random(in: 0..<40, using: &rng), comments: 0, createdAt: clock()
+            )
+            state.prisms.insert(prism, at: 0)
+            notify(Nudges.prismPublished(friend, prism))
+        default:
+            let chats = s.chats.filter { !s.blocked.contains($0.peer.id) && !$0.muted }
+            guard let chat = chats.randomElement(using: &rng) else { return }
+            let here = s.together.anchor.offset(east: Double.random(in: -900..<900, using: &rng), north: Double.random(in: -900..<900, using: &rng))
+            append(chat.id, Message(id: newId(), fromMe: false, text: t("Я тут, подходи"), time: Self.now(),
+                                    place: SharedPlace(lat: here.lat, lon: here.lon, title: t("Я здесь"))))
+            if s.openChatId != chat.id { notify(Nudges.placeShared(chat.peer, chatId: chat.id)) }
+        }
     }
 
     // MARK: - Вместе
@@ -1930,7 +2114,8 @@ final class AppModel {
             approvedFollowers: state.approvedFollowers, sentRequests: state.sentRequests,
             recapNotified: state.recapNotified, together: state.together,
             shelfMarks: state.shelfMarks, dismissedRecs: state.dismissedRecs, growth: state.growth,
-            invitedBy: state.invitedBy, memorySeen: state.memorySeen
+            invitedBy: state.invitedBy, memorySeen: state.memorySeen,
+            stickerPacks: state.stickerPacks, backdrop: state.backdrop, recentGifs: state.recentGifs
         )
     }
 
@@ -1973,6 +2158,9 @@ final class AppModel {
         s.growth = Array(merged.stableSorted { $0.at < $1.at }.suffix(growthLogLimit))
         s.invitedBy = snapshot.invitedBy ?? s.invitedBy
         s.memorySeen = snapshot.memorySeen ?? ""
+        s.stickerPacks = snapshot.stickerPacks ?? []
+        s.backdrop = snapshot.backdrop ?? Backdrop.default
+        s.recentGifs = snapshot.recentGifs ?? []
         s.applyMe(s.me)
         state = s
     }

@@ -380,6 +380,8 @@ fun ProfileContentTabs(vm: AppViewModel, state: UiState) {
                     PostCard(
                         post,
                         onLike = { vm.toggleLike(post.id) },
+                        onVote = { vm.votePost(post.id, it) },
+                        onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
                         onComments = { vm.openComments(post.id) },
                         onOpenMedia = vm::openMedia,
                     )

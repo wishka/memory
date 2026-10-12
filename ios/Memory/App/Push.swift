@@ -35,7 +35,8 @@ final class PushCenter {
         let content = UNMutableNotificationContent()
         content.title = nudge.title
         content.body = nudge.text
-        content.sound = .default
+        // У каждого вида — свой звук из «Настройки → Уведомления → Звуки»; «Без звука» — тихо
+        content.sound = SoundPrefs().get(nudge.kind).notificationSound
         content.threadIdentifier = nudge.kind.rawValue
         content.userInfo = [
             "kind": nudge.kind.rawValue, "title": nudge.title, "text": nudge.text,

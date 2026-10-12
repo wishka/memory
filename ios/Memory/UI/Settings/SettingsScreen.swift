@@ -40,6 +40,15 @@ struct SettingsScreen: View {
                 case .language: LanguagePage()
                 case .about: AboutPage()
                 case .growth: GrowthPage(model: model)
+                case .sounds: SoundsPage(model: model)
+                case .wallpaper:
+                    VStack(alignment: .leading, spacing: 12) {
+                        BackdropChooser(selected: model.state.backdrop, onPick: model.setBackdrop)
+                        Text(t("Фон для всех переписок. Свой фон для одной переписки — в её меню «⋯» вверху."))
+                            .textStyle(.bodySmall, Palette.mist)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 16)
                 }
             }
             .padding(.top, 12)
@@ -79,6 +88,8 @@ private struct MainSettings: View {
             NavRow(icon: .bell, title: t("Уведомления"), value: state.notifications.all ? t("Вкл.") : t("Выкл.")) {
                 model.openSettings(.notifications)
             }
+            Divider()
+            NavRow(icon: .image, title: t("Фон переписок"), value: state.backdrop.kind.title) { model.openSettings(.wallpaper) }
             Divider()
             NavRow(icon: .textSize, title: t("Размер текста"), value: textScaleTitle(L10n.shared.textScale)) {
                 model.openSettings(.textSize)
@@ -327,6 +338,8 @@ private struct NotificationsPage: View {
         SettingsCard {
             SwitchRow(title: t("Сообщения"), isOn: n.messages, enabled: n.all) { v in update { $0.messages = v } }
             Divider()
+            SwitchRow(title: t("Новые PRISM друзей"), isOn: n.prism, enabled: n.all) { v in update { $0.prism = v } }
+            Divider()
             SwitchRow(title: t("Лайки и комментарии"), isOn: n.reactions, enabled: n.all) { v in update { $0.reactions = v } }
             Divider()
             SwitchRow(title: t("Новые подписчики"), isOn: n.follows, enabled: n.all) { v in update { $0.follows = v } }
@@ -336,6 +349,9 @@ private struct NotificationsPage: View {
             SwitchRow(title: t("Друзья: чек-ины, фильмы, книги, тренировки"), isOn: n.friends, enabled: n.all) { v in update { $0.friends = v } }
             Divider()
             SwitchRow(title: t("Итоги месяца и года"), isOn: n.recap, enabled: n.all) { v in update { $0.recap = v } }
+        }
+        SettingsCard {
+            NavRow(icon: .volume, title: t("Звуки"), value: t("Свой у каждого вида")) { model.openSettings(.sounds) }
         }
         Hint(text: t("Уведомления — про то, что важно именно вам: друг отметил фильм, который вы обсуждали, в вашей группе новый участник, готовы итоги месяца. Никаких «вы давно не заходили»."))
         if mutedGroups.isEmpty && mutedChats.isEmpty {
@@ -357,6 +373,78 @@ private struct NotificationsPage: View {
         var n = model.state.notifications
         change(&n)
         model.setNotifications(n)
+    }
+}
+
+// MARK: - Звуки
+
+/// Свой звук у каждого вида уведомлений — их узнаёшь, не глядя на экран.
+/// Касание варианта — сразу слышно, как звучит.
+private struct SoundsPage: View {
+    let model: AppModel
+    @State private var current = SoundPrefs().all()
+    @State private var editing: NudgeKind?
+
+    var body: some View {
+        SettingsCard {
+            ForEach(Array(soundKinds.enumerated()), id: \.element) { i, kind in
+                if i > 0 { Divider() }
+                NavRow(icon: .volume, title: kind.soundTitle, value: (current[kind] ?? NotifySound.default(kind)).title) { editing = kind }
+            }
+        }
+        Hint(text: t("Звуки Memory — стекло, звёзды и космос, в стиле приложения. Звук играет и в пуше, и в плашке, когда приложение открыто."))
+        if !model.state.notifications.all {
+            Hint(text: t("Сейчас все уведомления выключены — звуков не будет."))
+        }
+        Color.clear.frame(height: 0)
+            .sheet(item: $editing) { kind in
+                SoundChooser(kind: kind, selected: current[kind] ?? NotifySound.default(kind)) { sound in
+                    SoundPrefs().set(kind, sound)
+                    SoundPlayer.play(sound)
+                    current = SoundPrefs().all()
+                }
+            }
+    }
+}
+
+extension NudgeKind: Identifiable {
+    var id: String { rawValue }
+}
+
+/// Звуки на выбор для одного вида уведомлений.
+private struct SoundChooser: View {
+    let kind: NudgeKind
+    let selected: NotifySound
+    let onPick: (NotifySound) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var chosen: NotifySound?
+
+    var body: some View {
+        let active = chosen ?? selected
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(kind.soundTitle).textStyle(.headline)
+                Spacer()
+                GlowButton(title: t("Готово")) { dismiss() }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(NotifySound.allCases.enumerated()), id: \.element) { i, sound in
+                        if i > 0 { Divider() }
+                        ChoiceRow(title: sound.title + (sound == NotifySound.default(kind) ? " · " + t("по умолчанию") : ""), selected: active == sound) {
+                            chosen = sound
+                            onPick(sound)
+                        }
+                    }
+                }
+            }
+        }
+        .background(Palette.night.ignoresSafeArea())
+        .presentationDetents([.medium, .large])
+        .presentationBackground(Palette.night)
+        .presentationCornerRadius(28)
     }
 }
 

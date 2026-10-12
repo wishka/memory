@@ -29,9 +29,18 @@ data class Sticker(
     val path: String,
     val kind: StickerKind,
     val createdAt: Long = 0,
-)
+    /** Как двигается (StickerAnim.id); "" — неподвижный. */
+    val animation: String = "",
+    /** Покадровый: все кадры по порядку, первый = path; пусто — один кадр. */
+    val frames: List<String> = emptyList(),
+    val fps: Int = 0,
+    /** Коллекция (StickerPack.id); "" — без коллекции. */
+    val packId: String = "",
+) {
+    val animated: Boolean get() = animation.isNotEmpty() || frames.size > 1
+}
 
-enum class StickerKind(val ru: String) { Photo("Из фото"), Drawing("Рисунок"), Smiley("Смайл"), Badge("Значок") }
+enum class StickerKind(val ru: String) { Photo("Из фото"), Drawing("Рисунок"), Smiley("Смайл"), Badge("Значок"), Cutout("Вырезка") }
 
 /** Форма стикера и фона значка. */
 enum class StickerShape(val ru: String) { Circle("Круг"), Heart("Сердце"), Crystal("Кристалл"), Star("Звезда"), Square("Квадрат") }
@@ -354,6 +363,19 @@ object StickerArt {
         val file = File(dir, "sticker-$id.png")
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         Sticker(id, file.absolutePath, kind, now)
+    }.getOrNull()
+
+    /** Живой стикер: эффект запечён в кадры, движение и частота кадров — в описании. */
+    fun saveAnimated(context: Context, frames: List<Bitmap>, kind: StickerKind, now: Long, animation: StickerAnim, fps: Int, packId: String): Sticker? = runCatching {
+        if (frames.isEmpty()) return null
+        val dir = File(context.filesDir, "media").apply { mkdirs() }
+        val id = UUID.randomUUID().toString()
+        val paths = frames.mapIndexed { i, bmp ->
+            val file = File(dir, "sticker-$id-$i.png")
+            file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            file.absolutePath
+        }
+        Sticker(id, paths.first(), kind, now, animation.id, if (paths.size > 1) paths else emptyList(), if (paths.size > 1) fps.coerceIn(2, 24) else 0, packId)
     }.getOrNull()
 
     /** Ограничить значение рамками — для жестов в студии. */

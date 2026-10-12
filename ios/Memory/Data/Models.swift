@@ -67,9 +67,37 @@ struct Attachment: Identifiable, Equatable, Codable, Hashable {
     var waveform: [Int]? = nil
     /// Свой стикер из «Студии»: показывается без рамки, как картинка.
     var stickerFlag: Bool? = nil
+    /// Живой стикер: как он двигается (StickerAnim.id); nil или "" — неподвижный.
+    var animationId: String? = nil
+    /// Покадровый стикер: имена файлов кадров по порядку (первый — fileName);
+    /// nil или пусто — один кадр.
+    var frameFiles: [String]? = nil
+    /// Кадров в секунду у покадрового стикера.
+    var frameRate: Int? = nil
 
     var voice: Bool { voiceFlag ?? false }
     var sticker: Bool { stickerFlag ?? false }
+
+    var animation: String {
+        get { animationId ?? "" }
+        set { animationId = newValue.isEmpty ? nil : newValue }
+    }
+    var frames: [String] {
+        get { frameFiles ?? [] }
+        set { frameFiles = newValue.isEmpty ? nil : newValue }
+    }
+    var fps: Int {
+        get { frameRate ?? 0 }
+        set { frameRate = newValue == 0 ? nil : newValue }
+    }
+
+    /// Гифка: играет сама, без рамки «видео».
+    var isGif: Bool {
+        kind == .photo && ((fileName as NSString).pathExtension.lowercased() == "gif" || (name as NSString).pathExtension.lowercased() == "gif")
+    }
+
+    /// Стикер, который двигается: эффект или кадры.
+    var animated: Bool { !animation.isEmpty || frames.count > 1 }
 
     /// Музыка — документ со звуком: в записи он играет прямо в карточке.
     var isAudio: Bool {
@@ -128,6 +156,8 @@ struct Post: Identifiable, Equatable, Codable {
     var createdAt: Date? = nil
     /// Чек-ин: «смотрю фильм», «пробежал 5 км»… nil — обычная запись.
     var checkIn: CheckIn? = nil
+    /// Опрос в записи; nil — нет.
+    var poll: Poll? = nil
 }
 
 /// Минуты с момента createdAt, а для демо-данных — заданные заранее.
@@ -155,6 +185,22 @@ struct Message: Identifiable, Equatable, Codable {
     var attachments: [Attachment] = []
     var replyTo: ReplyRef? = nil
     var forwardedFrom: String? = nil
+    /// Опрос в сообщении; nil — нет.
+    var poll: Poll? = nil
+    /// Геолокация: место на карте; nil — нет.
+    var place: SharedPlace? = nil
+}
+
+/// Место, которым поделились в переписке: точка и подпись («Я здесь», адрес).
+struct SharedPlace: Equatable, Codable {
+    var lat: Double
+    var lon: Double
+    var title: String = ""
+
+    var at: LatLon { LatLon(lat: lat, lon: lon) }
+
+    /// Координаты для подписи: 55.75580, 37.61730.
+    var coords: String { String(format: "%.5f, %.5f", locale: Locale(identifier: "en_US_POSIX"), lat, lon) }
 }
 
 /// Переписка. pinnedId — закреплённое сообщение: видно полоской вверху
@@ -169,6 +215,8 @@ struct Chat: Identifiable, Equatable, Codable {
     var pinnedId: Int64? = nil
     var onTopFlag: Bool? = nil
     var mutedFlag: Bool? = nil
+    /// Свой фон этой переписки; nil — общий из настроек.
+    var backdrop: Backdrop? = nil
 
     var onTop: Bool {
         get { onTopFlag ?? false }
@@ -363,6 +411,14 @@ struct Notifications: Equatable, Codable {
     /// Что делают друзья и итоги — необязательные, для старых сохранений.
     var friendsFlag: Bool? = nil
     var recapFlag: Bool? = nil
+    /// Новые PRISM друзей — необязательное, для старых сохранений.
+    var prismFlag: Bool? = nil
+
+    /// Новые PRISM друзей.
+    var prism: Bool {
+        get { prismFlag ?? true }
+        set { prismFlag = newValue }
+    }
 
     /// Что делают друзья: чек-ины, фильмы, книги, тренировки.
     var friends: Bool {

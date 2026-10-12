@@ -20,7 +20,7 @@ struct FeedScreen: View {
                 model.toggleProfilePin(post.id)
             },
             GlassAction(icon: .trash, title: t("Удалить запись"), destructive: true) {
-                post.media.forEach { MediaFiles.delete($0) }
+                post.media.forEach(deleteAttachmentFiles)
                 model.deletePost(post.id)
             },
         ]
@@ -56,6 +56,8 @@ struct FeedScreen: View {
                         onAuthor: { model.openPerson(post.author.id) },
                         onComments: { model.openComments(post.id) },
                         onOpenMedia: model.openMedia,
+                        onVote: { model.votePost(post.id, $0) },
+                        onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil,
                         menu: ownMenu(post)
                     )
                 }
@@ -130,6 +132,10 @@ struct PostCard: View {
     var onOpenMedia: (Attachment) -> Void = { _ in }
     /// Закреплена в группе — метка над текстом.
     var pinned = false
+    /// Голос в опросе записи; nil — опрос только для чтения.
+    var onVote: ((Int) -> Void)? = nil
+    /// Завершить опрос — только у автора; nil — кнопки нет.
+    var onClosePoll: (() -> Void)? = nil
     /// Пункты меню «⋯» (закрепить, удалить…); пусто — меню нет.
     var menu: [GlassAction] = []
 
@@ -170,6 +176,9 @@ struct PostCard: View {
                     Text(post.text)
                         .textStyle(.body)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if let poll = post.poll {
+                    PollCard(poll: poll, onVote: { onVote?($0) }, onClose: onClosePoll)
                 }
                 PostMediaView(media: post.media.filter { $0.kind != .document && !$0.sticker }, onOpen: onOpenMedia)
                 StickerRow(stickers: post.media.filter(\.sticker))

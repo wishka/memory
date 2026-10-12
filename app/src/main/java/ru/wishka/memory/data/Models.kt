@@ -60,7 +60,20 @@ data class Attachment(
     val waveform: List<Int> = emptyList(),
     /** Свой стикер из «Студии»: показывается без рамки, как картинка. */
     val sticker: Boolean = false,
+    /** Живой стикер: как он двигается (StickerAnim.id); "" — неподвижный. */
+    val animation: String = "",
+    /** Покадровый стикер: пути кадров по порядку (первый — path); пусто — один кадр. */
+    val frames: List<String> = emptyList(),
+    /** Кадров в секунду у покадрового стикера. */
+    val fps: Int = 0,
 ) {
+    /** Гифка: играет сама, без рамки «видео». */
+    val isGif: Boolean
+        get() = kind == MediaKind.Photo && (mime == "image/gif" || path.endsWith(".gif", ignoreCase = true))
+
+    /** Стикер, который двигается: эффект или кадры. */
+    val animated: Boolean get() = animation.isNotEmpty() || frames.size > 1
+
     /** Музыка — документ со звуком: в записи он играет прямо в карточке. */
     val isAudio: Boolean
         get() = kind == MediaKind.Document && !voice &&
@@ -108,6 +121,8 @@ data class Post(
     val createdAt: Long = 0,
     /** Чек-ин: «смотрю фильм», «пробежал 5 км»… null — обычная запись. */
     val checkIn: CheckIn? = null,
+    /** Опрос в записи; null — нет. */
+    val poll: Poll? = null,
 )
 
 /** Минуты с момента createdAt, а для демо-данных — заданные заранее. */
@@ -134,7 +149,16 @@ data class Message(
     val attachments: List<Attachment> = emptyList(),
     val replyTo: ReplyRef? = null,
     val forwardedFrom: String? = null,
+    /** Опрос в сообщении; null — нет. */
+    val poll: Poll? = null,
+    /** Геолокация: место на карте; null — нет. */
+    val place: SharedPlace? = null,
 )
+
+/** Место, которым поделились в переписке: точка и подпись («Я здесь», адрес). */
+data class SharedPlace(val lat: Double, val lon: Double, val title: String = "") {
+    val at: LatLon get() = LatLon(lat, lon)
+}
 
 /**
  * Переписка. pinnedId — закреплённое сообщение: видно полоской вверху.
@@ -149,6 +173,8 @@ data class Chat(
     val pinnedId: Long? = null,
     val onTop: Boolean = false,
     val muted: Boolean = false,
+    /** Свой фон этой переписки; null — общий из настроек. */
+    val backdrop: Backdrop? = null,
 ) {
     val pinned: Message? get() = pinnedId?.let { id -> messages.firstOrNull { it.id == id } }
 
@@ -324,4 +350,6 @@ data class Notifications(
     val friends: Boolean = true,
     /** Итоги месяца и года. */
     val recap: Boolean = true,
+    /** Новые PRISM друзей. */
+    val prism: Boolean = true,
 )

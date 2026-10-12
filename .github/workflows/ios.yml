@@ -63,13 +63,15 @@ jobs:
           ')
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
-      # Ключ Jamendo для медиатеки — из секрета; без него — пустой (только Openverse)
+      # Ключи Jamendo (медиатека) и GIPHY (поиск гифок) — из секретов; без них — пустые
       - name: Ключи API
         env:
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
+          GIPHY_API_KEY: ${{ secrets.IOS_GIPHY_API_KEY }}
         run: |
           plutil -create xml1 Memory/Secrets.plist
           plutil -insert JAMENDO_CLIENT_ID -string "$JAMENDO_CLIENT_ID" Memory/Secrets.plist
+          plutil -insert GIPHY_API_KEY -string "$GIPHY_API_KEY" Memory/Secrets.plist
 
       - name: Сборка и юнит-тесты
         run: |

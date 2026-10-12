@@ -19,6 +19,11 @@ val localProperties = Properties().apply {
 }
 val jamendoClientId: String = env("JAMENDO_CLIENT_ID") ?: localProperties.getProperty("jamendo.clientId").orEmpty()
 
+// Ключ GIPHY для поиска гифок (ключ для Android): переменная GIPHY_API_KEY
+// (в CI — из секрета ANDROID_GIPHY_API_KEY) или giphy.apiKey в local.properties. Без ключа остаются
+// встроенные гифки Memory и свои из галереи.
+val giphyApiKey: String = (env("GIPHY_API_KEY") ?: localProperties.getProperty("giphy.apiKey").orEmpty()).replace("\"", "")
+
 // Пуши FCM: ключи проекта Firebase — переменные FIREBASE_APP_ID,
 // FIREBASE_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_SENDER_ID (в CI — из
 // секретов) или firebase.appId / apiKey / projectId / senderId в
@@ -40,6 +45,7 @@ android {
         versionCode = env("VERSION_CODE")?.toInt() ?: 1
         versionName = env("VERSION_NAME") ?: "0.1.0"
         buildConfigField("String", "JAMENDO_CLIENT_ID", "\"${jamendoClientId.replace("\"", "")}\"")
+        buildConfigField("String", "GIPHY_API_KEY", "\"$giphyApiKey\"")
         buildConfigField("String", "FIREBASE_APP_ID", "\"${firebase("FIREBASE_APP_ID", "firebase.appId")}\"")
         buildConfigField("String", "FIREBASE_API_KEY", "\"${firebase("FIREBASE_API_KEY", "firebase.apiKey")}\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebase("FIREBASE_PROJECT_ID", "firebase.projectId")}\"")
@@ -126,6 +132,9 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.1")
 
     // PRISM: своя камера — запись видео со звуком
+    // Вырезка объекта с фото для стикеров (как в iOS): ML Kit, модель — через Google Play
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+
     // Карта для вкладки «Вместе»: OpenStreetMap, без ключей
     implementation("org.osmdroid:osmdroid-android:6.1.20")
 

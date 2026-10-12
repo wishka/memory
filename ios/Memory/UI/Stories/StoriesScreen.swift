@@ -65,8 +65,10 @@ struct StoriesScreen: View {
                         following: post.author.id == state.me.id ? nil : true,
                         onFollow: { model.toggleFollow(post.author.id) },
                         onAuthor: { model.openPerson(post.author.id) },
-                            onComments: { model.openComments(post.id) },
-                            onOpenMedia: model.openMedia
+                        onComments: { model.openComments(post.id) },
+                        onOpenMedia: model.openMedia,
+                        onVote: { model.votePost(post.id, $0) },
+                        onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil
                     )
                 }
             }

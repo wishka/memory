@@ -60,6 +60,18 @@ import kotlinx.coroutines.launch
 import ru.wishka.memory.ui.components.RecordingBar
 import ru.wishka.memory.ui.components.StickerImage
 import ru.wishka.memory.ui.components.StickerPicker
+import ru.wishka.memory.ui.components.BackdropChooser
+import ru.wishka.memory.ui.components.BackdropView
+import ru.wishka.memory.ui.components.PlaceBubble
+import ru.wishka.memory.ui.components.PlaceViewer
+import ru.wishka.memory.ui.components.PollCard
+import ru.wishka.memory.ui.components.PollEditorDialog
+import ru.wishka.memory.ui.components.rememberLocate
+import ru.wishka.memory.data.Poll
+import ru.wishka.memory.data.SharedPlace
+import ru.wishka.memory.data.backdropOr
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import ru.wishka.memory.ui.components.VoiceBubble
 import ru.wishka.memory.ui.components.VoiceRecorder
 import ru.wishka.memory.ui.ProfileSection
@@ -112,8 +124,14 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
     var forwarding by remember(chat.id) { mutableStateOf<Message?>(null) }
     val scope = rememberCoroutineScope()
     val reversed = chat.messages.asReversed()
-    val stickers = vm.state.collectAsState().value.stickers
+    val ui = vm.state.collectAsState().value
     var choosingSticker by remember { mutableStateOf(false) }
+    var choosingGif by remember { mutableStateOf(false) }
+    var editingPoll by remember { mutableStateOf(false) }
+    var headerMenu by remember { mutableStateOf(false) }
+    var choosingBackdrop by remember { mutableStateOf(false) }
+    var viewingPlace by remember { mutableStateOf<SharedPlace?>(null) }
+    val locate = rememberLocate()
 
     // Голосовое: запись, время и волна, пока пишем
     val recorder = remember(chat.id) { VoiceRecorder(context.applicationContext) }
@@ -159,6 +177,8 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
         else Toast.makeText(context, t("Разрешите доступ к микрофону, чтобы записывать голосовые"), Toast.LENGTH_LONG).show()
     }
 
+    // Фон переписки: свой у чата или общий из настроек
+    BackdropView(chat.backdropOr(ui.backdrop), Modifier.fillMaxSize())
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -199,6 +219,15 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (chat.typing || chat.peer.online) Palette.Lilac else Palette.Mist,
                     )
+                }
+            }
+            Box {
+                Box(
+                    modifier = Modifier.size(44.dp).clip(CircleShape).clickable { headerMenu = true },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(LineIcon.More, Palette.Ink) }
+                MemoryMenu(expanded = headerMenu, onDismiss = { headerMenu = false }) {
+                    MenuRow(LineIcon.Image, t("Фон переписки")) { headerMenu = false; choosingBackdrop = true }
                 }
             }
         }
@@ -248,6 +277,9 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                         }
                     },
                     onDelete = { forEveryone -> vm.deleteMessage(chat.id, message.id, forEveryone) },
+                    onVote = { poll, i -> vm.voteMessage(chat.id, poll.id, i) },
+                    onClosePoll = { poll -> vm.closeMessagePoll(chat.id, poll.id) },
+                    onPlace = { viewingPlace = it },
                 )
             }
         }
@@ -296,7 +328,15 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            AttachButton(picker, documents = true, size = 50.dp, onSticker = { choosingSticker = true })
+            AttachButton(
+                picker, documents = true, size = 50.dp,
+                onSticker = { choosingSticker = true },
+                onGif = { choosingGif = true },
+                onPoll = { editingPoll = true },
+                onLocation = {
+                    locate.locate { at -> if (at != null) { vm.sendPlace(chat.id, at); replyTo = null } }
+                },
+            )
             GlassField(
                 text, { text = it.take(2000) }, t("Сообщение"),
                 maxLines = 5,
@@ -330,14 +370,41 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
         }
     }
 
-    if (choosingSticker) {
+    if (choosingSticker || choosingGif) {
         StickerPicker(
-            stickers,
+            ui.stickers,
             onPick = { sticker -> vm.send(chat.id, "", listOf(sticker), replyTo); replyTo = null },
-            onDismiss = { choosingSticker = false },
+            onDismiss = { choosingSticker = false; choosingGif = false },
             onOpenStudio = { vm.closeChat(); vm.openProfileSection(ProfileSection.Stickers) },
+            packs = ui.stickerPacks,
+            recentGifs = ui.recentGifs,
+            gifs = true,
+            startOnGifs = choosingGif,
         )
     }
+    if (editingPoll) {
+        PollEditorDialog(onDismiss = { editingPoll = false }, onCreate = { draft ->
+            vm.send(chat.id, "", replyTo = replyTo, poll = draft)
+            replyTo = null
+        })
+    }
+    if (choosingBackdrop) {
+        AlertDialog(
+            onDismissRequest = { choosingBackdrop = false },
+            containerColor = Palette.Night,
+            title = { Text(t("Фон переписки"), style = MaterialTheme.typography.titleMedium, color = Palette.Ink) },
+            text = {
+                BackdropChooser(
+                    chat.backdropOr(ui.backdrop),
+                    onPick = { vm.setChatBackdrop(chat.id, it) },
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    onReset = if (chat.backdrop != null) ({ vm.setChatBackdrop(chat.id, null) }) else null,
+                )
+            },
+            confirmButton = { TextButton(onClick = { choosingBackdrop = false }) { Text(t("Готово"), color = Palette.Lilac) } },
+        )
+    }
+    viewingPlace?.let { place -> PlaceViewer(place, onClose = { viewingPlace = null }) }
 
     forwarding?.let { message ->
         ForwardDialog(
@@ -448,6 +515,9 @@ private fun Bubble(
     onQuote: (Long) -> Unit,
     onOpen: (Attachment) -> Unit,
     onDelete: (Boolean) -> Unit,
+    onVote: (Poll, Int) -> Unit,
+    onClosePoll: (Poll) -> Unit,
+    onPlace: (SharedPlace) -> Unit,
 ) {
     val mine = message.fromMe
     var menu by remember { mutableStateOf(false) }
@@ -521,6 +591,10 @@ private fun Bubble(
                     if (doc.voice) VoiceBubble(doc)
                     else DocumentRow(doc, Modifier.fillMaxWidth(), onClick = { onOpen(doc) })
                 }
+                message.poll?.let { poll ->
+                    PollCard(poll, onVote = { onVote(poll, it) }, modifier = Modifier.width(270.dp), onClose = if (mine) ({ onClosePoll(poll) }) else null)
+                }
+                message.place?.let { place -> PlaceBubble(place) { onPlace(place) } }
                 Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
                     if (message.text.isNotEmpty()) {
                         Text(message.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)

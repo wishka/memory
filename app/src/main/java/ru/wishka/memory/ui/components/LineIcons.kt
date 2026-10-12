@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic, Together }
+enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic, Together, Poll, Gif }
 
 @Composable
 fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -563,6 +563,19 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                 for (i in 0..1) for (j in 0..1) {
                     drawRoundRect(color, Offset(s * (0.16f + i * 0.38f), s * (0.16f + j * 0.38f)), Size(s * 0.30f, s * 0.30f), CornerRadius(s * 0.06f), style = stroke)
                 }
+            }
+            LineIcon.Poll -> {
+                // Три полосы разной длины — как ответы опроса
+                for ((i, w) in listOf(0.64f, 0.40f, 0.52f).withIndex()) {
+                    drawRoundRect(color, Offset(s * 0.18f, s * (0.22f + i * 0.22f)), Size(s * w, s * 0.12f), CornerRadius(s * 0.06f), style = stroke)
+                }
+            }
+            LineIcon.Gif -> {
+                // Кадр с ромбом-искрой: живая картинка
+                drawRoundRect(color, Offset(s * 0.14f, s * 0.22f), Size(s * 0.72f, s * 0.56f), CornerRadius(s * 0.12f), style = stroke)
+                diamond(Offset(s * 0.5f, s * 0.5f), s * 0.13f, color, stroke)
+                drawLine(color, Offset(s * 0.24f, s * 0.22f), Offset(s * 0.24f, s * 0.78f), stroke.width * 0.7f)
+                drawLine(color, Offset(s * 0.76f, s * 0.22f), Offset(s * 0.76f, s * 0.78f), stroke.width * 0.7f)
             }
             LineIcon.Award -> {
                 // Кристалл-награда с лентами

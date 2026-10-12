@@ -162,8 +162,11 @@ private struct ChatRow: View {
 /// Текст сообщения для списка чатов; без текста — что приложено.
 func previewOf(_ message: Message) -> String {
     if !message.text.isEmpty { return message.text }
+    if let poll = message.poll { return t("Опрос") + ": " + poll.question }
+    if let place = message.place { return t("Геолокация") + (place.title.isEmpty ? "" : ": " + place.title) }
     let a = message.attachments
     if a.isEmpty { return "" }
+    if a.allSatisfy(\.isGif) { return "GIF" }
     if a.count == 1, a[0].voice { return t("Голосовое сообщение") + " · " + durationTitle(a[0].durationMs ?? 0) }
     if a.allSatisfy(\.sticker) { return t("Стикер") }
     if a.allSatisfy({ $0.kind == .photo }) { return a.count == 1 ? t("Фото") : tf("%s фото", a.count) }

@@ -86,6 +86,8 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                     PostCard(
                         post,
                         onLike = { vm.toggleLike(post.id) },
+                        onVote = { vm.votePost(post.id, it) },
+                        onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
                         onComments = { vm.openComments(post.id) },
                         onOpenMedia = vm::openMedia,
                     )

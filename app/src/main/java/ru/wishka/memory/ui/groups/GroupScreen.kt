@@ -38,6 +38,9 @@ import androidx.compose.ui.platform.LocalContext
 import ru.wishka.memory.data.Attachment
 import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.ui.components.AttachButton
+import ru.wishka.memory.ui.components.PendingPoll
+import ru.wishka.memory.ui.components.PollEditorDialog
+import ru.wishka.memory.data.PollDraft
 import ru.wishka.memory.ui.components.StickerPicker
 import ru.wishka.memory.ui.ProfileSection
 import ru.wishka.memory.ui.components.GroupCover
@@ -70,6 +73,9 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
     var text by rememberSaveable(group.id) { mutableStateOf("") }
     var media by remember(group.id) { mutableStateOf<List<Attachment>>(emptyList()) }
     var choosingMusic by remember { mutableStateOf(false) }
+    var choosingGif by remember { mutableStateOf(false) }
+    var editingPoll by remember { mutableStateOf(false) }
+    var poll by remember { mutableStateOf<PollDraft?>(null) }
     var choosingSticker by remember { mutableStateOf(false) }
     val picker = rememberMediaPicker { picked -> media = (media + picked).take(AppViewModel.MAX_MEDIA) }
     val canPost = group.joined && (!group.onlyOwnerPosts || group.mine)
@@ -125,6 +131,7 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column {
                         GlassField(text, { text = it.take(2000) }, t("Написать в группу"))
+                        poll?.let { p -> PendingPoll(p, onRemove = { poll = null }, modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()) }
                         PendingAttachments(
                             media,
                             onRemove = { item -> media = media - item; MediaFiles.delete(item) },
@@ -134,7 +141,13 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            AttachButton(picker, documents = true, size = 40.dp, onMusic = { choosingMusic = true }, onSticker = { choosingSticker = true })
+                            AttachButton(
+                                picker, documents = true, size = 40.dp,
+                                onMusic = { choosingMusic = true },
+                                onSticker = { choosingSticker = true },
+                                onGif = { choosingGif = true },
+                                onPoll = { editingPoll = true },
+                            )
                             Spacer(Modifier.width(10.dp))
                             Text(
                                 if (media.isEmpty()) t("Фото, видео, документы, музыка")
@@ -143,10 +156,11 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
                                 color = Palette.Mist,
                                 modifier = Modifier.weight(1f),
                             )
-                            GlowButton(t("Опубликовать"), enabled = text.isNotBlank() || media.isNotEmpty(), onClick = {
-                                vm.postInGroup(group.id, text, media)
+                            GlowButton(t("Опубликовать"), enabled = text.isNotBlank() || media.isNotEmpty() || poll != null, onClick = {
+                                vm.postInGroup(group.id, text, media, poll)
                                 text = ""
                                 media = emptyList()
+                                poll = null
                             })
                         }
                     }
@@ -169,6 +183,8 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
             PostCard(
                 post,
                 onLike = { vm.toggleGroupPostLike(group.id, post.id) },
+                onVote = { vm.votePost(post.id, it) },
+                onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
                 onAuthor = { vm.openPerson(post.author.id) },
                 onComments = { vm.openComments(post.id) },
                 onOpenMedia = vm::openMedia,
@@ -190,14 +206,19 @@ fun GroupScreen(vm: AppViewModel, state: UiState, group: Group, contentPadding: 
         item { Spacer(Modifier.height(8.dp)) }
     }
 
-    if (choosingSticker) {
+    if (choosingSticker || choosingGif) {
         StickerPicker(
             state.stickers,
             onPick = { media = (media + it).take(AppViewModel.MAX_MEDIA) },
-            onDismiss = { choosingSticker = false },
+            onDismiss = { choosingSticker = false; choosingGif = false },
             onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
+            packs = state.stickerPacks,
+            recentGifs = state.recentGifs,
+            gifs = true,
+            startOnGifs = choosingGif,
         )
     }
+    if (editingPoll) PollEditorDialog(onDismiss = { editingPoll = false }, onCreate = { poll = it })
     if (choosingMusic) {
         MusicChooser(
             tracks = state.tracks,

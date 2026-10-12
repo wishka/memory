@@ -11,6 +11,7 @@ enum LineIcon {
     case gear, shield, lock, block, textSize, globe, bellOff, more, eye, check
     case flash, flip, scissors, speed, crop, filter, sliders, text, sticker, volume, rotate, mirror, pause
     case copy, flag, search, brush, smile, undo, grid, award, mic, together
+    case poll, gif
 }
 
 struct Glyph: View {
@@ -631,6 +632,18 @@ struct Glyph: View {
             strokePath(diamond(s, 0.5, 0.38, 0.24))
             strokePath(line(s, 0.40, 0.60, 0.32, 0.88))
             strokePath(line(s, 0.60, 0.60, 0.68, 0.88))
+        case .poll:
+            // Три полосы разной длины — как ответы опроса
+            for (i, w) in ([0.64, 0.40, 0.52] as [CGFloat]).enumerated() {
+                strokePath(roundRect(s, 0.18, 0.22 + CGFloat(i) * 0.22, w, 0.12, 0.06))
+            }
+        case .gif:
+            // Кадр с ромбом-искрой: живая картинка
+            strokePath(roundRect(s, 0.14, 0.22, 0.72, 0.56, 0.12))
+            strokePath(diamond(s, 0.5, 0.5, 0.13))
+            let thin = StrokeStyle(lineWidth: 1.05, lineCap: .butt)
+            context.stroke(line(s, 0.24, 0.22, 0.24, 0.78), with: shading, style: thin)
+            context.stroke(line(s, 0.76, 0.22, 0.76, 0.78), with: shading, style: thin)
         case .info:
             strokePath(diamond(s, 0.5, 0.5, 0.34))
             strokePath(line(s, 0.5, 0.46, 0.5, 0.64))

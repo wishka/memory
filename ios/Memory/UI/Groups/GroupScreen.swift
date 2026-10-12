@@ -10,6 +10,9 @@ struct GroupScreen: View {
     @State private var media: [Attachment] = []
     @State private var choosingMusic = false
     @State private var choosingSticker = false
+    @State private var choosingGif = false
+    @State private var editingPoll = false
+    @State private var poll: PollDraft?
 
     private var canPost: Bool { group.joined && (!group.onlyOwnerPosts || group.mine) }
 
@@ -36,6 +39,8 @@ struct GroupScreen: View {
                             onComments: { model.openComments(post.id) },
                             onOpenMedia: model.openMedia,
                             pinned: post.id == group.pinnedPostId,
+                            onVote: { model.votePost(post.id, $0) },
+                            onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil,
                             menu: menu(post)
                         )
                     }
@@ -45,16 +50,29 @@ struct GroupScreen: View {
             .ignoresSafeArea(edges: .top)
             .scrollDismissesKeyboard(.interactively)
         }
-        .sheet(isPresented: $choosingSticker) {
-            StickerPicker(stickers: model.state.stickers, onPick: { media = Array((media + [$0]).prefix(AppModel.maxMedia)) }) {
-                model.openProfileSection(.stickers)
-            }
+        .sheet(isPresented: $choosingSticker) { picker(gifs: false) }
+        .sheet(isPresented: $choosingGif) { picker(gifs: true) }
+        .sheet(isPresented: $editingPoll) {
+            PollEditorSheet { poll = $0 }
         }
         .sheet(isPresented: $choosingMusic) {
             MusicChooser(tracks: model.state.tracks, onPicked: { picked in
                 media = Array((media + picked).prefix(AppModel.maxMedia))
             }, onClose: { choosingMusic = false })
         }
+    }
+
+    /// Стикеры и гифки — один выбор; из «GIF» он открывается сразу на гифках.
+    private func picker(gifs: Bool) -> some View {
+        StickerPicker(
+            stickers: model.state.stickers,
+            onPick: { media = Array((media + [$0]).prefix(AppModel.maxMedia)) },
+            onOpenStudio: { model.openProfileSection(.stickers) },
+            packs: model.state.stickerPacks,
+            recentGifs: model.state.recentGifs,
+            gifs: true,
+            startOnGifs: gifs
+        )
     }
 
     private func menu(_ post: Post) -> [GlassAction] {
@@ -68,7 +86,7 @@ struct GroupScreen: View {
             })
         }
         items.append(GlassAction(icon: .trash, title: t("Удалить запись"), destructive: true) {
-            post.media.forEach { MediaFiles.delete($0) }
+            post.media.forEach(deleteAttachmentFiles)
             model.deleteGroupPost(group.id, post.id)
         })
         return items
@@ -127,23 +145,35 @@ struct GroupScreen: View {
             GlassCard {
                 VStack(spacing: 0) {
                     GlassField(placeholder: t("Написать в группу"), text: $text, limit: 2000)
+                    if let poll {
+                        PendingPoll(draft: poll) { self.poll = nil }
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 10)
+                    }
                     PendingAttachments(items: media) { item in
                         media.removeAll { $0.id == item.id }
-                        MediaFiles.delete(item)
+                        deleteAttachmentFiles(item)
                     }
                     .padding(.bottom, media.isEmpty ? 0 : 10)
                     HStack(spacing: 10) {
-                        AttachButton(documents: true, size: 40, onMusic: { choosingMusic = true }, onSticker: { choosingSticker = true }) { picked in
+                        AttachButton(
+                            documents: true, size: 40,
+                            onMusic: { choosingMusic = true },
+                            onSticker: { choosingSticker = true },
+                            onGif: { choosingGif = true },
+                            onPoll: { editingPoll = true }
+                        ) { picked in
                             media = Array((media + picked).prefix(AppModel.maxMedia))
                         }
                         Text(media.isEmpty ? t("Фото, видео, документы, музыка") : plural(media.count, "вложение", "вложения", "вложений"))
                             .textStyle(.bodySmall, Palette.mist)
                             .lineLimit(1)
                         Spacer()
-                        GlowButton(title: t("Опубликовать"), enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty) {
-                            model.postInGroup(group.id, text, media: media)
+                        GlowButton(title: t("Опубликовать"), enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty || poll != nil) {
+                            model.postInGroup(group.id, text, media: media, poll: poll)
                             text = ""
                             media = []
+                            poll = nil
                         }
                     }
                     .padding(.horizontal, 12)

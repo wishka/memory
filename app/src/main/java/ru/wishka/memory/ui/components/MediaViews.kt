@@ -77,14 +77,17 @@ fun rememberThumbnail(attachment: Attachment, maxSide: Int = 720): ImageBitmap? 
 /** Плитка фото или видео: картинка с обрезкой по рамке, у видео — значок «пуск». */
 @Composable
 fun MediaTile(attachment: Attachment, modifier: Modifier = Modifier, maxSide: Int = 720, onClick: (() -> Unit)? = null) {
-    val thumb = rememberThumbnail(attachment, maxSide)
+    val thumb = if (attachment.isGif) null else rememberThumbnail(attachment, maxSide)
     Box(
         modifier = modifier
             .background(Palette.Plum.copy(alpha = 0.6f))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        if (thumb != null) {
+        if (attachment.isGif) {
+            GifImage(attachment.path, Modifier.fillMaxSize(), crop = true)
+            GifBadge(Modifier.align(Alignment.BottomStart).padding(8.dp))
+        } else if (thumb != null) {
             Image(thumb, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
             Glyph(if (attachment.kind == MediaKind.Video) LineIcon.Video else LineIcon.Image, Palette.Mist)
@@ -101,19 +104,34 @@ fun MediaTile(attachment: Attachment, modifier: Modifier = Modifier, maxSide: In
     }
 }
 
+/** Метка «GIF» на живой картинке. */
+@Composable
+fun GifBadge(modifier: Modifier = Modifier) {
+    Text(
+        "GIF",
+        style = MaterialTheme.typography.labelSmall,
+        color = Palette.Ink,
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Palette.Void.copy(alpha = 0.6f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
 /**
  * Фото и видео записи. Одно — во всю ширину; несколько — листаются
- * вбок, с номером «2 / 5». Нажатие открывает на весь экран.
+ * вбок, с номером «2 / 5». Нажатие открывает на весь экран, двумя
+ * пальцами — увеличить прямо в ленте.
  */
 @Composable
 fun PostMedia(media: List<Attachment>, onOpen: (Attachment) -> Unit, modifier: Modifier = Modifier, height: Dp = 260.dp) {
     if (media.isEmpty()) return
     if (media.size == 1) {
-        MediaTile(media[0], modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(16.dp)), onClick = { onOpen(media[0]) })
+        MediaTile(media[0], modifier.fillMaxWidth().height(height).pinchZoom().clip(RoundedCornerShape(16.dp)), onClick = { onOpen(media[0]) })
         return
     }
     val pager = rememberPagerState(pageCount = { media.size })
-    Box(modifier = modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(16.dp))) {
+    Box(modifier = modifier.fillMaxWidth().height(height).pinchZoom().clip(RoundedCornerShape(16.dp))) {
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
             MediaTile(media[page], Modifier.fillMaxSize(), onClick = { onOpen(media[page]) })
         }
@@ -180,10 +198,14 @@ fun MediaViewer(attachment: Attachment, onClose: () -> Unit) {
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
-                else -> {
-                    val image = rememberThumbnail(attachment, maxSide = 2048)
-                    if (image != null) {
-                        Image(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                else -> ZoomableBox(Modifier.fillMaxSize()) {
+                    if (attachment.isGif) {
+                        GifImage(attachment.path, Modifier.fillMaxSize())
+                    } else {
+                        val image = rememberThumbnail(attachment, maxSide = 2048)
+                        if (image != null) {
+                            Image(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                        }
                     }
                 }
             }
@@ -286,6 +308,12 @@ fun AttachButton(
     onSticker: (() -> Unit)? = null,
     /** «Чек-ин» в меню; null — пункта нет. */
     onCheckIn: (() -> Unit)? = null,
+    /** «GIF» — встроенные, свои и поиск GIPHY; null — пункта нет. */
+    onGif: (() -> Unit)? = null,
+    /** «Опрос»; null — пункта нет. */
+    onPoll: (() -> Unit)? = null,
+    /** «Геолокация» — где я сейчас, точкой на карте; null — пункта нет. */
+    onLocation: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
@@ -304,7 +332,10 @@ fun AttachButton(
             if (documents) MenuRow(LineIcon.Document, t("Документ")) { open = false; picker.pickDocuments() }
             if (onMusic != null) MenuRow(LineIcon.Music, t("Музыка")) { open = false; onMusic() }
             if (onSticker != null) MenuRow(LineIcon.Sticker, t("Стикер")) { open = false; onSticker() }
+            if (onGif != null) MenuRow(LineIcon.Gif, t("GIF")) { open = false; onGif() }
+            if (onPoll != null) MenuRow(LineIcon.Poll, t("Опрос")) { open = false; onPoll() }
             if (onCheckIn != null) MenuRow(LineIcon.Pin, t("Чек-ин")) { open = false; onCheckIn() }
+            if (onLocation != null) MenuRow(LineIcon.Globe, t("Геолокация")) { open = false; onLocation() }
         }
     }
 }
