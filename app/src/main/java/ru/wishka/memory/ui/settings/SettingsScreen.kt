@@ -41,6 +41,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import ru.wishka.memory.data.Audience
+import ru.wishka.memory.data.Feedback
+import ru.wishka.memory.data.InviteAction
+import ru.wishka.memory.data.amountNumber
+import ru.wishka.memory.data.growthStats
+import ru.wishka.memory.ui.components.shareInvite
 import ru.wishka.memory.data.DevicePrefs
 import ru.wishka.memory.data.Notifications
 import ru.wishka.memory.data.Privacy
@@ -119,6 +124,7 @@ fun SettingsScreen(
             SettingsPage.TextSize -> item { TextSizePage(prefs) }
             SettingsPage.Language -> item { LanguagePage(prefs) }
             SettingsPage.About -> item { AboutPage(version) }
+            SettingsPage.Growth -> item { GrowthPage(vm, state, version) }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
@@ -149,6 +155,11 @@ private fun LazyListScope.mainPage(vm: AppViewModel, state: UiState, version: St
             NavRow(LineIcon.Globe, t("Язык"), L10n.choice.title) { vm.openSettings(SettingsPage.Language) }
             Divider()
             NavRow(LineIcon.Info, t("О приложении"), "Memory $version") { vm.openSettings(SettingsPage.About) }
+        }
+    }
+    item {
+        Card {
+            NavRow(LineIcon.Gift, t("Друзья и идеи"), state.inviteCode) { vm.openSettings(SettingsPage.Growth) }
         }
     }
     item {
@@ -494,6 +505,69 @@ private fun AboutPage(version: String) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Caption(t("Шрифты"))
                 Bullet(t("Unbounded и Inter — под лицензией SIL Open Font License."))
+            }
+        }
+    }
+}
+
+// ==================== ДРУЗЬЯ И ИДЕИ ====================
+
+/**
+ * Пригласить друзей, свои цифры роста и «Предложить идею». K = i × c:
+ * сколько приглашений отправлено и какая доля приходит — вторую цифру
+ * посчитает сервер, до него показываем оценку.
+ */
+@Composable
+private fun GrowthPage(vm: AppViewModel, state: UiState, version: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val stats = growthStats(state.growth)
+    var text by rememberSaveable { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Card {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Caption(t("Ваш код приглашения"))
+                Text(state.inviteCode, style = MaterialTheme.typography.displaySmall, color = Palette.Ink)
+                Text(
+                    t("Друг откроет ссылку — Memory запомнит, кто его позвал. Лучше всего работают приглашения к делу: дорисовать рисунок, взять книгу, пойти на вылазку."),
+                    style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+                )
+                GlowButton(t("Пригласить друзей"), onClick = { shareInvite(context, vm, InviteAction.App) })
+            }
+        }
+        Card {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Caption(t("Ваш вклад в рост"))
+                Bullet(tf("Приглашений отправлено: %s", stats.invitesSent))
+                Bullet(tf("Карточек отправлено: %s", stats.cardsShared))
+                Bullet(tf("Чек-инов: %s", stats.checkIns))
+                state.invitedBy?.let { Bullet(tf("Вас позвал(а) %s", it.from.ifEmpty { it.code })) }
+                Text(
+                    tf("Оценка K ≈ %s: приглашения × доля пришедших (берём 10%%, точную посчитает сервер).", amountNumber(Math.round(stats.kEstimate() * 100) / 100.0)),
+                    style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+                )
+            }
+        }
+        Card {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Caption(t("Идеи и ошибки"))
+                Text(
+                    t("Что добавить или что сломалось? Идея, которую предлагают многие, точно попадёт в приложение. Откроется GitHub — понадобится учётная запись."),
+                    style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+                )
+                GlassField(text, { text = it.take(1000) }, t("Опишите в паре предложений"), Modifier.fillMaxWidth().glass(RoundedCornerShape(18.dp)))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GlowButton(t("Предложить идею"), enabled = text.isNotBlank(), onClick = {
+                        vm.logFeedback(true)
+                        runCatching { uri.openUri(Feedback.link(true, text.trim(), version)) }
+                        text = ""
+                    })
+                    GhostButton(t("Сообщить об ошибке"), onClick = {
+                        vm.logFeedback(false)
+                        runCatching { uri.openUri(Feedback.link(false, text.trim().ifEmpty { t("Опишите, что случилось") }, version)) }
+                        text = ""
+                    })
+                }
             }
         }
     }

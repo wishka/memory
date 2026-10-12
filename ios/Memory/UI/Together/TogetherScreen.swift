@@ -285,6 +285,7 @@ struct EmojiBadge: View {
 private struct ChallengesSection: View {
     let model: AppModel
     @State private var contributing: CommunityGoal?
+    @State private var creating = false
 
     var body: some View {
         let together = model.state.together
@@ -301,9 +302,23 @@ private struct ChallengesSection: View {
             ForEach(together.goals) { goal in
                 goalCard(goal)
             }
+            // Своя цель — право за вклад в чужие
+            if let own = model.state.unlocks.first(where: { $0.unlock == .ownGoal }) {
+                TogetherCard {
+                    if own.open {
+                        TogetherHint(text: t("Вы открыли право предложить сообществу свою цель."))
+                        GlowButton(title: t("Своя цель")) { creating = true }
+                    } else {
+                        TogetherHint(text: "🔒 " + t("Своя общая цель") + ": " + own.unlock.how + " · " + tf("осталось %s", own.left))
+                    }
+                }
+            }
         }
         .sheet(item: $contributing) { goal in
             ContributeSheet(model: model, goal: goal) { contributing = nil }
+        }
+        .sheet(isPresented: $creating) {
+            OwnGoalSheet(model: model) { creating = false }
         }
     }
 
@@ -363,6 +378,47 @@ private struct ContributeSheet: View {
     }
 }
 
+/// Своя общая цель: название, как засчитывается вклад, сколько и чего.
+private struct OwnGoalSheet: View {
+    let model: AppModel
+    let onClose: () -> Void
+    @State private var emoji = "🎯"
+    @State private var title = ""
+    @State private var description = ""
+    @State private var unit = ""
+    @State private var target = ""
+    @State private var error: String?
+
+    var body: some View {
+        TogetherSheet(title: t("Своя цель")) {
+            HStack(spacing: 6) {
+                ForEach(["🎯", "🌳", "🧹", "🚲", "📚", "🐾"], id: \.self) { e in
+                    Chip(text: e, active: emoji == e) { emoji = e }
+                }
+            }
+            TogetherField(placeholder: t("Цель: «Уберём 100 дворов»"), text: $title, limit: 60)
+                .onChange(of: title) { _, _ in error = nil }
+            TogetherField(placeholder: t("Как засчитывается вклад"), text: $description, limit: 300, singleLine: false)
+            HStack(spacing: 8) {
+                TogetherField(placeholder: t("Сколько"), text: $target, limit: 9, keyboard: .numberPad)
+                    .onChange(of: target) { _, value in
+                        let digits = String(value.filter(\.isNumber).prefix(9))
+                        if digits != value { target = digits }
+                    }
+                TogetherField(placeholder: t("Чего: дворов"), text: $unit, limit: 12)
+            }
+            TogetherError(text: error)
+            HStack(spacing: 10) {
+                GhostButton(title: t("Отмена"), action: onClose)
+                GlowButton(title: t("Создать"), enabled: !title.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    error = model.createGoal(emoji: emoji, title: title, description: description, unit: unit, target: Double(target) ?? 0)
+                    if error == nil { onClose() }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 2. Банк времени
 
 extension SkillOffer: Identifiable {
@@ -379,6 +435,7 @@ private struct SkillsSection: View {
     let model: AppModel
     @State private var adding: SkillSide?
     @State private var dealWith: SkillOffer?
+    @State private var sharing: SharePayload?
 
     var body: some View {
         let state = model.state
@@ -389,6 +446,13 @@ private struct SkillsSection: View {
             TogetherCard {
                 TogetherCaption(text: t("Банк времени"))
                 Text(minutesTitle(together.balance)).textStyle(.headline)
+                if let mentor = state.unlocks.first(where: { $0.unlock == .mentor }) {
+                    Text(mentor.open
+                         ? "🎓 " + t("Вы наставник — вас первым видят в подборе")
+                         : "🎓 " + mentor.unlock.how + " · " + tf("осталось %s", mentor.left))
+                        .textStyle(.labelLarge, Palette.lilac)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 TogetherHint(text: t("Никаких денег: научили кого-то 30 минут — получили 30 минут, потратить их можно на любой навык у любого. Обмен «я тебе — ты мне» баланс не меняет."))
             }
             TogetherCard {
@@ -417,7 +481,15 @@ private struct SkillsSection: View {
             ForEach(Array(matches.enumerated()), id: \.offset) { _, match in
                 offerCard(state, match.offer, score: match.score)
             }
+            // Нужного навыка нет среди знакомых — позвать того, кто умеет
+            TogetherCard {
+                TogetherHint(text: t("Знаете того, кто умеет то, чему вы хотите научиться? Позовите — обменяетесь навыками."))
+                GhostButton(title: t("Позвать в обмен навыками")) {
+                    sharing = shareInvite(model, .lesson, title: together.myWant.first ?? "")
+                }
+            }
         }
+        .shareSheet($sharing)
         .sheet(item: $adding) { side in
             AddSkillSheet(model: model, teach: side == .teach) { adding = nil }
         }

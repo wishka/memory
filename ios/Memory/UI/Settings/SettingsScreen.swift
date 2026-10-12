@@ -39,6 +39,7 @@ struct SettingsScreen: View {
                 case .textSize: TextSizePage()
                 case .language: LanguagePage()
                 case .about: AboutPage()
+                case .growth: GrowthPage(model: model)
                 }
             }
             .padding(.top, 12)
@@ -86,6 +87,9 @@ private struct MainSettings: View {
             NavRow(icon: .globe, title: t("Язык"), value: L10n.shared.choice.title) { model.openSettings(.language) }
             Divider()
             NavRow(icon: .info, title: t("О приложении"), value: "Memory \(appVersion)") { model.openSettings(.about) }
+        }
+        SettingsCard {
+            NavRow(icon: .gift, title: t("Друзья и идеи"), value: state.inviteCode) { model.openSettings(.growth) }
         }
         SettingsCard {
             Button { confirmLogout = true } label: {
@@ -460,6 +464,83 @@ private struct AboutPage: View {
             }
             .padding(16)
         }
+    }
+}
+
+// MARK: - Друзья и идеи
+
+/// Пригласить друзей, свои цифры роста и «Предложить идею». K = i × c:
+/// сколько приглашений отправлено и какая доля приходит — вторую цифру
+/// посчитает сервер, до него показываем оценку.
+private struct GrowthPage: View {
+    let model: AppModel
+    @Environment(\.openURL) private var openURL
+    @State private var text = ""
+    @State private var sharing: SharePayload?
+
+    var body: some View {
+        let state = model.state
+        let stats = growthStats(state.growth)
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Caption(text: "Ваш код приглашения")
+                Text(state.inviteCode).textStyle(.display)
+                Text(t("Друг откроет ссылку — Memory запомнит, кто его позвал. Лучше всего работают приглашения к делу: дорисовать рисунок, взять книгу, пойти на вылазку."))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+                GlowButton(title: t("Пригласить друзей")) { sharing = shareInvite(model, .app) }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Caption(text: "Ваш вклад в рост")
+                Bullet(text: tf("Приглашений отправлено: %s", stats.invitesSent))
+                Bullet(text: tf("Карточек отправлено: %s", stats.cardsShared))
+                Bullet(text: tf("Чек-инов: %s", stats.checkIns))
+                if let invitedBy = state.invitedBy {
+                    Bullet(text: tf("Вас позвал(а) %s", invitedBy.from.isEmpty ? invitedBy.code : invitedBy.from))
+                }
+                // На Android «%%» остаётся двумя знаками — здесь показываем один
+                Text(tf("Оценка K ≈ %s: приглашения × доля пришедших (берём 10%%, точную посчитает сервер).",
+                        amountNumber((stats.kEstimate() * 100).rounded() / 100)).replacingOccurrences(of: "%%", with: "%"))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Caption(text: "Идеи и ошибки")
+                Text(t("Что добавить или что сломалось? Идея, которую предлагают многие, точно попадёт в приложение. Откроется GitHub — понадобится учётная запись."))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+                GlassField(placeholder: t("Опишите в паре предложений"), text: $text, limit: 1000)
+                    .glass(radius: 18)
+                HStack(spacing: 10) {
+                    GlowButton(title: t("Предложить идею"), enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                        model.logFeedback(true)
+                        openLink(Feedback.link(idea: true, text: text.trimmingCharacters(in: .whitespacesAndNewlines), version: appVersion))
+                        text = ""
+                    }
+                    GhostButton(title: t("Сообщить об ошибке")) {
+                        model.logFeedback(false)
+                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        openLink(Feedback.link(idea: false, text: trimmed.isEmpty ? t("Опишите, что случилось") : trimmed, version: appVersion))
+                        text = ""
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .shareSheet($sharing)
+    }
+
+    private func openLink(_ link: String) {
+        if let url = URL(string: link) { openURL(url) }
     }
 }
 

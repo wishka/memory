@@ -21,6 +21,12 @@ data class CheckIn(
     val amount: Double = 0.0,
     /** Единица: «км», «стр.», «мин» или своя. */
     val unit: String = "",
+    /** Оценка 1–5 (фильм, книга, игра, место); 0 — без оценки. */
+    val rating: Int = 0,
+    /** Книга: «want» — хочу прочитать, «reading» — читаю, «done» — прочитал; "" — не указано. */
+    val status: String = "",
+    /** Сколько длилось, минуты (пробежка, заезд): из этого — темп; 0 — не указано. */
+    val minutes: Int = 0,
 ) {
     val builtIn: CheckInActivity? get() = CHECK_IN_ACTIVITIES.firstOrNull { it.id == activity }
 
@@ -32,7 +38,52 @@ data class CheckIn(
     /** «7 км», «120 стр.»; "" — без количества. */
     val amountTitle: String
         get() = if (amount <= 0) "" else "${amountNumber(amount)} $displayUnit".trim()
+
+    /** «5:30 /км» для бега и ходьбы, «18 км/ч» для велосипеда; "" — не посчитать. */
+    val paceTitle: String get() = paceTitle(activity, amount, minutes, unit)
+
+    /** «Прочитал», «Читаю», «Хочу прочитать»; "" — без статуса. */
+    val statusTitle: String get() = BookStatus.of(status)?.title ?: ""
+
+    /** Ключ для полки: одна и та же книга или фильм, как бы ни написали регистр. */
+    val subjectKey: String get() = subjectKey(subject)
 }
+
+/** «Дюна » и «дюна» — одно и то же. */
+fun subjectKey(subject: String): String = subject.trim().lowercase().replace('ё', 'е').replace(Regex("\\s+"), " ")
+
+/** Статус книги в чек-ине. */
+enum class BookStatus(val id: String, private val ru: String) {
+    Want("want", "Хочу прочитать"),
+    Reading("reading", "Читаю"),
+    Done("done", "Прочитал");
+
+    val title: String get() = t(ru)
+
+    companion object {
+        fun of(id: String): BookStatus? = entries.firstOrNull { it.id == id }
+    }
+}
+
+/** Активности, где время превращается в темп или скорость. */
+val TIMED_ACTIVITIES = setOf("run", "walk", "bike", "swim")
+
+/** Что оценивают звёздами. */
+val RATED_ACTIVITIES = setOf("movie", "series", "book", "game", "concert", "coffee", "food")
+
+/** Темп: минуты на километр (бег, ходьба, плавание) или скорость (велосипед). */
+fun paceTitle(activity: String, km: Double, minutes: Int, unit: String = "км"): String {
+    if (km <= 0 || minutes <= 0 || !isKilometers(unit)) return ""
+    return if (activity == "bike") {
+        "${amountNumber(Math.round(km / (minutes / 60.0) * 10) / 10.0)} ${t("км/ч")}"
+    } else {
+        val secPerKm = Math.round(minutes * 60.0 / km).toInt()
+        "%d:%02d /%s".format(secPerKm / 60, secPerKm % 60, t("км"))
+    }
+}
+
+/** Секунды на километр; null — без времени или расстояния. */
+fun paceSeconds(km: Double, minutes: Int): Int? = if (km > 0 && minutes > 0) Math.round(minutes * 60.0 / km).toInt() else null
 
 /** «7», «7,5» — без лишних нулей. */
 fun amountNumber(value: Double): String =
@@ -98,8 +149,19 @@ data class CheckInTemplate(
         CheckIn(id, emoji, title, subject.trim(), if (unit.isBlank()) 0.0 else amount, unit.trim())
 }
 
-fun CheckInActivity.checkIn(subject: String, amount: Double) =
-    CheckIn(id, emoji, title, subject.trim(), if (unit.isEmpty()) 0.0 else amount, unit)
+/** Готовые сценарии над полем записи: вместо «чистого листа» — одно нажатие. */
+val QUICK_SCENARIOS = listOf("movie", "run", "book", "place")
+
+fun CheckInActivity.checkIn(subject: String, amount: Double, rating: Int = 0, status: String = "", minutes: Int = 0) =
+    CheckIn(
+        id, emoji, title, subject.trim(), if (unit.isEmpty()) 0.0 else amount, unit,
+        rating = if (id in RATED_ACTIVITIES) rating.coerceIn(0, 5) else 0,
+        status = if (id == "book") status else "",
+        minutes = if (id in TIMED_ACTIVITIES) minutes.coerceIn(0, 24 * 60) else 0,
+    )
+
+/** Сценарий быстрого чек-ина: встроенное занятие по номеру. */
+fun activity(id: String): CheckInActivity? = CHECK_IN_ACTIVITIES.firstOrNull { it.id == id }
 
 /** Эмодзи для своих чек-инов — на выбор. */
 val CHECK_IN_EMOJI = listOf(

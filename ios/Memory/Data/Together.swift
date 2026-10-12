@@ -86,8 +86,33 @@ struct CommunityGoal: Identifiable, Equatable, Codable {
     var metric: GoalMetric
     var joined: Bool = false
     var mine: Double = 0
+    /// Кто предложил: 0 — сообщество; свой номер — ваша цель.
+    var authorId: Int = 0
 
     var progress: Double { target <= 0 ? 0 : min(1, max(0, total / target)) }
+}
+
+/// Новые поля — необязательные в файле: старые сохранения читаются без них.
+extension CommunityGoal {
+    private enum CodingKeys: String, CodingKey {
+        case id, emoji, title, description, unit, target, total, participants, metric, joined, mine, authorId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        emoji = try c.decode(String.self, forKey: .emoji)
+        title = try c.decode(String.self, forKey: .title)
+        description = try c.decode(String.self, forKey: .description)
+        unit = try c.decode(String.self, forKey: .unit)
+        target = try c.decode(Double.self, forKey: .target)
+        total = try c.decode(Double.self, forKey: .total)
+        participants = try c.decode(Int.self, forKey: .participants)
+        metric = try c.decode(GoalMetric.self, forKey: .metric)
+        joined = try c.decodeIfPresent(Bool.self, forKey: .joined) ?? false
+        mine = try c.decodeIfPresent(Double.self, forKey: .mine) ?? 0
+        authorId = try c.decodeIfPresent(Int.self, forKey: .authorId) ?? 0
+    }
 }
 
 // MARK: - 2. Банк времени
@@ -197,8 +222,33 @@ struct Mission: Identifiable, Equatable, Codable {
     var target: Int
     var joined: Bool = false
     var finds: [MissionFind] = []
+    /// Откроется после стольких км бега, ходьбы и велосипеда; 0 — открыта сразу.
+    var unlockKm: Double = 0
+    /// Кто придумал: 0 — сообщество; свой номер — ваша миссия района.
+    var authorId: Int = 0
 
     func mineCount(_ meId: Int) -> Int { finds.filter { $0.authorId == meId }.count }
+    func locked(_ movedKm: Double) -> Bool { unlockKm > 0 && movedKm < unlockKm }
+}
+
+/// Новые поля — необязательные в файле: старые сохранения читаются без них.
+extension Mission {
+    private enum CodingKeys: String, CodingKey {
+        case id, emoji, title, description, target, joined, finds, unlockKm, authorId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        emoji = try c.decode(String.self, forKey: .emoji)
+        title = try c.decode(String.self, forKey: .title)
+        description = try c.decode(String.self, forKey: .description)
+        target = try c.decode(Int.self, forKey: .target)
+        joined = try c.decodeIfPresent(Bool.self, forKey: .joined) ?? false
+        finds = try c.decodeIfPresent([MissionFind].self, forKey: .finds) ?? []
+        unlockKm = try c.decodeIfPresent(Double.self, forKey: .unlockKm) ?? 0
+        authorId = try c.decodeIfPresent(Int.self, forKey: .authorId) ?? 0
+    }
 }
 
 // MARK: - 5. Клады
@@ -498,6 +548,32 @@ struct TogetherState: Equatable, Codable {
     }
 
     // MARK: Миссии
+
+    /// Своя миссия района — право, которое открывают находки (Unlock.ownMission).
+    func createMission(_ m: Mission) -> TogetherState? {
+        if blank(m.title) || missions.contains(where: { $0.id == m.id }) { return nil }
+        var mission = m
+        mission.joined = true
+        mission.target = min(20, max(1, m.target))
+        return with { $0.missions.insert(mission, at: 0) }
+    }
+
+    /// Своя общая цель — право за вклад в чужие (Unlock.ownGoal).
+    func createGoal(_ g: CommunityGoal) -> TogetherState? {
+        if blank(g.title) || g.target <= 0 || goals.contains(where: { $0.id == g.id }) { return nil }
+        var goal = g
+        goal.joined = true
+        goal.participants = 1
+        return with { $0.goals.append(goal) }
+    }
+
+    /// После обновления приложения: новые демо-миссии и цели появляются и в сохранённом.
+    func withNewDemo(_ demo: TogetherState) -> TogetherState {
+        with { s in
+            s.missions += demo.missions.filter { d in !missions.contains { $0.id == d.id } }
+            s.goals += demo.goals.filter { d in !goals.contains { $0.id == d.id } }
+        }
+    }
 
     func joinMission(_ id: String) -> TogetherState {
         with { s in

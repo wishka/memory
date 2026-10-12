@@ -77,6 +77,7 @@ struct ProfileScreen: View {
 
                 if !editing {
                     ShowcaseCard(model: model)
+                    ShelfCard(model: model)
                     RecapCard(model: model)
 
                     GlassCard {

@@ -44,6 +44,14 @@ import ru.wishka.memory.data.CHECK_IN_EMOJI
 import ru.wishka.memory.data.CheckIn
 import ru.wishka.memory.data.CheckInTemplate
 import ru.wishka.memory.data.checkIn
+import ru.wishka.memory.data.BookStatus
+import ru.wishka.memory.data.CheckInActivity
+import ru.wishka.memory.data.RATED_ACTIVITIES
+import ru.wishka.memory.data.TIMED_ACTIVITIES
+import ru.wishka.memory.data.activity
+import ru.wishka.memory.data.minutesTitle
+import ru.wishka.memory.data.paceTitle
+import ru.wishka.memory.i18n.tf
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.ui.theme.Palette
 
@@ -74,6 +82,13 @@ fun CheckInBadge(checkIn: CheckIn, modifier: Modifier = Modifier) {
             if (checkIn.subject.isNotEmpty()) {
                 Text(checkIn.subject, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            val extra = listOf(
+                if (checkIn.rating > 0) "★".repeat(checkIn.rating) + "☆".repeat(5 - checkIn.rating) else "",
+                checkIn.statusTitle,
+                checkIn.paceTitle,
+                if (checkIn.minutes > 0 && checkIn.activity in TIMED_ACTIVITIES) minutesTitle(checkIn.minutes) else "",
+            ).filter { it.isNotEmpty() }
+            if (extra.isNotEmpty()) Text(extra.joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = Palette.PearlPink, maxLines = 1)
         }
         if (checkIn.amountTitle.isNotEmpty()) {
             Spacer(Modifier.width(8.dp))
@@ -89,7 +104,14 @@ fun CheckInBadge(checkIn: CheckIn, modifier: Modifier = Modifier) {
 
 private sealed interface CheckInStep {
     data object Choose : CheckInStep
-    data class Fill(val emoji: String, val title: String, val hint: String, val unit: String, val make: (String, Double) -> CheckIn) : CheckInStep
+    data class Fill(
+        val emoji: String,
+        val title: String,
+        val hint: String,
+        val unit: String,
+        val make: (subject: String, amount: Double, rating: Int, status: String, minutes: Int) -> CheckIn,
+        val activity: String = "",
+    ) : CheckInStep
     data object Create : CheckInStep
 }
 
@@ -105,8 +127,12 @@ fun CheckInPicker(
     onCreate: (emoji: String, title: String, unit: String, hint: String) -> String?,
     onDelete: (String) -> Unit,
     onDismiss: () -> Unit,
+    /** Сразу к заполнению: сценарий «Посмотрел фильм», «Пробежка»… */
+    start: String? = null,
+    /** Что именно — заранее (из рекомендации, с полки). */
+    presetSubject: String = "",
 ) {
-    var step by remember { mutableStateOf<CheckInStep>(CheckInStep.Choose) }
+    var step by remember { mutableStateOf<CheckInStep>(start?.let { activity(it) }?.let { fillFor(it) } ?: CheckInStep.Choose) }
     var deleting by remember { mutableStateOf<CheckInTemplate?>(null) }
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -132,19 +158,17 @@ fun CheckInPicker(
                         }
                         items(templates, key = { it.id }) { tpl ->
                             ActivityTile(tpl.emoji, tpl.title, onLongClick = { deleting = tpl }, onClick = {
-                                step = CheckInStep.Fill(tpl.emoji, tpl.title, tpl.hint.ifBlank { t("Что именно?") }, tpl.unit, tpl::checkIn)
+                                step = CheckInStep.Fill(tpl.emoji, tpl.title, tpl.hint.ifBlank { t("Что именно?") }, tpl.unit, { subject, amount, _, _, _ -> tpl.checkIn(subject, amount) })
                             })
                         }
                         items(CHECK_IN_ACTIVITIES, key = { it.id }) { a ->
-                            ActivityTile(a.emoji, t(a.title), onClick = {
-                                step = CheckInStep.Fill(a.emoji, t(a.title), t(a.hint), if (a.unit.isEmpty()) "" else t(a.unit), a::checkIn)
-                            })
+                            ActivityTile(a.emoji, t(a.title), onClick = { step = fillFor(a) })
                         }
                     }
                     Spacer(Modifier.height(10.dp))
                     GhostButton(t("Отмена"), onClick = onDismiss)
                 }
-                is CheckInStep.Fill -> FillStep(s, onBack = { step = CheckInStep.Choose }, onDone = { onDone(it); onDismiss() })
+                is CheckInStep.Fill -> FillStep(s, presetSubject, onBack = { step = CheckInStep.Choose }, onDone = { onDone(it); onDismiss() })
                 CheckInStep.Create -> CreateStep(onBack = { step = CheckInStep.Choose }, onCreate = { e, title, unit, hint ->
                     val error = onCreate(e, title, unit, hint)
                     if (error == null) step = CheckInStep.Choose
@@ -193,10 +217,19 @@ private fun ActivityTile(emoji: String, title: String, accent: Boolean = false, 
     }
 }
 
+private fun fillFor(a: CheckInActivity) = CheckInStep.Fill(
+    a.emoji, t(a.title), t(a.hint), if (a.unit.isEmpty()) "" else t(a.unit),
+    { subject, amount, rating, status, minutes -> a.checkIn(subject, amount, rating, status, minutes) },
+    a.id,
+)
+
 @Composable
-private fun FillStep(s: CheckInStep.Fill, onBack: () -> Unit, onDone: (CheckIn) -> Unit) {
-    var subject by remember { mutableStateOf("") }
+private fun FillStep(s: CheckInStep.Fill, presetSubject: String, onBack: () -> Unit, onDone: (CheckIn) -> Unit) {
+    var subject by remember { mutableStateOf(presetSubject) }
     var amount by remember { mutableStateOf("") }
+    var rating by remember { mutableStateOf(0) }
+    var status by remember { mutableStateOf(if (s.activity == "book") BookStatus.Reading.id else "") }
+    var minutes by remember { mutableStateOf("") }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(s.emoji, fontSize = 32.sp)
         Spacer(Modifier.width(12.dp))
@@ -215,11 +248,38 @@ private fun FillStep(s: CheckInStep.Fill, onBack: () -> Unit, onDone: (CheckIn) 
             Text(s.unit, style = MaterialTheme.typography.titleMedium, color = Palette.Lilac)
         }
     }
+    // Время — из него темп: «5:30 /км»
+    if (s.activity in TIMED_ACTIVITIES) {
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GlassField(
+                minutes, { v -> minutes = v.filter { it.isDigit() }.take(4) }, t("Время, минут (необязательно)"),
+                Modifier.weight(1f).glass(RoundedCornerShape(18.dp)), singleLine = true, keyboardType = KeyboardType.Number,
+            )
+        }
+        val pace = paceTitle(s.activity, amount.replace(',', '.').toDoubleOrNull() ?: 0.0, minutes.toIntOrNull() ?: 0)
+        if (pace.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text(tf("Темп: %s", pace), style = MaterialTheme.typography.bodyMedium, color = Palette.PearlPink)
+        }
+    }
+    // Статус книги
+    if (s.activity == "book") {
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            BookStatus.entries.forEach { b -> Chip(b.title, status == b.id) { status = b.id } }
+        }
+    }
+    // Оценка
+    if (s.activity in RATED_ACTIVITIES) {
+        Spacer(Modifier.height(10.dp))
+        Stars(rating, onRate = { rating = if (rating == it) 0 else it })
+    }
     Spacer(Modifier.height(16.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         GhostButton(t("Назад"), onClick = onBack)
         GlowButton(t("Готово"), onClick = {
-            onDone(s.make(subject, amount.replace(',', '.').toDoubleOrNull() ?: 0.0))
+            onDone(s.make(subject, amount.replace(',', '.').toDoubleOrNull() ?: 0.0, rating, status, minutes.toIntOrNull() ?: 0))
         })
     }
 }
@@ -264,5 +324,20 @@ private fun CreateStep(onBack: () -> Unit, onCreate: (String, String, String, St
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         GhostButton(t("Назад"), onClick = onBack)
         GlowButton(t("Создать"), enabled = title.isNotBlank(), onClick = { error = onCreate(emoji, title, unit, hint) })
+    }
+}
+
+/** Звёзды 1–5: нажатие на ту же — снять оценку. */
+@Composable
+fun Stars(rating: Int, onRate: ((Int) -> Unit)?, size: Int = 30) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        (1..5).forEach { i ->
+            Text(
+                if (i <= rating) "★" else "☆",
+                fontSize = size.sp,
+                color = if (i <= rating) Palette.PearlPink else Palette.Mist,
+                modifier = if (onRate != null) Modifier.clip(CircleShape).clickable { onRate(i) }.padding(2.dp) else Modifier,
+            )
+        }
     }
 }

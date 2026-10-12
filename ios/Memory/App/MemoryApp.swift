@@ -18,9 +18,9 @@ struct MemoryApp: App {
     }
 }
 
-/// Что сейчас на экране: заставка, вход или само приложение.
+/// Что сейчас на экране: заставка, знакомство, вход или само приложение.
 private enum Stage: Equatable {
-    case splash, auth, main
+    case splash, onboarding, auth, main
 }
 
 struct RootView: View {
@@ -33,11 +33,19 @@ struct RootView: View {
     @State private var saveTask: Task<Void, Never>?
     private let store = StateStore()
     private let push = PushCenter.shared
+    private let device = DevicePrefs()
+    /// Знакомство «выберите любимое» — один раз на телефоне, до регистрации.
+    @State private var onboarded = DevicePrefs().onboarded
+    /// После знакомства — сразу регистрация.
+    @State private var registerNext = false
+    /// Ссылка-приглашение, открытая до входа: её разберём после загрузки аккаунта.
+    @State private var pendingInvite: Invite?
 
     private var stage: Stage {
         // Заставка держится, пока проверяется сохранённая сессия: иначе на
         // долю секунды мелькнул бы экран входа у уже вошедшего человека
         if !splashDone || auth.checking { return .splash }
+        if auth.account == nil && !onboarded { return .onboarding }
         return auth.account == nil ? .auth : .main
     }
 
@@ -48,8 +56,22 @@ struct RootView: View {
             case .splash:
                 AtomSplash { splashDone = true }
                     .transition(.opacity)
+            case .onboarding:
+                OnboardingScreen(
+                    onDone: { picks in
+                        device.savePicks(picks)
+                        device.setOnboarded()
+                        registerNext = true
+                        onboarded = true
+                    },
+                    onSkip: {
+                        device.setOnboarded()
+                        onboarded = true
+                    }
+                )
+                .transition(.opacity)
             case .auth:
-                AuthScreen(auth: auth)
+                AuthScreen(auth: auth, startRegistering: registerNext)
                     .transition(.opacity)
             case .main:
                 MainScreen(
@@ -86,10 +108,24 @@ struct RootView: View {
             loadedFor = nil
             if let account {
                 model.setAccount(username: account.username, displayName: account.displayName, info: account.info)
-                if let snapshot = store.load(account.username) {
-                    model.restore(snapshot)
+                let saved = store.load(account.username)
+                if let saved {
+                    model.restore(saved)
+                } else {
+                    // Любимое из знакомства — только на полку нового аккаунта (сохранённого ещё нет).
+                    // Вошли в старый — выбор ждёт следующей регистрации на этом телефоне.
+                    let picks = device.pendingPicks()
+                    if !picks.isEmpty {
+                        model.addFavorites(picks)
+                        device.clearPicks()
+                    }
                 }
                 loadedFor = account.username
+                // Открыли по ссылке-приглашению до входа — кто позвал и к чему
+                if let invite = pendingInvite {
+                    model.openInvite(invite)
+                    pendingInvite = nil
+                }
                 // Сохранённое на месте — можно считать итоги и оживлять демо
                 model.checkRecapReady()
                 model.startDemoLife()
@@ -133,6 +169,15 @@ struct RootView: View {
             guard let nudge, stage == .main else { return }
             model.openNudge(nudge)
             push.opened = nil
+        }
+        // Ссылка-приглашение: memory://invite?c=КОД&a=drawing&id=… (и страница-приглашение в вебе)
+        .onOpenURL { url in
+            guard let invite = Invites.parse(url.absoluteString) else { return }
+            if loadedFor != nil {
+                model.openInvite(invite)
+            } else {
+                pendingInvite = invite
+            }
         }
         .onChange(of: stage) { _, current in
             if current == .main, let nudge = push.opened {

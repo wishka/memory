@@ -46,6 +46,7 @@ struct DrawingSection: View {
     @State private var creating = false
     /// Новый рисунок открывается, когда окно создания закрылось.
     @State private var pendingId: Int64?
+    @State private var sharing: SharePayload?
 
     var body: some View {
         let state = model.state
@@ -69,7 +70,18 @@ struct DrawingSection: View {
             }
             if !done.isEmpty { TogetherCaption(text: t("Готовые")) }
             ForEach(done) { d in
-                DrawingCard(state: state, drawing: d, action: t("В ленту")) {
+                DrawingCard(state: state, drawing: d, action: t("В ленту"), onShare: {
+                    // Карточка с самим рисунком и кто рисовал — с кодом приглашения
+                    var seen = Set<String>()
+                    let names = d.turns.map { personOf(state, $0.authorId).firstName }.filter { seen.insert($0).inserted }
+                    let spec = ShareCardSpec(
+                        kicker: t("Рисунок"), emoji: "🎨", title: d.title,
+                        subtitle: tf("Нарисовали вместе: %s", names.joined(separator: ", ")),
+                        picture: drawingImage(d.strokes),
+                        author: "\(state.me.name) · @\(state.me.handle)"
+                    )
+                    sharing = shareCard(model, spec, name: "drawing-\(d.id)", action: .drawing, targetId: "\(d.id)", title: d.title)
+                }) {
                     if let image = saveDrawing(d) {
                         model.publish(tf("Нарисовали вместе: «%s» ✦", d.title), media: [image])
                         geo.show(t("Опубликовано"))
@@ -77,6 +89,7 @@ struct DrawingSection: View {
                 }
             }
         }
+        .shareSheet($sharing)
         .sheet(isPresented: $creating, onDismiss: {
             if let id = pendingId {
                 pendingId = nil
@@ -103,6 +116,8 @@ private struct DrawingCard: View {
     let state: UiState
     let drawing: CollabDrawing
     let action: String?
+    /// «Поделиться» карточкой с рисунком; nil — кнопки нет.
+    var onShare: (() -> Void)? = nil
     let onAction: () -> Void
 
     /// Кто уже рисовал — по разу, в порядке ходов.
@@ -130,8 +145,13 @@ private struct DrawingCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            if let action {
-                GlowButton(title: action, action: onAction)
+            HStack(spacing: 10) {
+                if let action {
+                    GlowButton(title: action, action: onAction)
+                }
+                if let onShare {
+                    GhostButton(title: t("Поделиться"), action: onShare)
+                }
             }
         }
     }
@@ -178,6 +198,7 @@ private struct DrawTurnEditor: View {
     @State private var width: CGFloat = 0.03
     @State private var eraser = false
     @State private var passTo: Int?
+    @State private var sharing: SharePayload?
 
     init(model: AppModel, drawing: CollabDrawing, onClose: @escaping () -> Void) {
         self.model = model
@@ -248,6 +269,9 @@ private struct DrawTurnEditor: View {
                                 Chip(text: p.firstName, active: passTo == p.id) { passTo = p.id }
                             }
                         }
+                        GhostButton(title: t("Позвать того, кого нет в Memory")) {
+                            sharing = shareInvite(model, .drawing, targetId: "\(d.id)", title: d.title)
+                        }
                     } else {
                         TogetherHint(text: t("Это последний ход — после него рисунок готов."))
                     }
@@ -262,6 +286,7 @@ private struct DrawTurnEditor: View {
             }
         }
         .background(Palette.void.ignoresSafeArea())
+        .shareSheet($sharing)
     }
 
     /// Холст: прежние ходы и ваши линии поверх — та же картинка, что уйдёт в ленту.
@@ -318,7 +343,10 @@ struct SharingSection: View {
 
     var body: some View {
         let state = model.state
+        // Хранитель книг: ваши книги — первыми в обмене
+        let keeper = state.unlocked(.keeper)
         let items = state.together.shares.filter { $0.kind == kind && !state.blocked.contains($0.ownerId) }
+            .togetherSorted(descending: true) { keeper && $0.ownerId == state.me.id ? 1 : 0 }
         VStack(alignment: .leading, spacing: 12) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -331,24 +359,45 @@ struct SharingSection: View {
                 TogetherHint(text: hint)
                 GlowButton(title: addTitle) { adding = true }
             }
+            if kind == .book, let k = state.unlocks.first(where: { $0.unlock == .keeper }) {
+                TogetherHint(text: k.open
+                             ? "📚 " + t("Вы хранитель книг — ваши книги стоят первыми")
+                             : "📚 " + k.unlock.how + " · " + tf("осталось %s", k.left))
+            }
             ForEach(items) { item in
-                ShareCard(model: model, item: item) { handing = item }
+                ShareItemCard(model: model, item: item) { handing = item }
             }
         }
         .sheet(isPresented: $adding) {
             AddShareSheet(model: model, kind: kind) { adding = false }
         }
         .sheet(item: $handing) { item in
-            TogetherSheet(title: tf("Кому передать «%s»?", item.title)) {
-                ForEach(togetherPeople(model.state)) { p in
-                    PersonLine(user: p, subtitle: "") {
-                        model.handOver(item.id, to: p.id)
-                        handing = nil
-                    }
-                }
-                GhostButton(title: t("Отмена")) { handing = nil }
-            }
+            HandOverSheet(model: model, item: item) { handing = nil }
         }
+    }
+}
+
+/// Кому передать вещь: знакомым — сразу, тому, кого нет в Memory, — приглашением.
+private struct HandOverSheet: View {
+    let model: AppModel
+    let item: ShareItem
+    let onClose: () -> Void
+    @State private var sharing: SharePayload?
+
+    var body: some View {
+        TogetherSheet(title: tf("Кому передать «%s»?", item.title)) {
+            ForEach(togetherPeople(model.state)) { p in
+                PersonLine(user: p, subtitle: "") {
+                    model.handOver(item.id, to: p.id)
+                    onClose()
+                }
+            }
+            GhostButton(title: t("Тому, кого нет в Memory")) {
+                sharing = shareInvite(model, .book, targetId: "\(item.id)", title: item.title)
+            }
+            GhostButton(title: t("Отмена"), action: onClose)
+        }
+        .shareSheet($sharing)
     }
 }
 
@@ -390,7 +439,7 @@ private struct AddShareSheet: View {
     }
 }
 
-private struct ShareCard: View {
+private struct ShareItemCard: View {
     let model: AppModel
     let item: ShareItem
     let onHand: () -> Void

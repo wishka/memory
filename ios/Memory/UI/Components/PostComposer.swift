@@ -13,6 +13,8 @@ struct PostComposer: View {
     @State private var checkIn: CheckIn?
     @State private var choosingSticker = false
     @State private var choosingCheckIn = false
+    /// Сценарий быстрого чек-ина: сразу к заполнению; nil — выбор занятия.
+    @State private var scenario: String?
 
     private var canPublish: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty || checkIn != nil
@@ -38,7 +40,27 @@ struct PostComposer: View {
                     }
                     .padding([.horizontal, .top], 12)
                 }
-                GlassField(placeholder: checkIn != nil ? t("Пара слов к чек-ину") : placeholder, text: $text, limit: 2000)
+                // Не «чистый лист»: сначала готовые сценарии — одно нажатие, и запись наполовину готова
+                if checkIn == nil && text.isEmpty && media.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(quickScenarios.compactMap { activity($0) }) { a in
+                                scenarioChip(a.emoji, t(Self.scenarioTitles[a.id] ?? a.title)) {
+                                    scenario = a.id
+                                    choosingCheckIn = true
+                                }
+                            }
+                            scenarioChip("＋", t("Другое")) {
+                                scenario = nil
+                                choosingCheckIn = true
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 12)
+                    }
+                }
+                GlassField(placeholder: checkIn != nil ? t("Пара слов к чек-ину") : media.isEmpty ? t("…или просто напишите") : placeholder,
+                           text: $text, limit: 2000)
                 PendingAttachments(items: media) { item in
                     media.removeAll { $0.id == item.id }
                     MediaFiles.delete(item)
@@ -75,8 +97,29 @@ struct PostComposer: View {
                 model.openProfileSection(.stickers)
             }
         }
-        .sheet(isPresented: $choosingCheckIn) {
-            CheckInPicker(model: model) { checkIn = $0 }
+        .sheet(isPresented: $choosingCheckIn, onDismiss: { scenario = nil }) {
+            CheckInPicker(model: model, start: scenario) { checkIn = $0 }
         }
+    }
+
+    /// Как сценарии звучат на кнопках: действие, а не занятие.
+    private static let scenarioTitles: [String: String] = [
+        "movie": "Посмотрел фильм",
+        "run": "Пробежка",
+        "book": "Книга",
+        "place": "Я здесь",
+    ]
+
+    private func scenarioChip(_ emoji: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(emoji).font(.system(size: 18))
+                Text(title).textStyle(.labelLarge)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .glass(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }

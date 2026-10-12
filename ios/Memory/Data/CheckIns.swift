@@ -16,6 +16,12 @@ struct CheckIn: Equatable, Codable {
     var amount: Double = 0
     /// Единица: «км», «стр.», «мин» или своя.
     var unit: String = ""
+    /// Оценка 1–5 (фильм, книга, игра, место); 0 — без оценки.
+    var rating: Int = 0
+    /// Книга: «want» — хочу прочитать, «reading» — читаю, «done» — прочитал; "" — не указано.
+    var status: String = ""
+    /// Сколько длилось, минуты (пробежка, заезд): из этого — темп; 0 — не указано.
+    var minutes: Int = 0
 
     var builtIn: CheckInActivity? { checkInActivities.first { $0.id == activity } }
 
@@ -28,6 +34,88 @@ struct CheckIn: Equatable, Codable {
     var amountTitle: String {
         amount <= 0 ? "" : "\(amountNumber(amount)) \(displayUnit)".trimmingCharacters(in: .whitespaces)
     }
+
+    /// «5:30 /км» для бега и ходьбы, «18 км/ч» для велосипеда; "" — не посчитать.
+    var paceTitle: String { checkInPace(activity, amount, minutes, unit) }
+
+    /// «Прочитал», «Читаю», «Хочу прочитать»; "" — без статуса.
+    var statusTitle: String { BookStatus.of(status)?.title ?? "" }
+
+    /// Ключ для полки: одна и та же книга или фильм, как бы ни написали регистр.
+    var subjectKey: String { checkInSubjectKey(subject) }
+}
+
+/// Новые поля — необязательные в файле: старые сохранения читаются без них.
+extension CheckIn {
+    private enum CodingKeys: String, CodingKey {
+        case activity, emoji, title, subject, amount, unit, rating, status, minutes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        activity = try c.decode(String.self, forKey: .activity)
+        emoji = try c.decode(String.self, forKey: .emoji)
+        title = try c.decode(String.self, forKey: .title)
+        subject = try c.decodeIfPresent(String.self, forKey: .subject) ?? ""
+        amount = try c.decodeIfPresent(Double.self, forKey: .amount) ?? 0
+        unit = try c.decodeIfPresent(String.self, forKey: .unit) ?? ""
+        rating = try c.decodeIfPresent(Int.self, forKey: .rating) ?? 0
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? ""
+        minutes = try c.decodeIfPresent(Int.self, forKey: .minutes) ?? 0
+    }
+}
+
+// Внутри CheckIn одноимённые свойства заслоняют функции — зовём через эти.
+private func checkInPace(_ activity: String, _ km: Double, _ minutes: Int, _ unit: String) -> String {
+    paceTitle(activity, km, minutes, unit: unit)
+}
+
+private func checkInSubjectKey(_ subject: String) -> String { subjectKey(subject) }
+
+/// «Дюна » и «дюна» — одно и то же.
+func subjectKey(_ subject: String) -> String {
+    let lower = subject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "ё", with: "е")
+    return lower.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+}
+
+/// Статус книги в чек-ине.
+enum BookStatus: String, CaseIterable, Identifiable {
+    case want = "Хочу прочитать"
+    case reading = "Читаю"
+    case done = "Прочитал"
+
+    var id: String {
+        switch self {
+        case .want: return "want"
+        case .reading: return "reading"
+        case .done: return "done"
+        }
+    }
+
+    var title: String { t(rawValue) }
+
+    static func of(_ id: String) -> BookStatus? { allCases.first { $0.id == id } }
+}
+
+/// Активности, где время превращается в темп или скорость.
+let timedActivities: Set<String> = ["run", "walk", "bike", "swim"]
+
+/// Что оценивают звёздами.
+let ratedActivities: Set<String> = ["movie", "series", "book", "game", "concert", "coffee", "food"]
+
+/// Темп: минуты на километр (бег, ходьба, плавание) или скорость (велосипед).
+func paceTitle(_ activity: String, _ km: Double, _ minutes: Int, unit: String = "км") -> String {
+    if km <= 0 || minutes <= 0 || !isKilometers(unit) { return "" }
+    if activity == "bike" {
+        return "\(amountNumber((km / (Double(minutes) / 60) * 10).rounded() / 10)) \(t("км/ч"))"
+    }
+    let secPerKm = Int((Double(minutes) * 60 / km).rounded())
+    return String(format: "%d:%02d /%@", secPerKm / 60, secPerKm % 60, t("км"))
+}
+
+/// Секунды на километр; nil — без времени или расстояния.
+func paceSeconds(_ km: Double, _ minutes: Int) -> Int? {
+    km > 0 && minutes > 0 ? Int((Double(minutes) * 60 / km).rounded()) : nil
 }
 
 /// «7», «7,5» — без лишних нулей.
@@ -54,11 +142,21 @@ struct CheckInActivity: Identifiable, Equatable {
     var unit: String = ""
     var metric: RecapMetric = .other
 
-    func checkIn(_ subject: String, _ amount: Double) -> CheckIn {
+    /// Оценка — только там, где оценивают; статус — только у книги; время — у бега, ходьбы, велосипеда и плавания.
+    func checkIn(_ subject: String, _ amount: Double, rating: Int = 0, status: String = "", minutes: Int = 0) -> CheckIn {
         CheckIn(activity: id, emoji: emoji, title: title, subject: subject.trimmingCharacters(in: .whitespaces),
-                amount: unit.isEmpty ? 0 : amount, unit: unit)
+                amount: unit.isEmpty ? 0 : amount, unit: unit,
+                rating: ratedActivities.contains(id) ? min(5, max(0, rating)) : 0,
+                status: id == "book" ? status : "",
+                minutes: timedActivities.contains(id) ? min(24 * 60, max(0, minutes)) : 0)
     }
 }
+
+/// Готовые сценарии над полем записи: вместо «чистого листа» — одно нажатие.
+let quickScenarios = ["movie", "run", "book", "place"]
+
+/// Сценарий быстрого чек-ина: встроенное занятие по номеру.
+func activity(_ id: String) -> CheckInActivity? { checkInActivities.first { $0.id == id } }
 
 /// Встроенные чек-ины — в том порядке, как в выборе.
 let checkInActivities: [CheckInActivity] = [

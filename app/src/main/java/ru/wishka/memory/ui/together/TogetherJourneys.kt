@@ -1,5 +1,10 @@
 package ru.wishka.memory.ui.together
 
+import ru.wishka.memory.data.EchoLine
+import ru.wishka.memory.data.InviteAction
+import ru.wishka.memory.data.ShareCardSpec
+import ru.wishka.memory.ui.components.shareCard
+import ru.wishka.memory.ui.components.shareInvite
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -118,6 +123,8 @@ private fun JourneyCard(state: UiState, j: Journey, onOpen: () -> Unit) {
 
 @Composable
 private fun JourneyPage(vm: AppViewModel, state: UiState, j: Journey, onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val mine = j.authorId == state.me.id
     var text by remember(j.id) { mutableStateOf("") }
     var media by remember(j.id) { mutableStateOf<List<Attachment>>(emptyList()) }
@@ -145,6 +152,18 @@ private fun JourneyPage(vm: AppViewModel, state: UiState, j: Journey, onBack: ()
                 })
             }
         }
+    }
+    if (mine) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        GhostButton(t("Поделиться"), onClick = {
+            val spec = ShareCardSpec(
+                kicker = t("Челлендж"), emoji = j.emoji, title = j.title,
+                subtitle = tf("День %s из %s", j.entries.size, j.days),
+                lines = j.entries.takeLast(3).reversed().map { EchoLine("📓", tf("День %s: %s", it.day, it.text)) },
+                author = "${state.me.name} · @${state.me.handle}",
+            )
+            shareCard(context, scope, vm, spec, "journey-${j.id}", InviteAction.Journey, j.id.toString(), j.title)
+        })
+        GhostButton(t("Позвать за советом"), onClick = { shareInvite(context, vm, InviteAction.Journey, j.id.toString(), j.title) })
     }
     if (j.entries.isEmpty()) Hint(t("Пока ни одного дня. Первый шаг — самый важный."))
     j.entries.asReversed().forEach { e -> EntryCard(vm, state, j, e, mine) }

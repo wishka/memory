@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Приглашение в Memory</title>
+<meta name="description" content="Вас позвали в Memory — дневник того, что вы любите, вместе с друзьями.">
+<style>
+  :root { --bg: #07081a; --night: #0f153a; --ink: #f2eefe; --mist: #b7b0d6; --lilac: #bc92cd; --pink: #ff9ede; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink);
+    background: radial-gradient(circle at 20% 20%, #844cad88, transparent 50%),
+                radial-gradient(circle at 85% 70%, #19569966, transparent 45%),
+                linear-gradient(180deg, var(--bg), var(--night) 60%, #2a2152);
+    padding: 24px 16px;
+  }
+  main { width: 100%; max-width: 440px; text-align: center; }
+  .kicker { letter-spacing: .35em; font-size: 12px; color: var(--lilac); font-weight: 700; }
+  h1 { font-size: 28px; line-height: 1.25; margin: 14px 0 8px; }
+  .what { color: var(--pink); font-size: 18px; margin: 0 0 22px; }
+  .card { background: #ffffff14; border: 1px solid #ffffff2e; border-radius: 22px; padding: 18px; text-align: left; margin-bottom: 18px; }
+  .card p { margin: 6px 0; color: var(--mist); }
+  a.button { display: block; text-decoration: none; text-align: center; border-radius: 999px; padding: 14px 18px; font-weight: 600; margin: 10px 0; }
+  a.primary { background: linear-gradient(90deg, #ff9ede, #c6a2ff, #8cc4ff); color: #120c2c; }
+  a.ghost { border: 1px solid #ffffff40; color: var(--ink); }
+  .code { font-family: ui-monospace, Menlo, monospace; letter-spacing: .2em; color: var(--ink); }
+  small { color: var(--mist); }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">MEMORY · ПРИГЛАШЕНИЕ</div>
+  <h1 id="title">Вас позвали в Memory</h1>
+  <p class="what" id="what">Присоединиться к Memory</p>
+  <div class="card">
+    <p>🎬 Отмечаете фильмы, книги и пробежки в одно касание — полка собирается сама.</p>
+    <p>✨ Советы — от людей с похожим вкусом.</p>
+    <p>🤝 Рисунок по эстафете, обмен книгами, вылазки и клады в вашем районе.</p>
+  </div>
+  <a class="button primary" id="open" href="memory://invite">Открыть в Memory</a>
+  <a class="button ghost" href="https://github.com/wishka/memory/releases">Скачать приложение</a>
+  <small>Код приглашения: <span class="code" id="code">—</span></small>
+</main>
+<script>
+  // Те же действия, что в приложении (InviteAction): к чему зовут
+  var ACTIONS = {
+    app: "присоединиться к Memory", drawing: "дорисовать общий рисунок", book: "взять книгу из книжного обмена",
+    outing: "пойти на вылазку", lesson: "обменяться навыками", shelf: "посмотреть мою полку",
+    journey: "поддержать мой челлендж советом", cache: "найти мой клад"
+  };
+  var params = new URLSearchParams(location.search);
+  // Тот же алфавит, что Invites.ALPHABET: без I, O, 0, 1
+  var code = (params.get("c") || "").toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6);
+  if (code.length !== 6) code = "";
+  // hasOwnProperty: «a=constructor» или «a=__proto__» не должны ломать страницу
+  var action = Object.prototype.hasOwnProperty.call(ACTIONS, params.get("a")) ? params.get("a") : "app";
+  // Обрезка до 40 знаков не должна рвать эмодзи пополам: encodeURIComponent падает на одиночной половинке
+  function cut(v) { return (v || "").slice(0, 40).replace(/[\uD800-\uDBFF]$/, ""); }
+  var from = cut(params.get("n"));
+  if (from) document.getElementById("title").textContent = from + " зовёт вас в Memory";
+  var what = ACTIONS[action];
+  document.getElementById("what").textContent = what.charAt(0).toUpperCase() + what.slice(1);
+  document.getElementById("code").textContent = code || "—";
+  // Ссылка в приложение — с теми же параметрами; textContent и encodeURIComponent: никакого HTML из адреса
+  var q = ["c=" + encodeURIComponent(code), "a=" + encodeURIComponent(action)];
+  var id = cut(params.get("id"));
+  if (id) q.push("id=" + encodeURIComponent(id));
+  if (from) q.push("n=" + encodeURIComponent(from));
+  var deep = "memory://invite?" + q.join("&");
+  document.getElementById("open").setAttribute("href", deep);
+  // Приложение установлено — откроется сразу
+  if (code) setTimeout(function () { location.href = deep; }, 400);
+</script>
+</body>
+</html>

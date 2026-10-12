@@ -59,6 +59,7 @@ enum TogetherDemo {
             Mission(id: "sign", emoji: "🪧", title: "Самая старая вывеска района", description: "Ищите вывески, которым больше 30 лет: шрифты, неон, эмаль.", target: 3,
                     finds: [MissionFind(id: 9303, authorId: 5, note: "«Булочная» — ещё с эмалевыми буквами", at: c.offset(east: 150, north: -520), createdAt: ago(3 * day))]),
             Mission(id: "door", emoji: "🚪", title: "Двери, за которыми история", description: "Резные, кованые, необычные — сфотографируйте двери старых домов.", target: 7),
+            Mission(id: "route", emoji: "🌉", title: "Маршрут «Огни набережных»", description: "Ночной маршрут вдоль воды: отметьте пять мостов и фонарей, которые светят ярче всех.", target: 5, unlockKm: 20),
             Mission(id: "cat", emoji: "🐈", title: "Коты-хранители дворов", description: "Познакомьтесь с местными котами и отметьте их дворы.", target: 5,
                     finds: [MissionFind(id: 9304, authorId: 4, note: "Рыжий страж арки", at: c.offset(east: -230, north: -410), createdAt: ago(6 * hour))]),
         ]

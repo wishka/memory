@@ -1,7 +1,14 @@
 package ru.wishka.memory.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.sp
+import ru.wishka.memory.data.QUICK_SCENARIOS
+import ru.wishka.memory.data.activity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,6 +60,7 @@ fun PostComposer(
     var checkIn by remember { mutableStateOf<CheckIn?>(null) }
     var choosingSticker by remember { mutableStateOf(false) }
     var choosingCheckIn by remember { mutableStateOf(false) }
+    var scenario by remember { mutableStateOf<String?>(null) }
     val picker = rememberMediaPicker { picked ->
         media = (media + picked).take(AppViewModel.MAX_MEDIA)
     }
@@ -72,7 +80,19 @@ fun PostComposer(
                     ) { Glyph(LineIcon.Close, Palette.Ink, size = 14.dp) }
                 }
             }
-            GlassField(text, { text = it.take(2000) }, if (checkIn != null) t("Пара слов к чек-ину") else placeholder)
+            // Не «чистый лист»: сначала готовые сценарии — одно нажатие, и запись наполовину готова
+            if (checkIn == null && text.isEmpty() && media.isEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QUICK_SCENARIOS.mapNotNull { activity(it) }.forEach { a ->
+                        ScenarioChip(a.emoji, t(SCENARIO_TITLES[a.id] ?: a.title)) { scenario = a.id; choosingCheckIn = true }
+                    }
+                    ScenarioChip("＋", t("Другое")) { scenario = null; choosingCheckIn = true }
+                }
+            }
+            GlassField(text, { text = it.take(2000) }, if (checkIn != null) t("Пара слов к чек-ину") else if (media.isEmpty()) t("…или просто напишите") else placeholder)
             PendingAttachments(
                 media,
                 onRemove = { item ->
@@ -136,7 +156,32 @@ fun PostComposer(
             onDone = { checkIn = it },
             onCreate = onCreateTemplate,
             onDelete = onDeleteTemplate,
-            onDismiss = { choosingCheckIn = false },
+            onDismiss = { choosingCheckIn = false; scenario = null },
+            start = scenario,
         )
+    }
+}
+
+/** Как сценарии звучат на кнопках: действие, а не занятие. */
+private val SCENARIO_TITLES = mapOf(
+    "movie" to "Посмотрел фильм",
+    "run" to "Пробежка",
+    "book" to "Книга",
+    "place" to "Я здесь",
+)
+
+@Composable
+private fun ScenarioChip(emoji: String, title: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .glass(RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(emoji, fontSize = 18.sp)
+        Spacer(Modifier.width(6.dp))
+        Text(title, style = MaterialTheme.typography.labelLarge, color = Palette.Ink)
     }
 }

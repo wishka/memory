@@ -36,6 +36,7 @@ struct ProfileSectionScreen: View {
         case .music: return plural(state.tracks.count, "трек", "трека", "треков")
         case .stickers: return plural(state.stickers.count, "стикер", "стикера", "стикеров")
         case .recap: return ""
+        case .shelf: return ""
         case .requests: return plural(state.followRequests.count, "заявка", "заявки", "заявок")
         }
     }
@@ -102,8 +103,8 @@ struct ProfileSectionScreen: View {
                     onDecline: { model.declineRequest(person.id) }
                 )
             }
-        case .music, .stickers, .recap:
-            // «Моя музыка», «Студия» и «Итоги» — свои экраны (MainScreen), сюда не попадают
+        case .music, .stickers, .recap, .shelf:
+            // «Моя музыка», «Студия», «Итоги» и «Полка» — свои экраны (MainScreen), сюда не попадают
             EmptyView()
         }
     }
