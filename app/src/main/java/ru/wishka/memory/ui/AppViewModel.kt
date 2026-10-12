@@ -94,6 +94,8 @@ enum class SettingsPage(private val ru: String) {
     Language("Язык"),
     About("О приложении"),
     Growth("Друзья и идеи"),
+    Sounds("Звуки"),
+    Wallpaper("Фон переписок"),
     ;
 
     val title: String get() = t(ru)
@@ -209,6 +211,12 @@ data class UiState(
     val memorySeen: String = "",
     /** Полка: открытый раздел. */
     val shelfTab: ShelfTab = ShelfTab.Films,
+    /** Коллекции стикеров, как наборы в iOS. */
+    val stickerPacks: List<StickerPack> = emptyList(),
+    /** Общий фон переписок. */
+    val backdrop: Backdrop = Backdrop.DEFAULT,
+    /** Недавние гифки — первыми в выборе. */
+    val recentGifs: List<Attachment> = emptyList(),
 ) {
     /** Полка — собирается сама из чек-инов и отметок. */
     val shelf: Shelf get() = Shelf.build(posts.datedCheckIns(me.id), shelfMarks)
@@ -394,12 +402,14 @@ class AppViewModel(
     }
 
     /** Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем. */
-    fun publish(text: String, media: List<Attachment> = emptyList(), checkIn: CheckIn? = null) {
+    fun publish(text: String, media: List<Attachment> = emptyList(), checkIn: CheckIn? = null, poll: PollDraft? = null) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && media.isEmpty() && checkIn == null) return
+        val built = poll?.build(nextId++)
+        if (trimmed.isEmpty() && media.isEmpty() && checkIn == null && built == null) return
+        media.filter { it.isGif }.forEach(::rememberGif)
         _state.update { s ->
             val next = s.copy(
-                posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn)) + s.posts,
+                posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn, poll = built)) + s.posts,
                 // Чек-ин сам засчитывается в общие цели «Вместе»
                 together = if (checkIn != null) s.together.afterCheckIn(checkIn) else s.together,
                 growth = if (checkIn != null) s.growth.logged(GrowthEvent(GrowthEventType.CheckIn, clock(), checkIn.activity)) else s.growth,
@@ -721,13 +731,20 @@ class AppViewModel(
      * Отправка. В демо собеседник «печатает» и через пару секунд отвечает —
      * чтобы переписку можно было почувствовать без сервера.
      */
-    fun send(chatId: Int, text: String, attachments: List<Attachment> = emptyList(), replyTo: ReplyRef? = null) {
+    fun send(chatId: Int, text: String, attachments: List<Attachment> = emptyList(), replyTo: ReplyRef? = null, poll: PollDraft? = null, place: SharedPlace? = null) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && attachments.isEmpty()) return
+        val built = poll?.build(nextId++)
+        if (trimmed.isEmpty() && attachments.isEmpty() && built == null && place == null) return
         append(
             chatId,
-            Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA), replyTo = replyTo),
+            Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA), replyTo = replyTo, poll = built, place = place),
         )
+        attachments.filter { it.isGif }.forEach(::rememberGif)
+        // Опрос в переписке: собеседник отвечает голосом через пару секунд
+        if (built != null) later(4_000, 12_000) {
+            val pick = Random.nextInt(built.options.size)
+            updateMessagePoll(chatId, built.id) { it.addVotes(mapOf(pick to 1)) }
+        }
         if (!demoReplies) return
         viewModelScope.launch {
             delay(700)
@@ -827,7 +844,12 @@ class AppViewModel(
         val author = original.forwardedFrom ?: if (original.fromMe) s.me.name else from.peer.name
         append(
             toChatId,
-            Message(nextId++, fromMe = true, text = original.text, time = now(), attachments = original.attachments, forwardedFrom = author),
+            Message(
+                nextId++, fromMe = true, text = original.text, time = now(), attachments = original.attachments, forwardedFrom = author,
+                // Пересланный опрос — новый, с чистыми голосами; место — как есть
+                poll = original.poll?.let { p -> p.copy(id = nextId++, options = p.options.map { it.copy(votes = 0) }, mine = emptySet(), closed = false) },
+                place = original.place,
+            ),
         )
         openChat(toChatId)
     }
@@ -1140,14 +1162,148 @@ class AppViewModel(
      * Запись в группе — только для участников (а если так решил создатель —
      * только для него): текст и вложения — фото, видео, документы, музыка.
      */
-    fun postInGroup(groupId: Int, text: String, media: List<Attachment> = emptyList()) {
+    fun postInGroup(groupId: Int, text: String, media: List<Attachment> = emptyList(), poll: PollDraft? = null) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && media.isEmpty()) return
+        val built = poll?.build(nextId++)
+        if (trimmed.isEmpty() && media.isEmpty() && built == null) return
         _state.update { s ->
             s.copy(groups = s.groups.map {
                 if (it.id != groupId || !it.joined || (it.onlyOwnerPosts && !it.mine)) it
-                else it.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock())) + it.posts)
+                else it.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), poll = built)) + it.posts)
             })
+        }
+        media.filter { it.isGif }.forEach(::rememberGif)
+    }
+
+    // ==================== ОПРОСЫ ====================
+
+    /** Изменить опрос записи — в ленте или в группе. */
+    /** Своя ли запись — у своих опросов есть «Завершить». */
+    fun isMine(post: Post): Boolean = post.author.id == _state.value.me.id
+
+    private fun updatePostPoll(postId: Long, change: (Poll) -> Poll) {
+        _state.update { s ->
+            fun Post.fix() = if (id == postId && poll != null) copy(poll = change(poll)) else this
+            s.copy(posts = s.posts.map { it.fix() }, groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.fix() }) })
+        }
+    }
+
+    private fun updateMessagePoll(chatId: Int, pollId: Long, change: (Poll) -> Poll) {
+        _state.update { s ->
+            s.copy(chats = s.chats.map { c ->
+                if (c.id != chatId) c
+                else c.copy(messages = c.messages.map { m -> if (m.poll?.id == pollId) m.copy(poll = change(m.poll)) else m })
+            })
+        }
+    }
+
+    /** Голос в опросе записи (ленты или группы). */
+    fun votePost(postId: Long, option: Int) = updatePostPoll(postId) { it.vote(option) }
+
+    /** Голос в опросе сообщения. */
+    fun voteMessage(chatId: Int, pollId: Long, option: Int) = updateMessagePoll(chatId, pollId) { it.vote(option) }
+
+    /** Закрыть свой опрос: голосовать больше нельзя, итоги видны всем. */
+    fun closePostPoll(postId: Long) = updatePostPoll(postId) { it.close() }
+
+    fun closeMessagePoll(chatId: Int, pollId: Long) = updateMessagePoll(chatId, pollId) { it.close() }
+
+    // ==================== ГИФКИ, КОЛЛЕКЦИИ СТИКЕРОВ, ФОНЫ ====================
+
+    /** Отправленная гифка — в «Недавние» (до 30, новые первыми). */
+    fun rememberGif(gif: Attachment) {
+        if (!gif.isGif) return
+        _state.update { s ->
+            val name = gif.name.ifEmpty { gif.path.substringAfterLast('/') }
+            s.copy(recentGifs = (listOf(gif) + s.recentGifs.filterNot { it.name.isNotEmpty() && it.name == name }).take(30))
+        }
+    }
+
+    /** Новая коллекция стикеров; null — пустое имя или такая уже есть. */
+    fun createStickerPack(name: String): StickerPack? {
+        val n = name.trim().take(30)
+        if (n.isEmpty() || _state.value.stickerPacks.any { it.name.equals(n, ignoreCase = true) }) return null
+        val pack = StickerPack("pack-" + UUID.randomUUID().toString().take(8), n)
+        _state.update { it.copy(stickerPacks = it.stickerPacks + pack) }
+        return pack
+    }
+
+    fun renameStickerPack(id: String, name: String) {
+        val n = name.trim().take(30)
+        if (n.isEmpty()) return
+        _state.update { s -> s.copy(stickerPacks = s.stickerPacks.map { if (it.id == id) it.copy(name = n) else it }) }
+    }
+
+    /** Удалить коллекцию: стикеры остаются, просто без коллекции. */
+    fun deleteStickerPack(id: String) {
+        _state.update { s ->
+            s.copy(stickerPacks = s.stickerPacks.filterNot { it.id == id }, stickers = s.stickers.map { if (it.packId == id) it.copy(packId = "") else it })
+        }
+    }
+
+    fun moveSticker(stickerId: String, packId: String) {
+        _state.update { s -> s.copy(stickers = s.stickers.map { if (it.id == stickerId) it.copy(packId = packId) else it }) }
+    }
+
+    /** Общий фон переписок. */
+    fun setBackdrop(backdrop: Backdrop) {
+        val before = backdropPhotos(_state.value)
+        _state.update { it.copy(backdrop = backdrop) }
+        dropBackdropPhotos(before)
+    }
+
+    /** Свой фон у переписки; null — как у всех. */
+    fun setChatBackdrop(chatId: Int, backdrop: Backdrop?) {
+        val before = backdropPhotos(_state.value)
+        _state.update { s -> s.copy(chats = s.chats.map { if (it.id == chatId) it.copy(backdrop = backdrop) else it }) }
+        dropBackdropPhotos(before)
+    }
+
+    private fun backdropPhotos(s: UiState): Set<String> =
+        (listOf(s.backdrop) + s.chats.mapNotNull { it.backdrop }).map { it.photo }.filter { it.isNotEmpty() }.toSet()
+
+    /** Своё фото фона, которое больше нигде не стоит, — удалить копию. */
+    private fun dropBackdropPhotos(before: Set<String>) {
+        val now = backdropPhotos(_state.value)
+        (before - now).forEach { runCatching { java.io.File(it).delete() } }
+    }
+
+    /** Поделиться местом в переписке. */
+    fun sendPlace(chatId: Int, at: LatLon, title: String = "") {
+        send(chatId, "", place = SharedPlace(at.lat, at.lon, title.trim().take(80)))
+    }
+
+    /**
+     * Ещё одна демо-жизнь: голоса в ваших опросах, новый PRISM друга,
+     * место от друга в переписке. Голоса приходят только в открытые опросы.
+     */
+    fun socialEvent(random: Random) {
+        val s = _state.value
+        val friends = Demo.people.filter { it.id !in s.blocked }
+        if (friends.isEmpty()) return
+        val myPolls = (s.posts + s.groups.flatMap { it.posts }).filter { it.author.id == s.me.id && it.poll?.closed == false }
+        when (if (myPolls.isNotEmpty()) random.nextInt(3) else 1 + random.nextInt(2)) {
+            0 -> {
+                val post = myPolls[random.nextInt(myPolls.size)]
+                val poll = post.poll ?: return
+                val added = 1 + random.nextInt(4)
+                val votes = (0 until added).groupingBy { random.nextInt(poll.options.size) }.eachCount()
+                updatePostPoll(post.id) { it.addVotes(votes) }
+                notify(Nudges.pollVotes(poll.question, added, post.id, s.groups.firstOrNull { g -> g.posts.any { it.id == post.id } }?.id))
+            }
+            1 -> {
+                val friend = friends[random.nextInt(friends.size)]
+                val captions = listOf("Огни ночного города", "Закат над рекой", "Первый снег", "Звёзды над крышей", "Кофе и дождь")
+                val prism = Prism(nextId++, friend, t(captions[random.nextInt(captions.size)]), tf("Оригинальный звук · %s", friend.name), random.nextInt(1000), random.nextInt(40), 0, createdAt = clock())
+                _state.update { it.copy(prisms = listOf(prism) + it.prisms) }
+                notify(Nudges.prismPublished(friend, prism))
+            }
+            else -> {
+                val chat = s.chats.filter { it.peer.id !in s.blocked && !it.muted }.randomOrNull(random) ?: return
+                val here = s.together.anchor.offset(random.nextDouble(-900.0, 900.0), random.nextDouble(-900.0, 900.0))
+                append(chat.id, Message(nextId++, fromMe = false, text = t("Я тут, подходи"), time = now(), place = SharedPlace(here.lat, here.lon, t("Я здесь"))))
+                if (s.openChatId != chat.id) notify(Nudges.placeShared(chat.peer, chat.id))
+            }
         }
     }
 
@@ -1290,6 +1446,10 @@ class AppViewModel(
                 else openRecap(RecapPeriod.Month, ((today.year * 12 + today.monthValue) - (year * 12 + month)).coerceAtLeast(0))
             }
             NudgeTarget.Requests -> openProfileSection(ProfileSection.Requests)
+            NudgeTarget.Prism -> {
+                selectTab(Tab.Prism)
+                if (_state.value.prisms.any { it.id == nudge.targetId }) _state.update { it.copy(prismStartId = nudge.targetId) }
+            }
             NudgeTarget.Together -> {
                 selectTab(Tab.Together)
                 TogetherSection.entries.getOrNull(nudge.targetId.toInt())?.let(::selectTogetherSection)
@@ -1350,6 +1510,8 @@ class AppViewModel(
                 demoEvent(Random.Default)
                 delay(Random.nextLong(35_000, 75_000))
                 togetherEvent(Random.Default)
+                delay(Random.nextLong(35_000, 75_000))
+                socialEvent(Random.Default)
                 delay(Random.nextLong(35_000, 75_000))
             }
         }
@@ -1726,6 +1888,7 @@ class AppViewModel(
             it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins,
             it.checkInTemplates, it.followRequests, it.approvedFollowers, it.sentRequests, it.recapNotified,
             it.together, it.shelfMarks, it.dismissedRecs, it.growth, it.invitedBy, it.memorySeen,
+            it.stickerPacks, it.backdrop, it.recentGifs,
         )
     }
 
@@ -1762,6 +1925,9 @@ class AppViewModel(
                 growth = (snapshot.growth + s.growth.filter { it !in snapshot.growth }).sortedBy { it.at }.takeLast(GROWTH_LOG_LIMIT),
                 invitedBy = snapshot.invitedBy ?: s.invitedBy,
                 memorySeen = snapshot.memorySeen,
+                stickerPacks = snapshot.stickerPacks,
+                backdrop = snapshot.backdrop,
+                recentGifs = snapshot.recentGifs,
             ).withMe(s.me)
         }
     }
@@ -1780,9 +1946,12 @@ class AppViewModel(
 /** Текст сообщения для списков и цитат; без текста — что приложено. */
 fun messagePreview(message: Message): String {
     if (message.text.isNotEmpty()) return message.text
+    message.poll?.let { return t("Опрос") + ": " + it.question }
+    message.place?.let { return t("Геолокация") + (if (it.title.isNotEmpty()) ": " + it.title else "") }
     val a = message.attachments
     return when {
         a.isEmpty() -> ""
+        a.all { it.isGif } -> "GIF"
         a.size == 1 && a[0].voice -> t("Голосовое сообщение") + " · " + ru.wishka.memory.data.durationTitle(a[0].durationMs)
         a.all { it.sticker } -> t("Стикер")
         a.all { it.kind == ru.wishka.memory.data.MediaKind.Photo } -> if (a.size == 1) t("Фото") else tf("%s фото", a.size)
@@ -1820,6 +1989,9 @@ data class Snapshot(
     val growth: List<GrowthEvent> = emptyList(),
     val invitedBy: Invite? = null,
     val memorySeen: String = "",
+    val stickerPacks: List<StickerPack> = emptyList(),
+    val backdrop: Backdrop = Backdrop.DEFAULT,
+    val recentGifs: List<Attachment> = emptyList(),
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

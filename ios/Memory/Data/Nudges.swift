@@ -1,10 +1,10 @@
 import Foundation
 
 /// Раздел уведомлений — по нему работают выключатели в настройках.
-enum NudgeKind: String, CaseIterable { case friends, groups, reactions, follows, messages, recap }
+enum NudgeKind: String, CaseIterable { case friends, groups, reactions, follows, messages, recap, prism }
 
 /// Куда ведёт нажатие на уведомление.
-enum NudgeTarget: String { case post, group, person, chat, recap, requests, together }
+enum NudgeTarget: String { case post, group, person, chat, recap, requests, together, prism }
 
 /// Персональное уведомление: не «Вы давно не заходили», а что именно
 /// случилось и почему это вам интересно — «Ваша подруга Вера только что
@@ -191,7 +191,32 @@ enum Nudges {
         case .follows: return s.follows
         case .messages: return s.messages
         case .recap: return s.recap
+        case .prism: return s.prism
         }
+    }
+
+    /// Друг выложил PRISM: «Вера выложила PRISM «Огни Невы»». targetId — номер ролика.
+    static func prismPublished(_ friend: User, _ prism: Prism) -> Nudge {
+        var caption = prism.caption.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        if caption.count > 40 { caption = String(caption.prefix(40)).trimmingCharacters(in: .whitespaces) + "…" }
+        let text = caption.isEmpty
+            ? tf(g(friend, "%s выложил новый PRISM", "%s выложила новый PRISM"), friend.firstName)
+            : tf(g(friend, "%s выложил PRISM «%s»", "%s выложила PRISM «%s»"), friend.firstName, caption)
+        return Nudge(kind: .prism, title: "PRISM", text: text, target: .prism, targetId: prism.id)
+    }
+
+    /// Опрос: «За ваш опрос «Куда едем?» проголосовали ещё 3».
+    /// groupId — опрос в группе: открывается в группе, в ленте его нет.
+    static func pollVotes(_ question: String, _ added: Int, postId: Int64, groupId: Int? = nil) -> Nudge {
+        Nudge(kind: .reactions, title: t("Опрос"), text: tf("«%s»: новых голосов — %s", String(question.prefix(40)), added),
+              target: groupId != nil ? .group : .post, targetId: groupId.map(Int64.init) ?? postId)
+    }
+
+    /// Друг поделился местом в переписке.
+    static func placeShared(_ friend: User, chatId: Int) -> Nudge {
+        Nudge(kind: .messages, title: friend.name,
+              text: tf(g(friend, "%s поделился местом на карте", "%s поделилась местом на карте"), friend.firstName),
+              target: .chat, targetId: Int64(chatId))
     }
 
     private static func preview(_ post: Post) -> String {
@@ -226,6 +251,10 @@ enum Nudges {
             return requestAccepted(actor)
         case "message":
             return message(actor, data["body"] ?? "", chatId: Int(data["chatId"] ?? "") ?? 0)
+        case "prism":
+            let prism = Prism(id: Int64(data["prismId"] ?? "") ?? 0, author: actor, caption: data["caption"] ?? "",
+                              music: "", seed: 0, likes: 0, comments: 0)
+            return prismPublished(actor, prism)
         default:
             guard let body = data["body"], !body.isEmpty else { return nil }
             return Nudge(kind: .friends, title: data["title"] ?? "Memory", text: body, target: .post)

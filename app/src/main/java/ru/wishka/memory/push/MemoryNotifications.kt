@@ -17,6 +17,10 @@ import ru.wishka.memory.R
 import ru.wishka.memory.data.Nudge
 import ru.wishka.memory.data.NudgeKind
 import ru.wishka.memory.data.NudgeTarget
+import ru.wishka.memory.data.NotifySound
+import ru.wishka.memory.data.SoundPlayer
+import ru.wishka.memory.data.SoundPrefs
+import android.media.AudioAttributes
 import ru.wishka.memory.i18n.t
 
 /** Открыто ли приложение на экране: тогда уведомление — плашкой внутри, а не системным. */
@@ -38,7 +42,13 @@ object MemoryNotifications {
     private const val EXTRA_TARGET = "memory.nudge.target"
     private const val EXTRA_ID = "memory.nudge.id"
 
-    private fun channelId(kind: NudgeKind) = "memory_" + kind.name.lowercase()
+    /**
+     * Канал = вид уведомления + звук: у канала Android звук задаётся один раз,
+     * поэтому новый звук — новый канал (старый удаляем).
+     */
+    private fun channelId(kind: NudgeKind, sound: NotifySound) = "memory_" + kind.name.lowercase() + "_" + sound.id
+
+    private fun channelId(context: Context, kind: NudgeKind) = channelId(kind, SoundPrefs(context).get(kind))
 
     private fun channelName(kind: NudgeKind) = when (kind) {
         NudgeKind.Friends -> t("Друзья")
@@ -47,16 +57,55 @@ object MemoryNotifications {
         NudgeKind.Follows -> t("Подписки")
         NudgeKind.Messages -> t("Сообщения")
         NudgeKind.Recap -> t("Итоги")
+        NudgeKind.Prism -> "PRISM"
     }
 
-    /** Каналы — один раз при запуске (Android 8+). */
+    /** Каналы — при запуске (Android 8+) и после смены звука: со своим звуком у каждого вида. */
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT < 26) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val sounds = SoundPrefs(context)
         NudgeKind.entries.forEach { kind ->
-            val importance = if (kind == NudgeKind.Messages) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_DEFAULT
-            manager.createNotificationChannel(NotificationChannel(channelId(kind), channelName(kind), importance))
+            val sound = sounds.get(kind)
+            val id = channelId(kind, sound)
+            // Каналы этого вида с другим звуком (и старые, без звука в имени) — больше не нужны
+            val prefix = "memory_" + kind.name.lowercase()
+            manager.notificationChannels.filter { (it.id == prefix || it.id.startsWith(prefix + "_")) && it.id != id }
+                .forEach { manager.deleteNotificationChannel(it.id) }
+            val importance = when {
+                sound == NotifySound.Silent -> NotificationManager.IMPORTANCE_LOW
+                kind == NudgeKind.Messages -> NotificationManager.IMPORTANCE_HIGH
+                else -> NotificationManager.IMPORTANCE_DEFAULT
+            }
+            val channel = NotificationChannel(id, channelName(kind), importance)
+            when (sound) {
+                NotifySound.System -> Unit
+                NotifySound.Silent -> channel.setSound(null, null)
+                else -> channel.setSound(
+                    SoundPlayer.uri(context, sound),
+                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
+                )
+            }
+            manager.createNotificationChannel(channel)
         }
+        // Запасной канал для пушей FCM без своего канала — не удаляется при смене звуков
+        if (manager.getNotificationChannel(DEFAULT_CHANNEL) == null) {
+            manager.createNotificationChannel(NotificationChannel(DEFAULT_CHANNEL, "Memory", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(
+                    SoundPlayer.uri(context, NotifySound.Crystal),
+                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
+                )
+            })
+        }
+    }
+
+    /** Канал по умолчанию для FCM (AndroidManifest: default_notification_channel_id). */
+    const val DEFAULT_CHANNEL = "memory_default"
+
+    /** Сменили звук в настройках: запомнить и пересоздать канал. */
+    fun changeSound(context: Context, kind: NudgeKind, sound: NotifySound) {
+        SoundPrefs(context).set(kind, sound)
+        createChannels(context)
     }
 
     /** Можно ли показывать: на Android 13+ нужно разрешение. */
@@ -77,7 +126,8 @@ object MemoryNotifications {
             .putExtra(EXTRA_ID, nudge.targetId)
         val code = (nudge.text.hashCode() and 0x7fffffff)
         val pending = PendingIntent.getActivity(context, code, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notification = NotificationCompat.Builder(context, channelId(nudge.kind))
+        val sound = SoundPrefs(context).get(nudge.kind)
+        val notification = NotificationCompat.Builder(context, channelId(context, nudge.kind))
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(0xFF844CAD.toInt())
             .setContentTitle(nudge.title)
@@ -85,8 +135,12 @@ object MemoryNotifications {
             .setStyle(NotificationCompat.BigTextStyle().bigText(nudge.text))
             .setContentIntent(pending)
             .setAutoCancel(true)
-            .build()
-        NotificationManagerCompat.from(context).notify(code, notification)
+        // До Android 8 звук задаёт само уведомление, а не канал
+        if (Build.VERSION.SDK_INT < 26) {
+            val uri = SoundPlayer.uri(context, sound)
+            if (uri != null) notification.setSound(uri) else if (sound == NotifySound.Silent) notification.setSilent(true)
+        }
+        NotificationManagerCompat.from(context).notify(code, notification.build())
     }
 
     /** Уведомление, которым открыли приложение; null — открыли не им. */

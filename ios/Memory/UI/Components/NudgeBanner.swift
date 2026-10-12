@@ -15,6 +15,7 @@ struct NudgeBanner: View {
         case .follows: return .profile
         case .messages: return .chats
         case .recap: return .award
+        case .prism: return .prism
         }
     }
 

@@ -43,7 +43,14 @@ struct MediaTile: View {
 
     var body: some View {
         let tile = ZStack {
-            Color.clear.overlay { MediaThumbnail(attachment: attachment, maxPixel: maxPixel) }.clipped()
+            if attachment.isGif {
+                // Гифка играет сама, с меткой «GIF»
+                Color.clear.overlay { GifImage(attachment: attachment, crop: true, maxPixel: min(maxPixel, 640)) }.clipped()
+                    .background(Palette.plumRGB.opacity(0.6))
+                    .overlay(alignment: .bottomLeading) { GifBadge().padding(8) }
+            } else {
+                Color.clear.overlay { MediaThumbnail(attachment: attachment, maxPixel: maxPixel) }.clipped()
+            }
             if attachment.kind == .video {
                 Glyph(kind: .play, color: Palette.ink, size: 22)
                     .frame(width: 44, height: 44)
@@ -60,7 +67,8 @@ struct MediaTile: View {
 }
 
 /// Фото и видео записи. Одно — во всю ширину; несколько — листаются вбок,
-/// с номером «2 / 5». Нажатие открывает на весь экран.
+/// с номером «2 / 5». Нажатие открывает на весь экран, двумя пальцами —
+/// увеличить прямо в ленте.
 struct PostMediaView: View {
     let media: [Attachment]
     var height: CGFloat = 260
@@ -69,9 +77,11 @@ struct PostMediaView: View {
 
     var body: some View {
         if media.count == 1 {
+            // Увеличение — внутри рамки карточки: рамка обрезает
             MediaTile(attachment: media[0]) { onOpen(media[0]) }
                 .frame(height: height)
                 .frame(maxWidth: .infinity)
+                .pinchZoom()
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         } else if media.count > 1 {
             TabView(selection: $page) {
@@ -81,6 +91,8 @@ struct PostMediaView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            // Двумя пальцами — увеличение, а не перелистывание: жест важнее листалки
+            .pinchZoom(highPriority: true)
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(alignment: .topTrailing) {
@@ -141,8 +153,15 @@ struct MediaViewer: View {
                     VideoPlayer(player: player).ignoresSafeArea()
                 }
             default:
-                MediaThumbnail(attachment: attachment, maxPixel: 2400, contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Двумя пальцами — увеличить и подвинуть, двойное касание — в точке
+                ZoomableBox {
+                    if attachment.isGif {
+                        GifImage(attachment: attachment, maxPixel: 1200)
+                    } else {
+                        MediaThumbnail(attachment: attachment, maxPixel: 2400, contentMode: .fit)
+                    }
+                }
+                .ignoresSafeArea()
             }
             RoundGlyphButton(icon: .close, strong: true, action: onClose)
                 .padding(12)
@@ -228,6 +247,12 @@ struct AttachButton: View {
     var onMusic: (() -> Void)? = nil
     /// «Стикер» в меню — свои стикеры из «Студии»; nil — пункта нет.
     var onSticker: (() -> Void)? = nil
+    /// «GIF» — встроенные, свои и поиск GIPHY; nil — пункта нет.
+    var onGif: (() -> Void)? = nil
+    /// «Опрос»; nil — пункта нет.
+    var onPoll: (() -> Void)? = nil
+    /// «Геолокация» — где я сейчас, точкой на карте; nil — пункта нет.
+    var onLocation: (() -> Void)? = nil
     let onPicked: ([Attachment]) -> Void
 
     @State private var showGallery = false
@@ -251,6 +276,15 @@ struct AttachButton: View {
         }
         if let onSticker {
             items.append(GlassAction(icon: .sticker, title: t("Стикер"), action: onSticker))
+        }
+        if let onGif {
+            items.append(GlassAction(icon: .gif, title: t("GIF"), action: onGif))
+        }
+        if let onPoll {
+            items.append(GlassAction(icon: .poll, title: t("Опрос"), action: onPoll))
+        }
+        if let onLocation {
+            items.append(GlassAction(icon: .globe, title: t("Геолокация"), action: onLocation))
         }
         return items
     }

@@ -4,10 +4,10 @@ import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 
 /** Раздел уведомлений — по нему работают выключатели в настройках. */
-enum class NudgeKind { Friends, Groups, Reactions, Follows, Messages, Recap }
+enum class NudgeKind { Friends, Groups, Reactions, Follows, Messages, Recap, Prism }
 
 /** Куда ведёт нажатие на уведомление. */
-enum class NudgeTarget { Post, Group, Person, Chat, Recap, Requests, Together }
+enum class NudgeTarget { Post, Group, Person, Chat, Recap, Requests, Together, Prism }
 
 /**
  * Персональное уведомление: не «Вы давно не заходили», а что именно
@@ -179,7 +179,29 @@ object Nudges {
         NudgeKind.Follows -> s.follows
         NudgeKind.Messages -> s.messages
         NudgeKind.Recap -> s.recap
+        NudgeKind.Prism -> s.prism
     }
+
+    /** Друг выложил PRISM: «Вера выложила PRISM «Огни Невы»». targetId — номер ролика. */
+    fun prismPublished(friend: User, prism: Prism): Nudge {
+        val caption = prism.caption.replace('\n', ' ').trim().let { if (it.length > 40) it.take(40).trimEnd() + "…" else it }
+        val text = if (caption.isEmpty()) tf(g(friend, "%s выложил новый PRISM", "%s выложила новый PRISM"), firstName(friend))
+        else tf(g(friend, "%s выложил PRISM «%s»", "%s выложила PRISM «%s»"), firstName(friend), caption)
+        return Nudge(NudgeKind.Prism, "PRISM", text, NudgeTarget.Prism, prism.id)
+    }
+
+    /** Опрос: «За ваш опрос «Куда едем?» проголосовали ещё 3». */
+    fun pollVotes(question: String, added: Int, postId: Long, groupId: Int? = null): Nudge =
+        Nudge(
+            NudgeKind.Reactions, t("Опрос"), tf("«%s»: новых голосов — %s", question.take(40), added),
+            // Опрос в группе открывается в группе — в ленте его нет
+            if (groupId != null) NudgeTarget.Group else NudgeTarget.Post,
+            groupId?.toLong() ?: postId,
+        )
+
+    /** Друг поделился местом в переписке. */
+    fun placeShared(friend: User, chatId: Int): Nudge =
+        Nudge(NudgeKind.Messages, friend.name, tf(g(friend, "%s поделился местом на карте", "%s поделилась местом на карте"), firstName(friend)), NudgeTarget.Chat, chatId.toLong())
 
     private fun preview(post: Post): String {
         val text = post.text.replace('\n', ' ').trim()
@@ -213,6 +235,7 @@ object Nudges {
             "follow_request" -> followRequest(actor, data["common"]?.split(',')?.filter { it.isNotBlank() }.orEmpty())
             "request_accepted" -> requestAccepted(actor)
             "message" -> message(actor, body, data["chatId"]?.toIntOrNull() ?: 0)
+            "prism" -> prismPublished(actor, Prism(data["prismId"]?.toLongOrNull() ?: 0, actor, data["caption"].orEmpty(), "", 0, 0, 0))
             else -> if (body.isNotEmpty()) Nudge(NudgeKind.Friends, title.ifEmpty { "Memory" }, body, NudgeTarget.Post) else null
         }
     }

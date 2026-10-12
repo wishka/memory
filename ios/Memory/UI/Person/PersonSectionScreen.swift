@@ -32,7 +32,9 @@ struct PersonSectionScreen: View {
                             post: post,
                             onLike: { model.toggleLike(post.id) },
                             onComments: { model.openComments(post.id) },
-                            onOpenMedia: model.openMedia
+                            onOpenMedia: model.openMedia,
+                            onVote: { model.votePost(post.id, $0) },
+                            onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil
                         )
                     }
                 } else {

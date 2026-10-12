@@ -34,6 +34,9 @@ import ru.wishka.memory.data.CheckIn
 import ru.wishka.memory.data.CheckInTemplate
 import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.data.Sticker
+import ru.wishka.memory.data.MusicTrack
+import ru.wishka.memory.data.PollDraft
+import ru.wishka.memory.data.StickerPack
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.ui.AppViewModel
@@ -41,25 +44,34 @@ import ru.wishka.memory.ui.theme.Palette
 
 /**
  * Новая запись — в Ленте и в Историях: текст, фото и видео из галереи
- * или с камеры, свои стикеры и чек-ин («смотрю фильм», «пробежал 5 км»).
+ * или с камеры, свои стикеры, гифки, музыка, опрос и чек-ин («смотрю
+ * фильм», «пробежал 5 км»).
  * Вложения видны плитками под полем, крестик убирает лишнее.
  */
 @Composable
 fun PostComposer(
     stickers: List<Sticker>,
     templates: List<CheckInTemplate>,
-    onPublish: (String, List<Attachment>, CheckIn?) -> Unit,
+    onPublish: (String, List<Attachment>, CheckIn?, PollDraft?) -> Unit,
     onCreateTemplate: (String, String, String, String) -> String?,
     onDeleteTemplate: (String) -> Unit,
     onOpenStudio: () -> Unit,
     placeholder: String = t("Чем хочется поделиться?"),
     hint: String = t("Видят ваши подписчики"),
+    /** «Моя музыка» — для пункта «Музыка». */
+    tracks: List<MusicTrack> = emptyList(),
+    packs: List<StickerPack> = emptyList(),
+    recentGifs: List<Attachment> = emptyList(),
 ) {
     var text by rememberSaveable { mutableStateOf("") }
     var media by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     var checkIn by remember { mutableStateOf<CheckIn?>(null) }
     var choosingSticker by remember { mutableStateOf(false) }
     var choosingCheckIn by remember { mutableStateOf(false) }
+    var choosingGif by remember { mutableStateOf(false) }
+    var choosingMusic by remember { mutableStateOf(false) }
+    var editingPoll by remember { mutableStateOf(false) }
+    var poll by remember { mutableStateOf<PollDraft?>(null) }
     var scenario by remember { mutableStateOf<String?>(null) }
     val picker = rememberMediaPicker { picked ->
         media = (media + picked).take(AppViewModel.MAX_MEDIA)
@@ -81,7 +93,7 @@ fun PostComposer(
                 }
             }
             // Не «чистый лист»: сначала готовые сценарии — одно нажатие, и запись наполовину готова
-            if (checkIn == null && text.isEmpty() && media.isEmpty()) {
+            if (checkIn == null && text.isEmpty() && media.isEmpty() && poll == null) {
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -93,6 +105,7 @@ fun PostComposer(
                 }
             }
             GlassField(text, { text = it.take(2000) }, if (checkIn != null) t("Пара слов к чек-ину") else if (media.isEmpty()) t("…или просто напишите") else placeholder)
+            poll?.let { p -> PendingPoll(p, onRemove = { poll = null }, modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()) }
             PendingAttachments(
                 media,
                 onRemove = { item ->
@@ -111,6 +124,9 @@ fun PostComposer(
                     picker, documents = false, size = 40.dp,
                     onSticker = { choosingSticker = true },
                     onCheckIn = { choosingCheckIn = true },
+                    onMusic = { choosingMusic = true },
+                    onGif = { choosingGif = true },
+                    onPoll = { editingPoll = true },
                 )
                 Spacer(Modifier.width(8.dp))
                 // Чек-ин — отдельной кнопкой: им пользуются часто
@@ -133,23 +149,36 @@ fun PostComposer(
                     color = Palette.Mist,
                     modifier = Modifier.weight(1f),
                 )
-                GlowButton(t("Поделиться"), enabled = text.isNotBlank() || media.isNotEmpty() || checkIn != null, onClick = {
-                    onPublish(text, media, checkIn)
+                GlowButton(t("Поделиться"), enabled = text.isNotBlank() || media.isNotEmpty() || checkIn != null || poll != null, onClick = {
+                    onPublish(text, media, checkIn, poll)
                     text = ""
                     media = emptyList()
                     checkIn = null
+                    poll = null
                 })
             }
         }
     }
-    if (choosingSticker) {
+    if (choosingSticker || choosingGif) {
         StickerPicker(
             stickers,
             onPick = { media = (media + it).take(AppViewModel.MAX_MEDIA) },
-            onDismiss = { choosingSticker = false },
+            onDismiss = { choosingSticker = false; choosingGif = false },
             onOpenStudio = onOpenStudio,
+            packs = packs,
+            recentGifs = recentGifs,
+            gifs = true,
+            startOnGifs = choosingGif,
         )
     }
+    if (choosingMusic) {
+        MusicChooser(
+            tracks = tracks,
+            onPicked = { picked -> media = (media + picked).take(AppViewModel.MAX_MEDIA) },
+            onDismiss = { choosingMusic = false },
+        )
+    }
+    if (editingPoll) PollEditorDialog(onDismiss = { editingPoll = false }, onCreate = { poll = it })
     if (choosingCheckIn) {
         CheckInPicker(
             templates,

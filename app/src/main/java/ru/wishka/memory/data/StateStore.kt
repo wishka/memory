@@ -76,6 +76,9 @@ class StateStore(private val context: Context) {
                 JSONObject().put("code", i.code).put("action", i.action.id).put("targetId", i.targetId).put("from", i.from)
             } ?: JSONObject.NULL)
             .put("memorySeen", s.memorySeen)
+            .put("stickerPacks", JSONArray(s.stickerPacks.map { JSONObject().put("id", it.id).put("name", it.name) }))
+            .put("backdrop", backdrop(s.backdrop))
+            .put("recentGifs", JSONArray(s.recentGifs.map { attachment(it) }))
 
         fun snapshot(o: JSONObject) = Snapshot(
             posts = o.getJSONArray("posts").objects().map { post(it) },
@@ -111,6 +114,9 @@ class StateStore(private val context: Context) {
                 Invite(i.optString("code"), InviteAction.of(i.optString("action")), i.optString("targetId"), i.optString("from"))
             },
             memorySeen = o.optString("memorySeen"),
+            stickerPacks = o.optJSONArray("stickerPacks").objects().map { StickerPack(it.optString("id"), it.optString("name")) },
+            backdrop = o.optJSONObject("backdrop")?.let { backdrop(it) } ?: Backdrop.DEFAULT,
+            recentGifs = o.optJSONArray("recentGifs").objects().map { attachment(it) },
         )
 
         // ---------- Вместе ----------
@@ -307,11 +313,13 @@ class StateStore(private val context: Context) {
 
         private fun sticker(t: Sticker) = JSONObject()
             .put("id", t.id).put("path", t.path).put("kind", t.kind.name).put("createdAt", t.createdAt)
+            .put("animation", t.animation).put("frames", JSONArray(t.frames)).put("fps", t.fps).put("packId", t.packId)
 
         private fun sticker(o: JSONObject) = Sticker(
             o.getString("id"), o.getString("path"),
             StickerKind.entries.firstOrNull { it.name == o.optString("kind") } ?: StickerKind.Badge,
             o.optLong("createdAt"),
+            o.optString("animation"), o.optJSONArray("frames").strs(), o.optInt("fps"), o.optString("packId"),
         )
 
         private fun playlist(p: Playlist) = JSONObject()
@@ -325,7 +333,7 @@ class StateStore(private val context: Context) {
         private fun notify(n: Notifications) = JSONObject()
             .put("all", n.all).put("messages", n.messages).put("reactions", n.reactions)
             .put("groups", n.groups).put("follows", n.follows)
-            .put("friends", n.friends).put("recap", n.recap)
+            .put("friends", n.friends).put("recap", n.recap).put("prism", n.prism)
 
         private fun notify(o: JSONObject) = Notifications(
             all = o.optBoolean("all", true), messages = o.optBoolean("messages", true),
@@ -333,6 +341,7 @@ class StateStore(private val context: Context) {
             follows = o.optBoolean("follows", true),
             friends = o.optBoolean("friends", true),
             recap = o.optBoolean("recap", true),
+            prism = o.optBoolean("prism", true),
         )
 
         private fun privacy(p: Privacy) = JSONObject()
@@ -358,12 +367,14 @@ class StateStore(private val context: Context) {
             .put("name", a.name).put("size", a.size).put("mime", a.mime)
             .put("voice", a.voice).put("durationMs", a.durationMs).put("waveform", JSONArray(a.waveform))
             .put("sticker", a.sticker)
+            .put("animation", a.animation).put("frames", JSONArray(a.frames)).put("fps", a.fps)
 
         private fun attachment(o: JSONObject) = Attachment(
             o.getString("id"), MediaKind.valueOf(o.getString("kind")), o.getString("path"),
             o.optString("name"), o.optLong("size"), o.optString("mime"),
             voice = o.optBoolean("voice"), durationMs = o.optLong("durationMs"),
             waveform = o.optJSONArray("waveform").ints(), sticker = o.optBoolean("sticker"),
+            animation = o.optString("animation"), frames = o.optJSONArray("frames").strs(), fps = o.optInt("fps"),
         )
 
         private fun comment(c: Comment) = JSONObject()
@@ -385,6 +396,7 @@ class StateStore(private val context: Context) {
             .put("likes", p.likes).put("liked", p.liked).put("comments", p.comments)
             .put("createdAt", p.createdAt)
             .put("checkIn", p.checkIn?.let { checkIn(it) } ?: JSONObject.NULL)
+            .put("poll", p.poll?.let { poll(it) } ?: JSONObject.NULL)
             .put("media", JSONArray(p.media.map { attachment(it) }))
             .put("commentList", JSONArray(p.commentList.map { comment(it) }))
 
@@ -401,6 +413,7 @@ class StateStore(private val context: Context) {
             commentList = o.optJSONArray("commentList").objects().map { comment(it) },
             createdAt = o.optLong("createdAt"),
             checkIn = o.optJSONObject("checkIn")?.let { checkIn(it) },
+            poll = o.optJSONObject("poll")?.let { poll(it) },
         )
 
         private fun message(m: Message) = JSONObject()
@@ -408,18 +421,38 @@ class StateStore(private val context: Context) {
             .put("attachments", JSONArray(m.attachments.map { attachment(it) }))
             .put("replyTo", m.replyTo?.let { JSONObject().put("messageId", it.messageId).put("author", it.author).put("preview", it.preview) } ?: JSONObject.NULL)
             .put("forwardedFrom", m.forwardedFrom ?: JSONObject.NULL)
+            .put("poll", m.poll?.let { poll(it) } ?: JSONObject.NULL)
+            .put("place", m.place?.let { JSONObject().put("lat", it.lat).put("lon", it.lon).put("title", it.title) } ?: JSONObject.NULL)
 
         private fun message(o: JSONObject) = Message(
             o.getLong("id"), o.getBoolean("fromMe"), o.getString("text"), o.getString("time"),
             o.optJSONArray("attachments").objects().map { attachment(it) },
             replyTo = o.optJSONObject("replyTo")?.let { ReplyRef(it.getLong("messageId"), it.optString("author"), it.optString("preview")) },
             forwardedFrom = if (o.isNull("forwardedFrom")) null else o.optString("forwardedFrom"),
+            poll = o.optJSONObject("poll")?.let { poll(it) },
+            place = o.optJSONObject("place")?.let { SharedPlace(it.optDouble("lat", 0.0), it.optDouble("lon", 0.0), it.optString("title")) },
         )
+
+        private fun poll(p: Poll) = JSONObject()
+            .put("id", p.id).put("question", p.question).put("multiple", p.multiple).put("closed", p.closed)
+            .put("mine", JSONArray(p.mine.toList()))
+            .put("options", JSONArray(p.options.map { JSONObject().put("text", it.text).put("votes", it.votes) }))
+
+        private fun poll(o: JSONObject) = Poll(
+            o.optLong("id"), o.optString("question"),
+            o.optJSONArray("options").objects().map { PollOption(it.optString("text"), it.optInt("votes")) },
+            o.optBoolean("multiple"), o.optJSONArray("mine").ints().toSet(), o.optBoolean("closed"),
+        )
+
+        fun backdrop(b: Backdrop) = JSONObject().put("style", b.style).put("photo", b.photo).put("dim", b.dim.toDouble())
+
+        fun backdrop(o: JSONObject) = Backdrop(o.optString("style", BackdropStyle.Cosmos.id), o.optString("photo"), o.optDouble("dim", 0.35).toFloat())
 
         private fun chat(c: Chat) = JSONObject()
             .put("id", c.id).put("peer", c.peer.id).put("unread", c.unread)
             .put("pinnedId", c.pinnedId ?: JSONObject.NULL)
             .put("onTop", c.onTop).put("muted", c.muted)
+            .put("backdrop", c.backdrop?.let { backdrop(it) } ?: JSONObject.NULL)
             .put("messages", JSONArray(c.messages.map { message(it) }))
 
         private fun chat(o: JSONObject) = Chat(
@@ -429,6 +462,7 @@ class StateStore(private val context: Context) {
             pinnedId = if (o.isNull("pinnedId")) null else o.getLong("pinnedId"),
             onTop = o.optBoolean("onTop"),
             muted = o.optBoolean("muted"),
+            backdrop = o.optJSONObject("backdrop")?.let { backdrop(it) },
         )
 
         private fun group(g: Group) = JSONObject()

@@ -152,6 +152,8 @@ struct RootView: View {
             model.onNudge = { nudge in
                 if UIApplication.shared.applicationState == .active {
                     model.showBanner(nudge)
+                    // Плашка звучит тем же звуком, что и пуш этого вида
+                    SoundPlayer.play(SoundPrefs().get(nudge.kind))
                 } else {
                     PushCenter.shared.show(nudge)
                 }

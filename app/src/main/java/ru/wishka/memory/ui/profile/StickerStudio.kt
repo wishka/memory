@@ -38,7 +38,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -61,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.wishka.memory.data.Attachment
@@ -79,6 +82,11 @@ import ru.wishka.memory.data.Sticker
 import ru.wishka.memory.data.StickerArt
 import ru.wishka.memory.data.StickerKind
 import ru.wishka.memory.data.StickerShape
+import ru.wishka.memory.data.StickerAnim
+import ru.wishka.memory.data.StickerEffect
+import ru.wishka.memory.data.StickerFx
+import ru.wishka.memory.data.StickerPack
+import ru.wishka.memory.data.SubjectCutout
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.ui.AppViewModel
@@ -90,6 +98,8 @@ import ru.wishka.memory.ui.components.GlassField
 import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.Glyph
 import ru.wishka.memory.ui.components.LineIcon
+import ru.wishka.memory.ui.components.LiveFrames
+import ru.wishka.memory.ui.components.LiveSticker
 import ru.wishka.memory.ui.components.MemoryMenu
 import ru.wishka.memory.ui.components.MenuRow
 import ru.wishka.memory.ui.components.ScreenTitle
@@ -102,12 +112,21 @@ import java.io.File
  * «Студия» в профиле: свои значки, смайлы и стикеры. Четыре способа —
  * из фото (обрезка формой, обводка, подпись), рисунок пальцем,
  * конструктор смайлов и значок с текстом на кристальной подложке.
- * Готовое — прозрачная PNG-картинка; её видно в витрине профиля и можно
- * отправить через «Поделиться».
+ * Плюс вырезка объекта с фото (как в iOS 17). Эффекты — контур, комикс,
+ * объём, блеск; движение — прыжок, пульс, мерцание…; рисунок бывает
+ * покадровым. Стикеры собираются в коллекции. Готовое — прозрачные
+ * PNG-картинки; их видно в витрине профиля и можно отправить.
  */
 @Composable
 fun StickerStudioScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
     var editor by remember { mutableStateOf<StickerKind?>(null) }
+    // Открытая коллекция; "" — все стикеры
+    var packId by remember { mutableStateOf("") }
+    var naming by remember { mutableStateOf<StickerPack?>(null) }
+    var creating by remember { mutableStateOf(false) }
+    var moving by remember { mutableStateOf<Sticker?>(null) }
+    val pack = state.stickerPacks.firstOrNull { it.id == packId }
+    val shown = if (pack == null) state.stickers else state.stickers.filter { it.packId == pack.id }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = contentPadding,
@@ -126,37 +145,66 @@ fun StickerStudioScreen(vm: AppViewModel, state: UiState, contentPadding: Paddin
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CreateTile(LineIcon.Scissors, t("Вырезка"), t("Объект с фото — как на iPhone"), Modifier.weight(1f)) { editor = StickerKind.Cutout }
                     CreateTile(LineIcon.Image, t("Из фото"), t("Форма, обводка, подпись"), Modifier.weight(1f)) { editor = StickerKind.Photo }
-                    CreateTile(LineIcon.Brush, t("Рисунок"), t("Кисти, цвета, ластик"), Modifier.weight(1f)) { editor = StickerKind.Drawing }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CreateTile(LineIcon.Brush, t("Рисунок"), t("Кисти, кадры, ластик"), Modifier.weight(1f)) { editor = StickerKind.Drawing }
                     CreateTile(LineIcon.Smile, t("Смайл"), t("Лицо, глаза, рот, детали"), Modifier.weight(1f)) { editor = StickerKind.Smiley }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     CreateTile(LineIcon.Award, t("Значок"), t("Текст или эмодзи на кристалле"), Modifier.weight(1f)) { editor = StickerKind.Badge }
+                    CreateTile(LineIcon.Grid, t("Коллекция"), t("Соберите свой набор стикеров"), Modifier.weight(1f)) { creating = true }
+                }
+            }
+        }
+        if (state.stickerPacks.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(t("КОЛЛЕКЦИИ"), style = MaterialTheme.typography.labelSmall, color = Palette.Mist, modifier = Modifier.padding(horizontal = 24.dp))
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Chip(t("Все"), active = pack == null) { packId = "" }
+                        state.stickerPacks.forEach { p ->
+                            val count = state.stickers.count { it.packId == p.id }
+                            Chip("${p.name} · $count", active = p.id == pack?.id) { packId = p.id }
+                        }
+                        Chip("+ " + t("Новая"), active = false) { creating = true }
+                    }
+                    if (pack != null) {
+                        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            GhostButton(t("Переименовать"), onClick = { naming = pack })
+                            GhostButton(t("Удалить коллекцию"), onClick = { vm.deleteStickerPack(pack.id); packId = "" })
+                        }
+                    }
                 }
             }
         }
         item {
             Text(
-                t("МОИ СТИКЕРЫ"),
+                pack?.name?.uppercase() ?: t("МОИ СТИКЕРЫ"),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Mist,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
         }
-        if (state.stickers.isEmpty()) {
+        if (shown.isEmpty()) {
             item {
                 Text(
-                    t("Здесь появятся ваши значки, смайлы и стикеры. Выберите способ выше."),
+                    if (pack == null) t("Здесь появятся ваши значки, смайлы и стикеры. Выберите способ выше.")
+                    else t("В коллекции пока пусто. Новый стикер, сделанный здесь, попадёт сюда; готовый — через его меню «В коллекцию…»."),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             }
         }
-        state.stickers.chunked(4).forEach { row ->
+        shown.chunked(4).forEach { row ->
             item(key = row.first().id) {
                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEach { sticker -> StickerTile(sticker, vm, Modifier.weight(1f)) }
+                    row.forEach { sticker -> StickerTile(sticker, vm, Modifier.weight(1f), hasPacks = state.stickerPacks.isNotEmpty()) { moving = sticker } }
                     repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
@@ -165,10 +213,61 @@ fun StickerStudioScreen(vm: AppViewModel, state: UiState, contentPadding: Paddin
     }
 
     editor?.let { kind ->
-        StickerEditor(kind, onClose = { editor = null }, onSaved = { sticker ->
+        StickerEditor(kind, pack?.id.orEmpty(), onClose = { editor = null }, onSaved = { sticker ->
             vm.addSticker(sticker)
             editor = null
         })
+    }
+
+    if (creating || naming != null) {
+        var name by remember(naming) { mutableStateOf(naming?.name.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { creating = false; naming = null },
+            containerColor = Palette.Night,
+            title = { Text(if (naming != null) t("Название коллекции") else t("Новая коллекция"), style = MaterialTheme.typography.titleMedium, color = Palette.Ink) },
+            text = {
+                GlassField(name, { name = it.take(40) }, t("Например, «Котики»"), singleLine = true,
+                    modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp)))
+            },
+            confirmButton = {
+                TextButton(enabled = name.isNotBlank(), onClick = {
+                    val editing = naming
+                    if (editing != null) vm.renameStickerPack(editing.id, name)
+                    else {
+                        val created = vm.createStickerPack(name)
+                        if (created != null) {
+                            packId = created.id
+                            moving?.let { vm.moveSticker(it.id, created.id) }
+                        }
+                    }
+                    creating = false
+                    naming = null
+                    moving = null
+                }) { Text(t("Готово"), color = Palette.Lilac) }
+            },
+            dismissButton = { TextButton(onClick = { creating = false; naming = null }) { Text(t("Отмена"), color = Palette.Mist) } },
+        )
+    } else moving?.let { sticker ->
+        AlertDialog(
+            onDismissRequest = { moving = null },
+            containerColor = Palette.Night,
+            title = { Text(t("В коллекцию"), style = MaterialTheme.typography.titleMedium, color = Palette.Ink) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    (listOf(StickerPack("", t("Без коллекции"))) + state.stickerPacks).forEach { p ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { vm.moveSticker(sticker.id, p.id); moving = null }.padding(horizontal = 8.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(p.name, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink, modifier = Modifier.weight(1f))
+                            if (sticker.packId == p.id) Glyph(LineIcon.Check, Palette.Lilac, size = 20.dp)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { creating = true }) { Text(t("Новая коллекция"), color = Palette.Lilac) } },
+            dismissButton = { TextButton(onClick = { moving = null }) { Text(t("Отмена"), color = Palette.Mist) } },
+        )
     }
 }
 
@@ -192,9 +291,13 @@ private fun CreateTile(icon: LineIcon, title: String, hint: String, modifier: Mo
     }
 }
 
-/** Картинка стикера из файла; читается не в главном потоке. */
+/** Картинка стикера из файла; живой — двигается и листает кадры. */
 @Composable
 fun StickerImage(sticker: Sticker, modifier: Modifier = Modifier) {
+    if (sticker.animated) {
+        LiveSticker(sticker.path, sticker.frames, sticker.fps, sticker.animation, modifier)
+        return
+    }
     val image by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, sticker.path) {
         value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(sticker.path)?.asImageBitmap() }
     }
@@ -205,7 +308,7 @@ fun StickerImage(sticker: Sticker, modifier: Modifier = Modifier) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StickerTile(sticker: Sticker, vm: AppViewModel, modifier: Modifier) {
+private fun StickerTile(sticker: Sticker, vm: AppViewModel, modifier: Modifier, hasPacks: Boolean, onMove: () -> Unit) {
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
     Box(modifier) {
@@ -220,6 +323,10 @@ private fun StickerTile(sticker: Sticker, vm: AppViewModel, modifier: Modifier) 
                 .padding(8.dp),
         )
         MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
+            MenuRow(LineIcon.Grid, if (hasPacks) t("В коллекцию…") else t("Новая коллекция…")) {
+                menu = false
+                onMove()
+            }
             MenuRow(LineIcon.Share, t("Поделиться")) {
                 menu = false
                 val file = File(sticker.path)
@@ -227,7 +334,7 @@ private fun StickerTile(sticker: Sticker, vm: AppViewModel, modifier: Modifier) 
             }
             MenuRow(LineIcon.Trash, t("Удалить"), color = Palette.PearlPink) {
                 menu = false
-                File(sticker.path).delete()
+                (sticker.frames.ifEmpty { listOf(sticker.path) }).forEach { File(it).delete() }
                 vm.deleteSticker(sticker.id)
             }
         }
@@ -236,20 +343,51 @@ private fun StickerTile(sticker: Sticker, vm: AppViewModel, modifier: Modifier) 
 
 // ==================== РЕДАКТОР ====================
 
-/** Редактор стикера во весь экран: предпросмотр сверху, инструменты снизу. */
+/**
+ * Редактор стикера во весь экран: предпросмотр сверху, инструменты снизу.
+ * Общие для всех способов — эффект (запекается в картинку) и движение.
+ * Рисунок может быть покадровым: прошлый кадр просвечивает «калькой».
+ */
 @Composable
-private fun StickerEditor(kind: StickerKind, onClose: () -> Unit, onSaved: (Sticker) -> Unit) {
+private fun StickerEditor(initial: StickerKind, packId: String, onClose: () -> Unit, onSaved: (Sticker) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var kind by remember { mutableStateOf(initial) }
     var photo by remember { mutableStateOf<Bitmap?>(null) }
     var photoParts by remember { mutableStateOf(PhotoParts()) }
-    var strokes by remember { mutableStateOf<List<DrawStroke>>(emptyList()) }
+    var cut by remember { mutableStateOf<Bitmap?>(null) }
+    var cutting by remember { mutableStateOf(false) }
+    var frames by remember { mutableStateOf(listOf<List<DrawStroke>>(emptyList())) }
+    var frameIx by remember { mutableStateOf(0) }
+    var fps by remember { mutableStateOf(6) }
+    var playing by remember { mutableStateOf(false) }
     var current by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
     var brushColor by remember { mutableStateOf(STICKER_COLORS[4]) }
     var brushWidth by remember { mutableStateOf(0.03f) }
     var eraser by remember { mutableStateOf(false) }
     var smiley by remember { mutableStateOf(SmileyParts()) }
     var badge by remember { mutableStateOf(BadgeParts()) }
+    var effect by remember { mutableStateOf(if (initial == StickerKind.Cutout) StickerEffect.Outline else StickerEffect.None) }
+    var anim by remember { mutableStateOf(StickerAnim.None) }
+    var saving by remember { mutableStateOf(false) }
+    val strokes = frames.getOrElse(frameIx) { emptyList() }
+    fun setStrokes(list: List<DrawStroke>) {
+        frames = frames.toMutableList().also { it[frameIx] = list }
+    }
+    // Жесты живут дольше одной перерисовки — им нужны линии кадра на момент касания
+    fun latestStrokes(): List<DrawStroke> = frames.getOrElse(frameIx) { emptyList() }
+
+    suspend fun cutOut(source: Bitmap) {
+        cutting = true
+        val result = SubjectCutout.cut(source)
+        cutting = false
+        if (result != null) cut = result
+        else {
+            Toast.makeText(context, t("Объект не нашёлся — обрежем фото формой"), Toast.LENGTH_LONG).show()
+            kind = StickerKind.Photo
+            if (effect == StickerEffect.Outline) effect = StickerEffect.None
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) {
@@ -259,40 +397,57 @@ private fun StickerEditor(kind: StickerKind, onClose: () -> Unit, onSaved: (Stic
         scope.launch {
             photo = withContext(Dispatchers.IO) {
                 runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        val bytes = input.readBytes()
-                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                        var sample = 1
-                        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1024) sample *= 2
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                    }
+                    context.contentResolver.openInputStream(uri)?.use { input -> MediaFiles.decodeUpright(input.readBytes(), 1024) }
                 }.getOrNull()
             }
-            if (photo == null) {
+            val loaded = photo
+            if (loaded == null) {
                 Toast.makeText(context, t("Не удалось открыть фото"), Toast.LENGTH_SHORT).show()
                 onClose()
+            } else if (kind == StickerKind.Cutout) {
+                cut = null
+                cutOut(loaded)
             }
         }
     }
-    androidx.compose.runtime.LaunchedEffect(kind) {
-        if (kind == StickerKind.Photo) picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    androidx.compose.runtime.LaunchedEffect(initial) {
+        if (initial == StickerKind.Photo || initial == StickerKind.Cutout) picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
-    fun render(): Bitmap? = when (kind) {
+    fun base(frame: List<DrawStroke> = strokes, live: Boolean = false): Bitmap? = when (kind) {
         StickerKind.Photo -> photo?.let { StickerArt.photo(it, photoParts) }
-        StickerKind.Drawing -> StickerArt.drawing(strokes + listOfNotNull(
-            current.takeIf { it.isNotEmpty() }?.let { DrawStroke(it, brushColor, brushWidth, eraser) },
+        StickerKind.Cutout -> cut
+        StickerKind.Drawing -> StickerArt.drawing(frame + listOfNotNull(
+            current.takeIf { live && it.isNotEmpty() }?.let { DrawStroke(it, brushColor, brushWidth, eraser) },
         ))
         StickerKind.Smiley -> StickerArt.smiley(smiley)
         StickerKind.Badge -> StickerArt.badge(badge)
     }
-    val preview = remember(kind, photo, photoParts, strokes, current, smiley, badge, brushColor, brushWidth, eraser) {
-        render()?.asImageBitmap()
+    fun finished(frame: List<DrawStroke> = strokes): Bitmap? = base(frame)?.let { StickerFx.apply(it, effect) }
+
+    // Пока палец рисует — быстрый рисунок без эффекта прямо здесь; остальное
+    // (эффект, фото, значок) — не в главном потоке, с короткой паузой на ползунки
+    val drawing = kind == StickerKind.Drawing && (current.isNotEmpty() || effect == StickerEffect.None)
+    val live = if (drawing) remember(strokes, current, brushColor, brushWidth, eraser) { base(live = true)?.asImageBitmap() } else null
+    val settled by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, kind, photo, photoParts, cut, strokes, smiley, badge, effect) {
+        delay(30)
+        value = withContext(Dispatchers.Default) { finished()?.asImageBitmap() }
+    }
+    val preview = live ?: settled
+    val onion = remember(kind, frames, frameIx) {
+        if (kind == StickerKind.Drawing && frameIx > 0) StickerArt.drawing(frames[frameIx - 1]).asImageBitmap() else null
+    }
+    val drawnFrames = frames.filter { f -> f.any { !it.eraser } }
+    val liveImages by androidx.compose.runtime.produceState<List<androidx.compose.ui.graphics.ImageBitmap>>(emptyList(), playing, frames, effect, kind, photoParts, cut, smiley, badge) {
+        value = if (!playing) emptyList() else withContext(Dispatchers.Default) {
+            val list = if (kind == StickerKind.Drawing) drawnFrames.ifEmpty { listOf(strokes) } else listOf(strokes)
+            list.mapNotNull { finished(it)?.asImageBitmap() }
+        }
     }
     val empty = when (kind) {
         StickerKind.Photo -> photo == null
-        StickerKind.Drawing -> strokes.none { !it.eraser }
+        StickerKind.Cutout -> cut == null
+        StickerKind.Drawing -> drawnFrames.isEmpty()
         StickerKind.Badge -> badge.text.isBlank()
         StickerKind.Smiley -> false
     }
@@ -312,11 +467,20 @@ private fun StickerEditor(kind: StickerKind, onClose: () -> Unit, onSaved: (Stic
                 RoundIconButton(LineIcon.Close, Palette.Ink, onClick = onClose)
                 Spacer(Modifier.width(12.dp))
                 Text(t(kind.ru), style = MaterialTheme.typography.titleLarge, color = Palette.Ink, modifier = Modifier.weight(1f))
-                GlowButton(t("Сохранить"), enabled = !empty, onClick = {
-                    val bitmap = render() ?: return@GlowButton
-                    val saved = StickerArt.save(context, bitmap, kind, System.currentTimeMillis())
-                    if (saved != null) onSaved(saved)
-                    else Toast.makeText(context, t("Не удалось сохранить"), Toast.LENGTH_SHORT).show()
+                GlowButton(t("Сохранить"), enabled = !empty && !saving && !cutting, onClick = {
+                    saving = true
+                    scope.launch {
+                        val bitmaps = withContext(Dispatchers.Default) {
+                            val list = if (kind == StickerKind.Drawing) drawnFrames else listOf(strokes)
+                            list.mapNotNull { finished(it) }
+                        }
+                        val saved = withContext(Dispatchers.IO) {
+                            StickerArt.saveAnimated(context, bitmaps, kind, System.currentTimeMillis(), anim, fps, packId)
+                        }
+                        saving = false
+                        if (saved != null) onSaved(saved)
+                        else Toast.makeText(context, t("Не удалось сохранить"), Toast.LENGTH_SHORT).show()
+                    }
                 })
             }
             // Предпросмотр на «шахматке» — так видно прозрачные места
@@ -327,19 +491,33 @@ private fun StickerEditor(kind: StickerKind, onClose: () -> Unit, onSaved: (Stic
                     .aspectRatio(1f)
                     .clip(RoundedCornerShape(24.dp))
                     .border(1.dp, Palette.Line, RoundedCornerShape(24.dp)),
+                contentAlignment = Alignment.Center,
             ) {
                 Checker(Modifier.fillMaxSize())
-                preview?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize()) }
+                if (playing && liveImages.isNotEmpty()) {
+                    LiveFrames(liveImages, fps, anim.id, Modifier.fillMaxSize())
+                } else {
+                    onion?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), alpha = 0.28f) }
+                    preview?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize()) }
+                }
+                if (cutting) {
+                    Text(
+                        t("Вырезаю объект…"),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Palette.Ink,
+                        modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(Palette.Night.copy(alpha = 0.8f)).padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                }
                 // Жесты: рисунок — линии пальцем, фото — сдвиг
-                Box(
+                if (!playing) Box(
                     Modifier
                         .fillMaxSize()
-                        .pointerInput(kind, brushColor, brushWidth, eraser) {
+                        .pointerInput(kind, brushColor, brushWidth, eraser, frameIx) {
                             if (kind == StickerKind.Drawing) {
                                 detectDragGestures(
                                     onDragStart = { o -> current = listOf(o.x / size.width to o.y / size.height) },
                                     onDragEnd = {
-                                        if (current.isNotEmpty()) strokes = strokes + DrawStroke(current, brushColor, brushWidth, eraser)
+                                        if (current.isNotEmpty()) setStrokes(latestStrokes() + DrawStroke(current, brushColor, brushWidth, eraser))
                                         current = emptyList()
                                     },
                                     onDrag = { change, _ ->
@@ -355,10 +533,10 @@ private fun StickerEditor(kind: StickerKind, onClose: () -> Unit, onSaved: (Stic
                                 }
                             }
                         }
-                        .pointerInput(kind, brushColor, brushWidth, eraser) {
+                        .pointerInput(kind, brushColor, brushWidth, eraser, frameIx) {
                             if (kind == StickerKind.Drawing) {
                                 detectTapGestures { o ->
-                                    strokes = strokes + DrawStroke(listOf(o.x / size.width to o.y / size.height), brushColor, brushWidth, eraser)
+                                    setStrokes(latestStrokes() + DrawStroke(listOf(o.x / size.width to o.y / size.height), brushColor, brushWidth, eraser))
                                 }
                             }
                         },
@@ -375,18 +553,89 @@ private fun StickerEditor(kind: StickerKind, onClose: () -> Unit, onSaved: (Stic
                     StickerKind.Photo -> PhotoControls(photoParts, { photoParts = it }) {
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     }
-                    StickerKind.Drawing -> DrawControls(
-                        color = brushColor, onColor = { brushColor = it; eraser = false },
-                        width = brushWidth, onWidth = { brushWidth = it },
-                        eraser = eraser, onEraser = { eraser = it },
-                        canUndo = strokes.isNotEmpty(),
-                        onUndo = { strokes = strokes.dropLast(1) },
-                        onClear = { strokes = emptyList() },
-                    )
+                    StickerKind.Cutout -> {
+                        Text(
+                            t("Объект с фото вырезается сам — человек, питомец, предмет. Добавьте контур или блеск и движение ниже."),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Palette.Mist,
+                        )
+                        GhostButton(t("Другое фото"), onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
+                    }
+                    StickerKind.Drawing -> {
+                        FrameControls(
+                            count = frames.size, index = frameIx, fps = fps,
+                            onSelect = { frameIx = it; playing = false },
+                            onAdd = { frames = frames + listOf(emptyList()); frameIx = frames.lastIndex; playing = false },
+                            onDuplicate = { frames = frames.take(frameIx + 1) + listOf(strokes) + frames.drop(frameIx + 1); frameIx += 1; playing = false },
+                            onDelete = {
+                                if (frames.size > 1) {
+                                    frames = frames.filterIndexed { i, _ -> i != frameIx }
+                                    frameIx = frameIx.coerceAtMost(frames.lastIndex)
+                                } else frames = listOf(emptyList())
+                            },
+                            onFps = { fps = it },
+                        )
+                        DrawControls(
+                            color = brushColor, onColor = { brushColor = it; eraser = false },
+                            width = brushWidth, onWidth = { brushWidth = it },
+                            eraser = eraser, onEraser = { eraser = it },
+                            canUndo = strokes.isNotEmpty(),
+                            onUndo = { setStrokes(strokes.dropLast(1)) },
+                            onClear = { setStrokes(emptyList()) },
+                        )
+                    }
                     StickerKind.Smiley -> SmileyControls(smiley) { smiley = it }
                     StickerKind.Badge -> BadgeControls(badge) { badge = it }
                 }
+                LiveControls(
+                    effect = effect, onEffect = { effect = it },
+                    anim = anim, onAnim = { anim = it; playing = it != StickerAnim.None || frames.size > 1 },
+                    canPlay = anim != StickerAnim.None || (kind == StickerKind.Drawing && drawnFrames.size > 1),
+                    playing = playing, onPlaying = { playing = it },
+                )
             }
+        }
+    }
+}
+
+/** Кадры покадрового рисунка: выбор, новый, копия, удалить и скорость. */
+@Composable
+private fun FrameControls(
+    count: Int, index: Int, fps: Int,
+    onSelect: (Int) -> Unit, onAdd: () -> Unit, onDuplicate: () -> Unit, onDelete: () -> Unit, onFps: (Int) -> Unit,
+) {
+    Label(t("Кадры"))
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(count) { i -> Chip("${i + 1}", active = i == index) { onSelect(i) } }
+        if (count < 12) {
+            Chip("+ " + t("Кадр"), active = false, onClick = onAdd)
+            Chip(t("Копия"), active = false, onClick = onDuplicate)
+        }
+        Chip(t("Удалить кадр"), active = false, onClick = onDelete)
+    }
+    if (count > 1) {
+        Label(t("Скорость"))
+        Choices(listOf(4, 6, 8, 12), fps, { t("%d к/с").format(it) }, onFps)
+    } else {
+        Text(t("Добавьте кадры — и рисунок оживёт. Прошлый кадр просвечивает, чтобы следующий лёг точно."), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+    }
+}
+
+/** Эффект (запекается в картинку) и движение (играет при показе). */
+@Composable
+private fun LiveControls(
+    effect: StickerEffect, onEffect: (StickerEffect) -> Unit,
+    anim: StickerAnim, onAnim: (StickerAnim) -> Unit,
+    canPlay: Boolean, playing: Boolean, onPlaying: (Boolean) -> Unit,
+) {
+    Label(t("Эффект"))
+    Choices(StickerEffect.entries, effect, { it.title }, onEffect)
+    Label(t("Движение"))
+    Choices(StickerAnim.entries, anim, { it.title }, onAnim)
+    if (canPlay) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip(t("Смотреть"), active = playing) { onPlaying(true) }
+            Chip(t("Править"), active = !playing) { onPlaying(false) }
         }
     }
 }

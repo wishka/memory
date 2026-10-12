@@ -82,6 +82,8 @@ import ru.wishka.memory.push.AppVisibility
 import ru.wishka.memory.push.MemoryNotifications
 import ru.wishka.memory.push.PushBus
 import ru.wishka.memory.ui.components.NudgeBanner
+import ru.wishka.memory.data.SoundPlayer
+import ru.wishka.memory.data.SoundPrefs
 import ru.wishka.memory.ui.components.EchoDialog
 import ru.wishka.memory.ui.components.InviteDialog
 import ru.wishka.memory.ui.auth.OnboardingScreen
@@ -255,7 +257,11 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
     // Уведомления: приложение открыто — плашкой сверху, свёрнуто — системным
     LaunchedEffect(vm) {
         vm.nudges.collect { nudge ->
-            if (AppVisibility.foreground) vm.showBanner(nudge) else MemoryNotifications.show(context.applicationContext, nudge)
+            if (AppVisibility.foreground) {
+                vm.showBanner(nudge)
+                // Плашка звучит тем же звуком, что и пуш этого вида
+                SoundPlayer.play(context.applicationContext, SoundPrefs(context.applicationContext).get(nudge.kind))
+            } else MemoryNotifications.show(context.applicationContext, nudge)
         }
     }
     // Пуш с сервера, пока приложение открыто, — той же плашкой

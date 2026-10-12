@@ -72,7 +72,7 @@ object PushBus {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean("all", n.all).putBoolean("messages", n.messages).putBoolean("reactions", n.reactions)
             .putBoolean("groups", n.groups).putBoolean("follows", n.follows).putBoolean("friends", n.friends)
-            .putBoolean("recap", n.recap)
+            .putBoolean("recap", n.recap).putBoolean("prism", n.prism)
             .apply()
     }
 
@@ -82,7 +82,7 @@ object PushBus {
             all = p.getBoolean("all", true), messages = p.getBoolean("messages", true),
             reactions = p.getBoolean("reactions", true), groups = p.getBoolean("groups", true),
             follows = p.getBoolean("follows", true), friends = p.getBoolean("friends", true),
-            recap = p.getBoolean("recap", true),
+            recap = p.getBoolean("recap", true), prism = p.getBoolean("prism", true),
         )
     }
 }

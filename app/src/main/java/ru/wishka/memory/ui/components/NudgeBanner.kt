@@ -76,6 +76,7 @@ fun NudgeBanner(nudge: Nudge, onOpen: () -> Unit, onDismiss: () -> Unit, modifie
                     NudgeKind.Follows -> LineIcon.Profile
                     NudgeKind.Messages -> LineIcon.Chats
                     NudgeKind.Recap -> LineIcon.Award
+                    NudgeKind.Prism -> LineIcon.Prism
                 },
                 Palette.Ink, size = 20.dp,
             )

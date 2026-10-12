@@ -98,6 +98,9 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                 onCreateTemplate = vm::createCheckInTemplate,
                 onDeleteTemplate = vm::deleteCheckInTemplate,
                 onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
+                tracks = state.tracks,
+                packs = state.stickerPacks,
+                recentGifs = state.recentGifs,
                 placeholder = t("Что у вас сейчас?"),
                 hint = t("Видно в Историях и в Ленте"),
             )
@@ -130,6 +133,8 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
             PostCard(
                 post,
                 onLike = { vm.toggleLike(post.id) },
+                onVote = { vm.votePost(post.id, it) },
+                onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
                 following = if (post.author.id == state.me.id) null else true,
                 onFollow = { vm.toggleFollow(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },

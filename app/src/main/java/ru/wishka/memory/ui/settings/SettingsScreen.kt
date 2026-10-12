@@ -41,6 +41,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import ru.wishka.memory.data.Audience
+import ru.wishka.memory.data.NotifySound
+import ru.wishka.memory.data.NudgeKind
+import ru.wishka.memory.data.SOUND_KINDS
+import ru.wishka.memory.data.SoundPlayer
+import ru.wishka.memory.data.SoundPrefs
+import ru.wishka.memory.data.soundTitle
+import ru.wishka.memory.push.MemoryNotifications
+import ru.wishka.memory.ui.components.BackdropChooser
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalContext
 import ru.wishka.memory.data.Feedback
 import ru.wishka.memory.data.InviteAction
 import ru.wishka.memory.data.amountNumber
@@ -125,6 +136,17 @@ fun SettingsScreen(
             SettingsPage.Language -> item { LanguagePage(prefs) }
             SettingsPage.About -> item { AboutPage(version) }
             SettingsPage.Growth -> item { GrowthPage(vm, state, version) }
+            SettingsPage.Sounds -> item { SoundsPage(state) }
+            SettingsPage.Wallpaper -> item {
+                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    BackdropChooser(state.backdrop, vm::setBackdrop)
+                    Text(
+                        t("Фон для всех переписок. Свой фон для одной переписки — в её меню «⋯» вверху."),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Palette.Mist,
+                    )
+                }
+            }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
@@ -149,6 +171,8 @@ private fun LazyListScope.mainPage(vm: AppViewModel, state: UiState, version: St
             NavRow(LineIcon.Bell, t("Уведомления"), if (state.notifications.all) t("Вкл.") else t("Выкл.")) {
                 vm.openSettings(SettingsPage.Notifications)
             }
+            Divider()
+            NavRow(LineIcon.Image, t("Фон переписок"), state.backdrop.kind.title) { vm.openSettings(SettingsPage.Wallpaper) }
             Divider()
             NavRow(LineIcon.TextSize, t("Размер текста"), textScaleTitle(L10n.textScale)) { vm.openSettings(SettingsPage.TextSize) }
             Divider()
@@ -376,6 +400,8 @@ private fun NotificationsPage(vm: AppViewModel, state: UiState) {
         Card {
             SwitchRow(t("Сообщения"), n.messages, enabled = n.all) { v -> set { it.copy(messages = v) } }
             Divider()
+            SwitchRow(t("Новые PRISM друзей"), n.prism, enabled = n.all) { v -> set { it.copy(prism = v) } }
+            Divider()
             SwitchRow(t("Лайки и комментарии"), n.reactions, enabled = n.all) { v -> set { it.copy(reactions = v) } }
             Divider()
             SwitchRow(t("Новые подписчики"), n.follows, enabled = n.all) { v -> set { it.copy(follows = v) } }
@@ -385,6 +411,9 @@ private fun NotificationsPage(vm: AppViewModel, state: UiState) {
             SwitchRow(t("Друзья: чек-ины, фильмы, книги, тренировки"), n.friends, enabled = n.all) { v -> set { it.copy(friends = v) } }
             Divider()
             SwitchRow(t("Итоги месяца и года"), n.recap, enabled = n.all) { v -> set { it.copy(recap = v) } }
+        }
+        Card {
+            NavRow(LineIcon.Volume, t("Звуки"), t("Свой у каждого вида")) { vm.openSettings(SettingsPage.Sounds) }
         }
         Hint(t("Уведомления — про то, что важно именно вам: друг отметил фильм, который вы обсуждали, в вашей группе новый участник, готовы итоги месяца. Никаких «вы давно не заходили»."))
         if (mutedGroups.isNotEmpty() || mutedChats.isNotEmpty()) {
@@ -417,6 +446,50 @@ private fun MutedRow(title: String, kind: String, onUnmute: () -> Unit) {
             Text(kind, style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
         }
         GhostButton(t("Включить"), onClick = onUnmute)
+    }
+}
+
+// ==================== ЗВУКИ ====================
+
+/**
+ * Свой звук у каждого вида уведомлений — их узнаёшь, не глядя на экран.
+ * Касание варианта — сразу слышно, как звучит.
+ */
+@Composable
+private fun SoundsPage(state: UiState) {
+    val context = LocalContext.current
+    val prefs = remember { SoundPrefs(context) }
+    var version by remember { mutableStateOf(0) }
+    var editing by remember { mutableStateOf<NudgeKind?>(null) }
+    val current = remember(version) { prefs.all() }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Card {
+            SOUND_KINDS.forEachIndexed { i, kind ->
+                if (i > 0) Divider()
+                NavRow(LineIcon.Volume, kind.soundTitle, current.getValue(kind).title) { editing = kind }
+            }
+        }
+        Hint(t("Звуки Memory — стекло, звёзды и космос, в стиле приложения. Звук играет и в пуше, и в плашке, когда приложение открыто."))
+        if (!state.notifications.all) Hint(t("Сейчас все уведомления выключены — звуков не будет."))
+    }
+    editing?.let { kind ->
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            containerColor = Palette.Night,
+            title = { Text(kind.soundTitle, style = MaterialTheme.typography.titleMedium, color = Palette.Ink) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    NotifySound.entries.forEach { sound ->
+                        ChoiceRow(sound.title + if (sound == NotifySound.default(kind)) " · " + t("по умолчанию") else "", current.getValue(kind) == sound) {
+                            MemoryNotifications.changeSound(context, kind, sound)
+                            SoundPlayer.play(context, sound)
+                            version++
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { editing = null }) { Text(t("Готово"), color = Palette.Lilac) } },
+        )
     }
 }
 

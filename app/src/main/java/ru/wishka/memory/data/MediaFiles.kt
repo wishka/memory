@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -127,7 +129,10 @@ object MediaFiles {
 
     /** Удалить копию вложения (из удалённого сообщения или черновика). */
     fun delete(attachment: Attachment) {
-        runCatching { File(attachment.path).delete() }
+        runCatching {
+            File(attachment.path).delete()
+            attachment.frames.forEach { File(it).delete() }
+        }
     }
 
     /** Открыть документ в подходящем приложении. false — открыть нечем. */
@@ -179,13 +184,7 @@ object MediaFiles {
      */
     fun thumbnail(attachment: Attachment, maxSide: Int): Bitmap? = runCatching {
         when (attachment.kind) {
-            MediaKind.Photo -> {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(attachment.path, bounds)
-                var sample = 1
-                while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-                BitmapFactory.decodeFile(attachment.path, BitmapFactory.Options().apply { inSampleSize = sample })
-            }
+            MediaKind.Photo -> decodeUpright(attachment.path, maxSide)
             MediaKind.Video -> {
                 val retriever = MediaMetadataRetriever()
                 try {
@@ -198,6 +197,41 @@ object MediaFiles {
             MediaKind.Document -> null
         }
     }.getOrNull()
+
+    /**
+     * Фото с прореживанием до maxSide (примерно) и с поворотом по EXIF:
+     * снимок с камеры часто лежит боком, а BitmapFactory тег не читает.
+     */
+    fun decodeUpright(bytes: ByteArray, maxSide: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sampleFor(bounds, maxSide) }) ?: return null
+        return upright(raw, runCatching { ExifInterface(bytes.inputStream()) }.getOrNull())
+    }
+
+    fun decodeUpright(path: String, maxSide: Int): Bitmap? = runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        val raw = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sampleFor(bounds, maxSide) }) ?: return null
+        upright(raw, runCatching { ExifInterface(path) }.getOrNull())
+    }.getOrNull()
+
+    private fun sampleFor(bounds: BitmapFactory.Options, maxSide: Int): Int {
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
+        return sample
+    }
+
+    private fun upright(raw: Bitmap, exif: ExifInterface?): Bitmap {
+        val degrees = when (exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+        if (degrees == 0f) return raw
+        return Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, Matrix().apply { postRotate(degrees) }, true)
+    }
 
     private fun scaleDown(bitmap: Bitmap, maxSide: Int): Bitmap {
         val side = maxOf(bitmap.width, bitmap.height)

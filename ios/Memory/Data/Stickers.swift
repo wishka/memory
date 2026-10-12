@@ -8,8 +8,27 @@ struct Sticker: Identifiable, Equatable, Codable {
     let fileName: String
     let kind: StickerKind
     var createdAt: Date? = nil
+    /// Как двигается (StickerAnim.id); nil или "" — неподвижный.
+    /// Новые поля необязательные — старые сохранения читаются без них.
+    var animationId: String? = nil
+    /// Покадровый: имена файлов всех кадров по порядку, первый = fileName; пусто — один кадр.
+    var frameFiles: [String]? = nil
+    var frameRate: Int? = nil
+    /// Коллекция (StickerPack.id); nil или "" — без коллекции.
+    var pack: String? = nil
 
     var url: URL { MediaFiles.directory.appendingPathComponent(fileName) }
+
+    var animation: String { animationId ?? "" }
+    var frames: [String] { frameFiles ?? [] }
+    var fps: Int { frameRate ?? 0 }
+    var packId: String {
+        get { pack ?? "" }
+        set { pack = newValue.isEmpty ? nil : newValue }
+    }
+    var animated: Bool { !animation.isEmpty || frames.count > 1 }
+    /// Все файлы стикера: кадры или одна картинка.
+    var files: [String] { frames.isEmpty ? [fileName] : frames }
 }
 
 enum StickerKind: String, Codable, CaseIterable {
@@ -17,6 +36,7 @@ enum StickerKind: String, Codable, CaseIterable {
     case drawing = "Рисунок"
     case smiley = "Смайл"
     case badge = "Значок"
+    case cutout = "Вырезка"
 
     var title: String { t(rawValue) }
 }
@@ -413,5 +433,31 @@ enum StickerArt {
             return nil
         }
         return Sticker(id: id, fileName: fileName, kind: kind, createdAt: Date())
+    }
+
+    /// Живой стикер: эффект запечён в кадры, движение и частота кадров — в описании.
+    static func saveAnimated(_ frames: [UIImage], kind: StickerKind, animation: StickerAnim, fps: Int, packId: String) -> Sticker? {
+        if frames.isEmpty { return nil }
+        let id = UUID().uuidString
+        var names: [String] = []
+        for (i, image) in frames.enumerated() {
+            guard let data = image.pngData() else { return nil }
+            let fileName = "sticker-\(id)-\(i).png"
+            do {
+                try data.write(to: MediaFiles.directory.appendingPathComponent(fileName), options: .atomic)
+            } catch {
+                names.forEach { try? FileManager.default.removeItem(at: MediaFiles.directory.appendingPathComponent($0)) }
+                return nil
+            }
+            names.append(fileName)
+        }
+        let many = names.count > 1
+        return Sticker(
+            id: id, fileName: names[0], kind: kind, createdAt: Date(),
+            animationId: animation.id.isEmpty ? nil : animation.id,
+            frameFiles: many ? names : nil,
+            frameRate: many ? min(24, max(2, fps)) : nil,
+            pack: packId.isEmpty ? nil : packId
+        )
     }
 }

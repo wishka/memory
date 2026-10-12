@@ -6,7 +6,8 @@ import SwiftUI
 /// нажатие на сообщение — ответить, переслать, закрепить или удалить у
 /// себя или у всех. Закреплённое сообщение — полоской под шапкой.
 /// Пустое поле — вместо «отправить» микрофон: голосовое записывается, его
-/// можно удалить или отправить. В скрепке — свои стикеры из «Студии».
+/// можно удалить или отправить. В скрепке — свои стикеры из «Студии»,
+/// гифки, опрос и геолокация. За «⋯» в шапке — свой фон переписки.
 struct ChatScreen: View {
     let model: AppModel
     let chat: Chat
@@ -26,6 +27,13 @@ struct ChatScreen: View {
     @State private var preview: URL?
     @State private var recorder = VoiceRecorder()
     @State private var choosingSticker = false
+    @State private var choosingGif = false
+    @State private var editingPoll = false
+    @State private var headerMenu = false
+    @State private var choosingBackdrop = false
+    @State private var viewingPlace: SharedPlace?
+    @State private var locating = false
+    @State private var notice: String?
     @State private var micDenied = false
     @State private var tooShort = false
 
@@ -62,7 +70,10 @@ struct ChatScreen: View {
                                 onOpen: open,
                                 onDelete: { forEveryone in
                                     model.deleteMessage(chat.id, message.id, forEveryone: forEveryone)
-                                }
+                                },
+                                onVote: { poll, i in model.voteMessage(chat.id, poll.id, i) },
+                                onClosePoll: { poll in model.closeMessagePoll(chat.id, poll.id) },
+                                onPlace: { viewingPlace = $0 }
                             )
                             .id(message.id)
                         }
@@ -94,21 +105,32 @@ struct ChatScreen: View {
             }
             PendingAttachments(items: pending) { item in
                 pending.removeAll { $0.id == item.id }
-                MediaFiles.delete(item)
+                deleteAttachmentFiles(item)
             }
             .padding(.top, pending.isEmpty ? 0 : 8)
             inputRow
         }
+        // Фон переписки: свой у чата или общий из настроек
+        .background { BackdropView(backdrop: chat.backdropOr(model.state.backdrop)) }
         .quickLookPreview($preview)
-        .sheet(isPresented: $choosingSticker) {
-            StickerPicker(stickers: model.state.stickers, onPick: { sticker in
-                model.send(chat.id, "", attachments: [sticker], replyTo: replyTo)
+        .sheet(isPresented: $choosingSticker) { picker(gifs: false) }
+        .sheet(isPresented: $choosingGif) { picker(gifs: true) }
+        .sheet(isPresented: $editingPoll) {
+            PollEditorSheet { draft in
+                model.send(chat.id, "", replyTo: replyTo, poll: draft)
                 replyTo = nil
-            }) {
-                model.closeChat()
-                model.openProfileSection(.stickers)
             }
         }
+        .sheet(isPresented: $choosingBackdrop) {
+            BackdropSheet(model: model, chatId: chat.id)
+        }
+        .fullScreenCover(item: $viewingPlace) { place in
+            PlaceViewer(place: place) { viewingPlace = nil }
+        }
+        .glassActions($headerMenu, actions: [
+            GlassAction(icon: .image, title: t("Фон переписки")) { choosingBackdrop = true },
+        ])
+        .toast($notice)
         .glassActions($micDenied, title: t("Разрешите доступ к микрофону, чтобы записывать голосовые"),
                       actions: [GlassAction(icon: .check, title: t("Понятно")) {}])
         .glassActions($tooShort, title: t("Слишком короткое — держите запись хотя бы секунду"),
@@ -121,6 +143,41 @@ struct ChatScreen: View {
                 GlassAction(icon: .forward, title: target.peer.name) {
                     model.forward(chat.id, message.id, to: target.id)
                 }
+            }
+        }
+    }
+
+    /// Стикеры и гифки — один выбор; из «GIF» он открывается сразу на гифках.
+    private func picker(gifs: Bool) -> some View {
+        StickerPicker(
+            stickers: model.state.stickers,
+            onPick: { sticker in
+                model.send(chat.id, "", attachments: [sticker], replyTo: replyTo)
+                replyTo = nil
+            },
+            onOpenStudio: {
+                model.closeChat()
+                model.openProfileSection(.stickers)
+            },
+            packs: model.state.stickerPacks,
+            recentGifs: model.state.recentGifs,
+            gifs: true,
+            startOnGifs: gifs
+        )
+    }
+
+    /// Где я сейчас — точкой на карте в переписку.
+    private func shareLocation() {
+        guard !locating else { return }
+        locating = true
+        Task { @MainActor in
+            let here = await Locator.shared.current()
+            locating = false
+            if let here {
+                model.sendPlace(chat.id, here)
+                replyTo = nil
+            } else {
+                notice = t("Не удалось определить, где вы. Включите геолокацию.")
             }
         }
     }
@@ -151,6 +208,11 @@ struct ChatScreen: View {
             }
             .buttonStyle(.plain)
             Spacer()
+            Button { headerMenu = true } label: {
+                Glyph(kind: .more, color: Palette.ink).frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(t("Фон переписки"))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
@@ -188,7 +250,13 @@ struct ChatScreen: View {
 
     private var messageRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            AttachButton(documents: true, size: 50, onSticker: { choosingSticker = true }) { picked in
+            AttachButton(
+                documents: true, size: 50,
+                onSticker: { choosingSticker = true },
+                onGif: { choosingGif = true },
+                onPoll: { editingPoll = true },
+                onLocation: shareLocation
+            ) { picked in
                 pending = Array((pending + picked).prefix(AppModel.maxMedia))
             }
             GlassField(placeholder: t("Сообщение"), text: $text, limit: 2000, maxLines: 5)
@@ -236,6 +304,9 @@ private struct Bubble: View {
     let onQuote: (Int64) -> Void
     let onOpen: (Attachment) -> Void
     let onDelete: (Bool) -> Void
+    let onVote: (Poll, Int) -> Void
+    let onClosePoll: (Poll) -> Void
+    let onPlace: (SharedPlace) -> Void
     @State private var menu = false
 
     var body: some View {
@@ -252,7 +323,7 @@ private struct Bubble: View {
         let documents = message.attachments.filter { $0.kind == .document }
         // Только стикер — без пузыря, картинкой
         let stickerOnly = message.text.isEmpty && !message.attachments.isEmpty && stickers.count == message.attachments.count
-            && message.replyTo == nil && message.forwardedFrom == nil
+            && message.replyTo == nil && message.forwardedFrom == nil && message.poll == nil && message.place == nil
         HStack(spacing: 0) {
             if mine { Spacer(minLength: 0) }
             if stickerOnly {
@@ -304,6 +375,13 @@ private struct Bubble: View {
                             .frame(maxWidth: 260)
                     }
                 }
+                if let poll = message.poll {
+                    PollCard(poll: poll, onVote: { onVote(poll, $0) }, onClose: mine ? { onClosePoll(poll) } : nil)
+                        .frame(width: 270)
+                }
+                if let place = message.place {
+                    PlaceBubble(place: place) { onPlace(place) }
+                }
                 VStack(alignment: .trailing, spacing: 2) {
                     if !message.text.isEmpty {
                         Text(message.text)
@@ -342,6 +420,37 @@ private struct Bubble: View {
             GlassAction(icon: .trash, title: t("Удалить у себя"), destructive: true) { onDelete(false) },
             GlassAction(icon: .trash, title: t("Удалить у всех"), destructive: true) { onDelete(true) },
         ]
+    }
+}
+
+/// «Фон переписки» из меню чата: свой фон или как во всех переписках.
+private struct BackdropSheet: View {
+    let model: AppModel
+    let chatId: Int
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let chat = model.state.chats.first { $0.id == chatId }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(t("Фон переписки")).textStyle(.headline)
+                Spacer()
+                GlowButton(title: t("Готово")) { dismiss() }
+            }
+            ScrollView {
+                BackdropChooser(
+                    selected: chat?.backdropOr(model.state.backdrop) ?? model.state.backdrop,
+                    onPick: { model.setChatBackdrop(chatId, $0) },
+                    onReset: chat?.backdrop != nil ? { model.setChatBackdrop(chatId, nil) } : nil
+                )
+                .padding(.bottom, 16)
+            }
+        }
+        .padding(16)
+        .background(Palette.night.ignoresSafeArea())
+        .presentationDetents([.large])
+        .presentationBackground(Palette.night)
+        .presentationCornerRadius(28)
     }
 }
 
