@@ -4,7 +4,7 @@ import Foundation
 enum NudgeKind: String, CaseIterable { case friends, groups, reactions, follows, messages, recap }
 
 /// Куда ведёт нажатие на уведомление.
-enum NudgeTarget: String { case post, group, person, chat, recap, requests }
+enum NudgeTarget: String { case post, group, person, chat, recap, requests, together }
 
 /// Персональное уведомление: не «Вы давно не заходили», а что именно
 /// случилось и почему это вам интересно — «Ваша подруга Вера только что
@@ -134,6 +134,51 @@ enum Nudges {
               text: recap.period == .year ? tf("%s. Посмотрите, каким был ваш год", recap.headline)
                                           : tf("%s. Посмотрите, каким был ваш месяц", recap.headline),
               target: .recap, targetId: Int64(recap.year * 100 + recap.month))
+    }
+
+    // MARK: Вместе: targetId — раздел вкладки (TogetherSection.index)
+
+    private static func together(_ person: User, _ text: String, _ section: TogetherSection) -> Nudge {
+        Nudge(kind: .friends, title: person.name, text: text, target: .together, targetId: Int64(section.index))
+    }
+
+    static func dealAgreed(_ person: User, _ deal: SkillDeal) -> Nudge {
+        let text: String
+        if !deal.give.isEmpty && !deal.get.isEmpty {
+            text = tf("Договорились об обмене: вы учите «%s», вас — «%s»", deal.give, deal.get)
+        } else if !deal.get.isEmpty {
+            text = tf("Договорились: урок «%s» за %s из банка времени", deal.get, minutesTitle(deal.minutes))
+        } else {
+            text = tf("Договорились: вы учите «%s» — в банк времени придёт %s", deal.give, minutesTitle(deal.minutes))
+        }
+        return together(person, text, .skills)
+    }
+
+    static func tipReceived(_ person: User, _ journey: Journey, day: Int) -> Nudge {
+        together(person, tf("%s даёт совет к «День %s: %s»", person.firstName, day, journey.title), .journeys)
+    }
+
+    static func drawingTurn(_ person: User, _ drawing: CollabDrawing) -> Nudge {
+        let text = drawing.finished
+            ? tf(g(person, "%s дорисовал «%s» — рисунок готов", "%s дорисовала «%s» — рисунок готов"), person.firstName, drawing.title)
+            : tf(g(person, "%s дорисовал «%s» — ваша очередь", "%s дорисовала «%s» — ваша очередь"), person.firstName, drawing.title)
+        return together(person, text, .drawing)
+    }
+
+    static func outingJoined(_ person: User, _ outing: Outing) -> Nudge {
+        together(person, tf("%s идёт с вами: «%s»", person.firstName, outing.title), .outings)
+    }
+
+    static func shareHanded(_ person: User, _ item: ShareItem) -> Nudge {
+        together(person, tf("%s передаёт вам «%s»", person.firstName, item.title), .sharing)
+    }
+
+    static func shareRequested(_ person: User, _ item: ShareItem) -> Nudge {
+        together(person, tf("%s просит «%s»", person.firstName, item.title), .sharing)
+    }
+
+    static func cacheFound(_ person: User, _ cache: GeoCache) -> Nudge {
+        together(person, tf(g(person, "%s нашёл ваш клад «%s»", "%s нашла ваш клад «%s»"), person.firstName, cache.title), .caches)
     }
 
     /// Можно ли показывать: общий выключатель и выключатель раздела.

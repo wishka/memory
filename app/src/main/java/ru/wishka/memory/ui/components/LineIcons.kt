@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic }
+enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic, Together }
 
 @Composable
 fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -189,6 +189,12 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                 drawCircle(color, s * 0.08f, Offset(s * 0.76f, s * 0.42f), style = stroke)
                 drawLine(color, Offset(s * 0.1f, s * 0.7f), Offset(s * 0.2f, s * 0.6f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(s * 0.9f, s * 0.7f), Offset(s * 0.8f, s * 0.6f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.Together -> {
+                // Два сцепленных кольца — «вместе», над ними искра
+                drawCircle(color, s * 0.2f, Offset(s * 0.38f, s * 0.58f), style = stroke)
+                drawCircle(color, s * 0.2f, Offset(s * 0.62f, s * 0.58f), style = stroke)
+                diamond(Offset(s * 0.5f, s * 0.2f), s * 0.08f, color, stroke)
             }
             LineIcon.Pin -> {
                 drawPath(Path().apply {

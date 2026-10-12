@@ -459,7 +459,7 @@ private fun PhotoControls(p: PhotoParts, onChange: (PhotoParts) -> Unit, onPickA
 }
 
 @Composable
-private fun DrawControls(
+internal fun DrawControls(
     color: Int, onColor: (Int) -> Unit,
     width: Float, onWidth: (Float) -> Unit,
     eraser: Boolean, onEraser: (Boolean) -> Unit,

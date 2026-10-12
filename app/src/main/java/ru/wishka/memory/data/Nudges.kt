@@ -7,7 +7,7 @@ import ru.wishka.memory.i18n.tf
 enum class NudgeKind { Friends, Groups, Reactions, Follows, Messages, Recap }
 
 /** Куда ведёт нажатие на уведомление. */
-enum class NudgeTarget { Post, Group, Person, Chat, Recap, Requests }
+enum class NudgeTarget { Post, Group, Person, Chat, Recap, Requests, Together }
 
 /**
  * Персональное уведомление: не «Вы давно не заходили», а что именно
@@ -133,6 +133,43 @@ object Nudges {
         NudgeTarget.Recap,
         recap.year * 100L + recap.month,
     )
+
+    // ---------- Вместе: targetId — раздел вкладки (TogetherSection.ordinal) ----------
+
+    private fun together(person: User, text: String, section: TogetherSection) =
+        Nudge(NudgeKind.Friends, person.name, text, NudgeTarget.Together, section.ordinal.toLong())
+
+    fun dealAgreed(person: User, deal: SkillDeal): Nudge = together(
+        person,
+        when {
+            deal.give.isNotEmpty() && deal.get.isNotEmpty() -> tf("Договорились об обмене: вы учите «%s», вас — «%s»", deal.give, deal.get)
+            deal.get.isNotEmpty() -> tf("Договорились: урок «%s» за %s из банка времени", deal.get, minutesTitle(deal.minutes))
+            else -> tf("Договорились: вы учите «%s» — в банк времени придёт %s", deal.give, minutesTitle(deal.minutes))
+        },
+        TogetherSection.Skills,
+    )
+
+    fun tipReceived(person: User, journey: Journey, day: Int) =
+        together(person, tf("%s даёт совет к «День %s: %s»", firstName(person), day, journey.title), TogetherSection.Journeys)
+
+    fun drawingTurn(person: User, drawing: CollabDrawing) = together(
+        person,
+        if (drawing.finished) tf(g(person, "%s дорисовал «%s» — рисунок готов", "%s дорисовала «%s» — рисунок готов"), firstName(person), drawing.title)
+        else tf(g(person, "%s дорисовал «%s» — ваша очередь", "%s дорисовала «%s» — ваша очередь"), firstName(person), drawing.title),
+        TogetherSection.Drawing,
+    )
+
+    fun outingJoined(person: User, outing: Outing) =
+        together(person, tf("%s идёт с вами: «%s»", firstName(person), outing.title), TogetherSection.Outings)
+
+    fun shareHanded(person: User, item: ShareItem) =
+        together(person, tf("%s передаёт вам «%s»", firstName(person), item.title), TogetherSection.Sharing)
+
+    fun shareRequested(person: User, item: ShareItem) =
+        together(person, tf("%s просит «%s»", firstName(person), item.title), TogetherSection.Sharing)
+
+    fun cacheFound(person: User, cache: Cache) =
+        together(person, tf(g(person, "%s нашёл ваш клад «%s»", "%s нашла ваш клад «%s»"), firstName(person), cache.title), TogetherSection.Caches)
 
     /** Можно ли показывать: общий выключатель и выключатель раздела. */
     fun allowed(n: Nudge, s: Notifications): Boolean = s.all && when (n.kind) {

@@ -126,6 +126,9 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.1")
 
     // PRISM: своя камера — запись видео со звуком
+    // Карта для вкладки «Вместе»: OpenStreetMap, без ключей
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
+
     implementation("androidx.camera:camera-core:1.6.2")
     implementation("androidx.camera:camera-camera2:1.6.2")
     implementation("androidx.camera:camera-lifecycle:1.6.2")

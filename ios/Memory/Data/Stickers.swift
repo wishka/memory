@@ -33,7 +33,8 @@ enum StickerShape: String, CaseIterable {
 }
 
 /// Линия рисунка: точки — доли стороны 0…1. eraser — стирает нарисованное.
-struct DrawStroke: Equatable {
+/// Codable — штрихи общего рисунка во «Вместе» сохраняются на телефоне.
+struct DrawStroke: Equatable, Codable {
     var points: [CGPoint]
     var color: UInt32
     var width: CGFloat

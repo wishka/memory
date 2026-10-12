@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.ui.AppViewModel
+import ru.wishka.memory.ui.together.TogetherScreen
 import ru.wishka.memory.ui.groups.GroupScreen
 import ru.wishka.memory.ui.groups.GroupSettingsScreen
 import ru.wishka.memory.ui.groups.GroupsScreen
@@ -279,6 +280,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     Tab.Prism -> PrismScreen(vm, state, padding)
                     Tab.Chats -> ChatsScreen(vm, state, padding)
                     Tab.Groups -> GroupsScreen(vm, state, padding)
+                    Tab.Together -> TogetherScreen(vm, state, padding)
                     Tab.Profile -> {
                         val section = state.profileSection
                         val settings = state.settingsPage

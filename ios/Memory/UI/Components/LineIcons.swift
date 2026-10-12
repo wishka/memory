@@ -10,7 +10,7 @@ enum LineIcon {
     case chats, profile, heart, heartFilled, comment, send, back, edit, plus, bell, info
     case gear, shield, lock, block, textSize, globe, bellOff, more, eye, check
     case flash, flip, scissors, speed, crop, filter, sliders, text, sticker, volume, rotate, mirror, pause
-    case copy, flag, search, brush, smile, undo, grid, award, mic
+    case copy, flag, search, brush, smile, undo, grid, award, mic, together
 }
 
 struct Glyph: View {
@@ -257,6 +257,11 @@ struct Glyph: View {
             strokePath(circle(s, 0.76, 0.42, 0.08))
             strokePath(line(s, 0.1, 0.7, 0.2, 0.6))
             strokePath(line(s, 0.9, 0.7, 0.8, 0.6))
+        case .together:
+            // Два сцепленных кольца — «вместе», над ними искра
+            strokePath(circle(s, 0.38, 0.58, 0.2))
+            strokePath(circle(s, 0.62, 0.58, 0.2))
+            strokePath(diamond(s, 0.5, 0.2, 0.08))
         case .pin:
             var pin = Path()
             pin.move(to: p(s, 0.5, 0.86))

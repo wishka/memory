@@ -144,6 +144,7 @@ struct MainScreen: View {
         case .prism: PrismScreen(model: model)
         case .chats: ChatsScreen(model: model)
         case .groups: GroupsScreen(model: model)
+        case .together: TogetherScreen(model: model)
         case .profile:
             if let page = model.state.settingsPage {
                 SettingsScreen(model: model, page: page, account: account)

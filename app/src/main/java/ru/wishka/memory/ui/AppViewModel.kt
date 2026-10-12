@@ -29,6 +29,21 @@ import ru.wishka.memory.data.Notifications
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.Privacy
 import ru.wishka.memory.data.User
+import ru.wishka.memory.data.Cache
+import ru.wishka.memory.data.CacheLog
+import ru.wishka.memory.data.DealStatus
+import ru.wishka.memory.data.DrawStroke
+import ru.wishka.memory.data.LatLon
+import ru.wishka.memory.data.MissionFind
+import ru.wishka.memory.data.Outing
+import ru.wishka.memory.data.ShareItem
+import ru.wishka.memory.data.ShareKind
+import ru.wishka.memory.data.ShareStatus
+import ru.wishka.memory.data.Tip
+import ru.wishka.memory.data.TogetherDemo
+import ru.wishka.memory.data.TogetherSection
+import ru.wishka.memory.data.TogetherState
+import ru.wishka.memory.data.minutesTitle
 import ru.wishka.memory.data.CHECK_IN_ACTIVITIES
 import ru.wishka.memory.data.CheckIn
 import ru.wishka.memory.data.CheckInTemplate
@@ -88,6 +103,7 @@ enum class Tab(private val ru: String) {
     Prism("PRISM"),
     Chats("Чаты"),
     Groups("Группы"),
+    Together("Вместе"),
     Profile("Профиль"),
     ;
 
@@ -158,6 +174,9 @@ data class UiState(
     val recapPeriod: RecapPeriod = RecapPeriod.Month,
     /** Итоги: на сколько месяцев или лет назад от текущего. */
     val recapBack: Int = 0,
+    /** Вкладка «Вместе»: цели, навыки, дневники, миссии, клады, вылазки, рисунок, обмен. */
+    val together: TogetherState = TogetherDemo.initial(),
+    val togetherSection: TogetherSection = TogetherSection.Challenges,
 ) {
     val openPerson: User? get() = openPersonId?.let { Demo.person(it) }
     val openGroup: Group? get() = groups.firstOrNull { it.id == openGroupId }
@@ -335,7 +354,11 @@ class AppViewModel(
         val trimmed = text.trim()
         if (trimmed.isEmpty() && media.isEmpty() && checkIn == null) return
         _state.update { s ->
-            s.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn)) + s.posts)
+            s.copy(
+                posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn)) + s.posts,
+                // Чек-ин сам засчитывается в общие цели «Вместе»
+                together = if (checkIn != null) s.together.afterCheckIn(checkIn) else s.together,
+            )
         }
     }
 
@@ -1095,6 +1118,10 @@ class AppViewModel(
                 else openRecap(RecapPeriod.Month, ((today.year * 12 + today.monthValue) - (year * 12 + month)).coerceAtLeast(0))
             }
             NudgeTarget.Requests -> openProfileSection(ProfileSection.Requests)
+            NudgeTarget.Together -> {
+                selectTab(Tab.Together)
+                TogetherSection.entries.getOrNull(nudge.targetId.toInt())?.let(::selectTogetherSection)
+            }
         }
     }
 
@@ -1149,7 +1176,9 @@ class AppViewModel(
             delay(25_000)
             while (true) {
                 demoEvent(Random.Default)
-                delay(Random.nextLong(70_000, 150_000))
+                delay(Random.nextLong(35_000, 75_000))
+                togetherEvent(Random.Default)
+                delay(Random.nextLong(35_000, 75_000))
             }
         }
     }
@@ -1243,6 +1272,255 @@ class AppViewModel(
         notify(Nudges.friendCheckIn(friend, c, Nudges.discussed(subject, texts), myKmThisMonth(), id))
     }
 
+    // ==================== ВМЕСТЕ ====================
+
+    fun selectTogetherSection(section: TogetherSection) {
+        _state.update { it.copy(togetherSection = section) }
+    }
+
+    private fun together(change: (TogetherState) -> TogetherState?): Boolean {
+        var ok = false
+        _state.update { s -> change(s.together)?.let { ok = true; s.copy(together = it) } ?: s }
+        return ok
+    }
+
+    private fun meId() = _state.value.me.id
+
+    /** Позже, в демо: ответ «с той стороны». В тестах сразу не срабатывает. */
+    private fun later(from: Long, to: Long, block: () -> Unit) {
+        if (!demoReplies) return
+        viewModelScope.launch {
+            delay(Random.nextLong(from, to))
+            block()
+        }
+    }
+
+    /**
+     * Сообщение человеку от вашего имени — без открытия переписки: так
+     * договорённость об обмене или вылазке остаётся в чате.
+     */
+    private fun messageTo(userId: Int, text: String) {
+        val person = Demo.person(userId) ?: return
+        val existing = _state.value.chats.firstOrNull { it.peer.id == userId }
+        val chatId = existing?.id ?: ((_state.value.chats.maxOfOrNull { it.id } ?: 0) + 1).also { id ->
+            _state.update { s -> s.copy(chats = listOf(Chat(id, person, emptyList())) + s.chats) }
+        }
+        append(chatId, Message(nextId++, fromMe = true, text = text, time = now()))
+    }
+
+    /** Где вы: демо-точки один раз переезжают к вам. */
+    fun setLocation(here: LatLon) {
+        together { it.relocate(here, meId()) }
+    }
+
+    // ---- Цели ----
+
+    fun joinGoal(id: String) { together { it.joinGoal(id) } }
+
+    fun contribute(id: String, amount: Double) { together { it.contribute(id, amount) } }
+
+    // ---- Навыки ----
+
+    fun addSkill(teach: Boolean, skill: String) { together { it.addSkill(teach, skill) } }
+
+    fun removeSkill(teach: Boolean, skill: String) { together { it.removeSkill(teach, skill) } }
+
+    /**
+     * Предложить обмен. give — чему научите вы, get — чему научат вас (""
+     * — ничему). null — предложено; иначе — что не так (не хватает часов).
+     */
+    fun proposeDeal(personId: Int, give: String, get: String, minutes: Int): String? {
+        val id = nextId++
+        val ok = together { it.propose(id, personId, give, get, minutes, clock()) }
+        if (!ok) return if (give.isEmpty() && get.isNotEmpty()) t("Не хватает часов в банке времени — научите кого-нибудь сами") else t("Выберите, чему учите или чему хотите научиться")
+        messageTo(
+            personId,
+            when {
+                give.isNotEmpty() && get.isNotEmpty() -> tf("Привет! Давай обмен: я научу «%s», а ты меня — «%s». По %s.", give, get, minutesTitle(minutes))
+                get.isNotEmpty() -> tf("Привет! Научишь меня «%s»? %s — расплачусь часами из банка времени.", get, minutesTitle(minutes))
+                else -> tf("Привет! Могу научить «%s» — %s.", give, minutesTitle(minutes))
+            },
+        )
+        // В демо человек соглашается через полминуты
+        later(15_000, 40_000) {
+            val deal = _state.value.together.deals.firstOrNull { it.id == id } ?: return@later
+            if (deal.status != DealStatus.Proposed) return@later
+            together { it.setDeal(id, DealStatus.Agreed) }
+            Demo.person(personId)?.let { notify(Nudges.dealAgreed(it, deal)) }
+        }
+        return null
+    }
+
+    fun setDeal(id: Long, status: DealStatus) { together { it.setDeal(id, status) } }
+
+    // ---- Дневники ----
+
+    fun startJourney(emoji: String, title: String, days: Int): Boolean =
+        together { it.startJourney(nextId++, meId(), emoji, title, days, clock()) }
+
+    fun addJourneyEntry(journeyId: Long, text: String, media: List<Attachment>) {
+        val entryId = nextId++
+        together { it.addEntry(journeyId, entryId, text, media, clock()) }
+        // В демо к новой записи приходит совет
+        later(20_000, 60_000) { demoTip(journeyId, entryId, Random.Default) }
+    }
+
+    private fun demoTip(journeyId: Long, entryId: Long, random: Random) {
+        val journey = _state.value.together.journeys.firstOrNull { it.id == journeyId } ?: return
+        val entry = journey.entries.firstOrNull { it.id == entryId } ?: return
+        val adviser = Demo.people.filter { it.id !in _state.value.blocked && it.id != journey.authorId }.let { if (it.isEmpty()) return else it[random.nextInt(it.size)] }
+        val tip = Tip(nextId++, adviser.id, TogetherDemo.tips[random.nextInt(TogetherDemo.tips.size)], createdAt = clock())
+        together { it.addTip(journeyId, entryId, tip) }
+        notify(Nudges.tipReceived(adviser, journey, entry.day))
+    }
+
+    fun addTip(journeyId: Long, entryId: Long, text: String) {
+        together { it.addTip(journeyId, entryId, Tip(nextId++, meId(), text.trim().take(500), createdAt = clock())) }
+    }
+
+    fun toggleHelpful(journeyId: Long, entryId: Long, tipId: Long) {
+        together { it.toggleHelpful(journeyId, entryId, tipId) }
+    }
+
+    // ---- Миссии ----
+
+    fun joinMission(id: String) { together { it.joinMission(id) } }
+
+    fun addFind(missionId: String, note: String, at: LatLon, photo: Attachment?) {
+        together { it.addFind(missionId, MissionFind(nextId++, meId(), note.trim().take(200), at, photo, clock())) }
+    }
+
+    // ---- Клады ----
+
+    fun hideCache(title: String, hint: String, difficulty: Int, size: String, at: LatLon): Boolean {
+        val id = nextId++
+        val ok = together { it.hideCache(Cache(id, meId(), title.trim().take(60), hint.trim().take(300), at, difficulty.coerceIn(1, 5), size, clock())) }
+        // В демо ваш клад кто-нибудь находит
+        if (ok) later(60_000, 180_000) {
+            val finder = Demo.people.filter { it.id !in _state.value.blocked }.randomOrNull() ?: return@later
+            if (_state.value.together.caches.none { it.id == id }) return@later
+            _state.update { s ->
+                s.copy(together = s.together.copy(caches = s.together.caches.map {
+                    if (it.id == id) it.copy(logs = it.logs + CacheLog(nextId++, finder.id, t("Нашёл! Отличное место."), clock())) else it
+                }))
+            }
+            _state.value.together.caches.firstOrNull { it.id == id }?.let { notify(Nudges.cacheFound(finder, it)) }
+        }
+        return ok
+    }
+
+    /** true — отметились; false — вы далеко или уже нашли. */
+    fun findCache(id: Long, text: String, here: LatLon?): Boolean =
+        together { it.findCache(id, CacheLog(nextId++, meId(), text.trim().ifEmpty { t("Нашёл!") }.take(300), clock()), here) }
+
+    // ---- Вылазки ----
+
+    fun createOuting(emoji: String, title: String, description: String, place: String, startsAt: Long, capacity: Int, at: LatLon?): Boolean {
+        val id = nextId++
+        val me = meId()
+        val ok = together { it.createOuting(Outing(id, me, emoji, title.trim().take(60), description.trim().take(500), place.trim().take(80), startsAt, capacity, listOf(me), at)) }
+        // В демо к вылазке присоединяются
+        if (ok) later(30_000, 90_000) {
+            val outing = _state.value.together.outings.firstOrNull { it.id == id } ?: return@later
+            if (outing.full) return@later
+            val guest = Demo.people.firstOrNull { it.id !in outing.participants && it.id !in _state.value.blocked } ?: return@later
+            together { it.copy(outings = it.outings.map { o -> if (o.id == id && !o.full) o.copy(participants = o.participants + guest.id) else o }) }
+            notify(Nudges.outingJoined(guest, outing))
+        }
+        return ok
+    }
+
+    fun toggleOuting(id: Long) { together { it.toggleOuting(id, meId()) } }
+
+    fun cancelOuting(id: Long) { together { it.cancelOuting(id, meId()) } }
+
+    // ---- Рисунок ----
+
+    fun startDrawing(title: String, turns: Int): Long? {
+        val id = nextId++
+        return if (together { it.startDrawing(id, title, turns, meId(), clock()) }) id else null
+    }
+
+    /** Свой ход: передать дальше. В демо друг дорисует и вернёт. */
+    fun drawTurn(id: Long, strokes: List<DrawStroke>, passTo: Int?) {
+        together { it.drawTurn(id, meId(), strokes, passTo) }
+        val drawing = _state.value.together.drawings.firstOrNull { it.id == id } ?: return
+        val friendId = drawing.waitingFor ?: return
+        if (friendId == meId()) return
+        later(20_000, 50_000) {
+            val friend = Demo.person(friendId) ?: return@later
+            val colors = listOf(0xFFBC92CD.toInt(), 0xFF8CC4FF.toInt(), 0xFFFF9EDE.toInt(), 0xFFFFD86B.toInt(), 0xFF7BE0B0.toInt())
+            val random = Random(clock())
+            together { it.drawTurn(id, friendId, TogetherDemo.demoStrokes(random, colors[random.nextInt(colors.size)]), meId()) }
+            _state.value.together.drawings.firstOrNull { it.id == id }?.let { notify(Nudges.drawingTurn(friend, it)) }
+        }
+    }
+
+    // ---- Обмен ----
+
+    fun addShare(kind: ShareKind, title: String, description: String, photo: Attachment?): Boolean {
+        val me = meId()
+        return together { it.addShare(ShareItem(nextId++, kind, title.trim().take(80), description.trim().take(500), me, me, photo = photo, createdAt = clock())) }
+    }
+
+    /** Попросить книгу или семена. В демо владелец передаёт через полминуты. */
+    fun requestShare(id: Long) {
+        val me = meId()
+        together { it.requestShare(id, me) }
+        val item = _state.value.together.shares.firstOrNull { it.id == id } ?: return
+        if (item.requestedBy != me) return
+        messageTo(item.holderId, tf("Привет! Можно мне «%s»? Заберу, когда удобно.", item.title))
+        later(15_000, 45_000) {
+            val current = _state.value.together.shares.firstOrNull { it.id == id } ?: return@later
+            if (current.status != ShareStatus.Requested || current.requestedBy != me) return@later
+            val giver = Demo.person(current.holderId) ?: return@later
+            together { it.handOver(id, me) }
+            notify(Nudges.shareHanded(giver, current))
+        }
+    }
+
+    fun handOver(id: Long, to: Int) {
+        together { it.handOver(id, to) }
+    }
+
+    fun offerHelp(id: Long) {
+        together { it.offerHelp(id, meId()) }
+        _state.value.together.shares.firstOrNull { it.id == id }?.let {
+            messageTo(it.ownerId, tf("Привет! Могу помочь починить «%s». Когда удобно?", it.title))
+        }
+    }
+
+    fun markFixed(id: Long) { together { it.markFixed(id) } }
+
+    /** Событие «Вместе» в демо: шкалы растут, к вашим вещам и вылазкам приходят люди. */
+    fun togetherEvent(random: Random) {
+        // Общие шкалы растут всегда — сообщество не спит
+        _state.update { s ->
+            s.copy(together = s.together.copy(goals = s.together.goals.map { g ->
+                g.copy(total = (g.total + g.target * (0.0002 + random.nextDouble() * 0.0008)).coerceAtMost(g.target), participants = g.participants + random.nextInt(4))
+            }))
+        }
+        val s = _state.value
+        val me = s.me.id
+        val people = Demo.people.filter { it.id !in s.blocked }
+        val myEntries = s.together.journeys.filter { it.authorId == me }.flatMap { j -> j.entries.map { j.id to it.id } }
+        val myShares = s.together.shares.filter { it.holderId == me && it.status == ShareStatus.Available && it.kind != ShareKind.Repair }
+        val options = buildList {
+            if (myEntries.isNotEmpty()) add(0)
+            if (myShares.isNotEmpty()) add(1)
+        }
+        if (options.isEmpty() || people.isEmpty()) return
+        when (options[random.nextInt(options.size)]) {
+            0 -> myEntries[random.nextInt(myEntries.size)].let { (j, e) -> demoTip(j, e, random) }
+            else -> {
+                val item = myShares[random.nextInt(myShares.size)]
+                val asker = people[random.nextInt(people.size)]
+                together { it.copy(shares = it.shares.map { x -> if (x.id == item.id) x.copy(status = ShareStatus.Requested, requestedBy = asker.id) else x }) }
+                notify(Nudges.shareRequested(asker, item))
+            }
+        }
+    }
+
     // ==================== СОХРАНЕНИЕ ====================
 
     /** То, что сохраняется на телефоне между запусками (см. StateStore). */
@@ -1251,6 +1529,7 @@ class AppViewModel(
             it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked,
             it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins,
             it.checkInTemplates, it.followRequests, it.approvedFollowers, it.sentRequests, it.recapNotified,
+            it.together,
         )
     }
 
@@ -1280,6 +1559,7 @@ class AppViewModel(
                 approvedFollowers = snapshot.approvedFollowers,
                 sentRequests = snapshot.sentRequests,
                 recapNotified = snapshot.recapNotified,
+                together = snapshot.together ?: s.together,
             ).withMe(s.me)
         }
     }
@@ -1332,6 +1612,7 @@ data class Snapshot(
     val approvedFollowers: Set<Int> = emptySet(),
     val sentRequests: Set<Int> = emptySet(),
     val recapNotified: Set<String> = emptySet(),
+    val together: TogetherState? = null,
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */
