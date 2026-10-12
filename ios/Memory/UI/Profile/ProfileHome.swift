@@ -389,13 +389,13 @@ private struct PrismTile: View {
     }
 }
 
-/// Мои группы и взаимные подписки — лентами.
+/// Мои группы и друзья — лентами.
 struct PeopleRows: View {
     let model: AppModel
 
     var body: some View {
         let state = model.state
-        let mutual = state.followers.filter { state.following.contains($0.id) && !state.isBlocked($0.id) }
+        let mutual = state.friends.filter { !state.isBlocked($0.id) }
         if !state.myGroups.isEmpty || !mutual.isEmpty {
             GlassCard {
                 VStack(alignment: .leading, spacing: 12) {
@@ -420,7 +420,7 @@ struct PeopleRows: View {
                         }
                     }
                     if !mutual.isEmpty {
-                        cardTitle(tf("Взаимные подписки · %s", mutual.count)).padding(.horizontal, 16)
+                        cardTitle(tf("Друзья · %s", mutual.count)).padding(.horizontal, 16)
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
                                 ForEach(mutual) { person in

@@ -114,7 +114,7 @@ extension NudgeKind {
         case .messages: return t("Сообщения")
         case .prism: return t("PRISM друзей")
         case .reactions: return t("Лайки и комментарии")
-        case .follows: return t("Новые подписчики")
+        case .follows: return t("Заявки в друзья")
         case .groups: return t("Группы")
         case .friends: return t("Друзья")
         case .recap: return t("Итоги")

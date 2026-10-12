@@ -191,7 +191,7 @@ private fun DrawTurnEditor(vm: AppViewModel, state: UiState, d: CollabDrawing, o
     var width by remember { mutableFloatStateOf(0.03f) }
     var eraser by remember { mutableStateOf(false) }
     val last = d.turns.size + 1 >= d.maxTurns
-    val friends = (state.followedPeople + ru.wishka.memory.data.Demo.people).distinctBy { it.id }.filter { it.id !in state.blocked }
+    val friends = (state.friends + ru.wishka.memory.data.Demo.people).distinctBy { it.id }.filter { it.id !in state.blocked }
     var passTo by remember { mutableStateOf(friends.firstOrNull()?.id) }
     val preview = remember(strokes, current, color, width, eraser) {
         drawingBitmap(d.strokes + strokes + listOfNotNull(current.takeIf { it.isNotEmpty() }?.let { DrawStroke(it, color, width, eraser) })).asImageBitmap()
@@ -310,7 +310,7 @@ internal fun SharingSection(vm: AppViewModel, state: UiState) {
         }
     }
     handing?.let { item ->
-        val people = (state.followedPeople + ru.wishka.memory.data.Demo.people).distinctBy { it.id }.filter { it.id !in state.blocked }
+        val people = (state.friends + ru.wishka.memory.data.Demo.people).distinctBy { it.id }.filter { it.id !in state.blocked }
         TogetherDialog(tf("Кому передать «%s»?", item.title), onDismiss = { handing = null }) {
             people.forEach { p ->
                 PersonLine(p, "", onClick = { vm.handOver(item.id, p.id); handing = null })

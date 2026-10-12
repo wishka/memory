@@ -311,7 +311,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
 
     // «Назад»: просмотр фото → обсуждение → переписка → страница человека
     // → группа → лента → выход
-    val canGoBack = state.viewing != null || state.commentsPostId != null || state.commentsPrismId != null ||
+    val canGoBack = state.viewing != null || state.openProduct != null || state.commentsPostId != null || state.commentsPrismId != null ||
         state.openChatId != null || state.openPersonId != null || state.profileSection != null || state.settingsPage != null ||
         state.creatingPrism ||
         state.openGroupId != null || state.tab != Tab.Feed

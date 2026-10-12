@@ -74,6 +74,11 @@ struct ChatScreen: View {
                                 onVote: { poll, i in model.voteMessage(chat.id, poll.id, i) },
                                 onClosePoll: { poll in model.closeMessagePoll(chat.id, poll.id) },
                                 onPlace: { viewingPlace = $0 },
+                                onProduct: { ref in
+                                    if !model.openProduct(ref.groupId, ref.productId) {
+                                        notice = t("Этого товара уже нет в витрине")
+                                    }
+                                },
                                 onReport: { model.reportMessage(chat.id, message) }
                             )
                             .id(message.id)
@@ -308,6 +313,8 @@ private struct Bubble: View {
     let onVote: (Poll, Int) -> Void
     let onClosePoll: (Poll) -> Void
     let onPlace: (SharedPlace) -> Void
+    /// Товар из сообщения — открыть его в группе.
+    var onProduct: (ProductRef) -> Void = { _ in }
     /// Пожаловаться на сообщение собеседника (на свои — нет).
     var onReport: () -> Void = {}
     @State private var menu = false
@@ -326,7 +333,7 @@ private struct Bubble: View {
         let documents = message.attachments.filter { $0.kind == .document }
         // Только стикер — без пузыря, картинкой
         let stickerOnly = message.text.isEmpty && !message.attachments.isEmpty && stickers.count == message.attachments.count
-            && message.replyTo == nil && message.forwardedFrom == nil && message.poll == nil && message.place == nil
+            && message.replyTo == nil && message.forwardedFrom == nil && message.poll == nil && message.place == nil && message.product == nil
         HStack(spacing: 0) {
             if mine { Spacer(minLength: 0) }
             if stickerOnly {
@@ -384,6 +391,9 @@ private struct Bubble: View {
                 }
                 if let place = message.place {
                     PlaceBubble(place: place) { onPlace(place) }
+                }
+                if let ref = message.product {
+                    ProductBubble(ref: ref) { onProduct(ref) }
                 }
                 VStack(alignment: .trailing, spacing: 2) {
                     if !message.text.isEmpty {

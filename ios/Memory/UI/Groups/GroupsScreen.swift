@@ -93,7 +93,7 @@ private struct GroupRow: View {
                                 Text(group.name).textStyle(.title).lineLimit(1)
                                 if group.muted { Glyph(kind: .bellOff, color: Palette.mist, size: 16) }
                             }
-                            Text("\(t(group.topic)) · \(plural(group.members, "участник", "участника", "участников"))")
+                            Text("\(t(group.topic)) · \(plural(group.members, "участник", "участника", "участников"))" + (group.shop.isEmpty ? "" : " · " + t("Витрина")))
                                 .textStyle(.bodySmall, Palette.mist)
                                 .lineLimit(1)
                         }

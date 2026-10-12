@@ -31,7 +31,7 @@ object AppVisibility {
 
 /**
  * Системные уведомления Memory: свой канал на каждый раздел (друзья,
- * группы, отметки, подписки, сообщения, итоги) — человек может выключить
+ * группы, отметки, заявки в друзья, сообщения, итоги) — человек может выключить
  * любой из них в настройках телефона. Нажатие открывает приложение там,
  * о чём уведомление.
  */
@@ -54,7 +54,7 @@ object MemoryNotifications {
         NudgeKind.Friends -> t("Друзья")
         NudgeKind.Groups -> t("Группы")
         NudgeKind.Reactions -> t("Лайки и комментарии")
-        NudgeKind.Follows -> t("Подписки")
+        NudgeKind.Follows -> t("Заявки в друзья")
         NudgeKind.Messages -> t("Сообщения")
         NudgeKind.Recap -> t("Итоги")
         NudgeKind.Prism -> "PRISM"

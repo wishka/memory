@@ -43,13 +43,20 @@ import ru.wishka.memory.ui.components.Nebula
 import ru.wishka.memory.ui.components.MediaTile
 import ru.wishka.memory.ui.components.ScreenTitle
 import ru.wishka.memory.ui.components.glass
+import ru.wishka.memory.ui.components.MemoryMenu
+import ru.wishka.memory.ui.components.MenuRow
+import ru.wishka.memory.ui.components.RemoveFriendDialog
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import ru.wishka.memory.ui.feed.PostCard
 import ru.wishka.memory.ui.prism.PrismArt
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Раздел профиля на отдельной странице: свои записи, подписчики,
- * подписки, группы или сохранённые PRISM. Открывается нажатием на
+ * Раздел профиля на отдельной странице: свои записи, друзья, заявки
+ * в друзья, группы или сохранённые PRISM. Открывается нажатием на
  * счётчик в профиле; «назад» возвращает в профиль.
  */
 @Composable
@@ -93,28 +100,12 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                     )
                 }
             }
-            ProfileSection.Followers -> {
-                if (state.followers.isEmpty()) item { Empty(t("Пока на вас никто не подписан.")) }
-                items(state.followers, key = { it.id }) { person ->
-                    PersonRow(
-                        person,
-                        following = person.id in state.following,
-                        followLabel = t("Подписаться в ответ"),
-                        onOpen = { vm.openPerson(person.id) },
-                        onToggle = { vm.toggleFollow(person.id) },
-                    )
-                }
-            }
-            ProfileSection.Following -> {
-                if (state.followedPeople.isEmpty()) item { Empty(t("Вы пока ни на кого не подписаны. Подписаться можно в ленте — кнопкой у имени автора.")) }
-                items(state.followedPeople, key = { it.id }) { person ->
-                    PersonRow(
-                        person,
-                        following = true,
-                        followLabel = t("Подписаться"),
-                        onOpen = { vm.openPerson(person.id) },
-                        onToggle = { vm.toggleFollow(person.id) },
-                    )
+            ProfileSection.Friends -> {
+                if (state.friends.isEmpty()) item { Empty(t("У вас пока нет друзей. Добавить в друзья можно в ленте — кнопкой у имени автора.")) }
+                items(state.friends, key = { it.id }) { person ->
+                    PersonRow(person, onOpen = { vm.openPerson(person.id) }) {
+                        FriendActions(person, onWrite = { vm.writeTo(person.id) }, onRemove = { vm.removeFriend(person.id) })
+                    }
                 }
             }
             ProfileSection.Groups -> {
@@ -137,8 +128,8 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
             ProfileSection.Requests -> {
                 item {
                     Empty(
-                        if (state.privacy.closedProfile) t("Профиль закрыт: подписаться на вас можно только по заявке. Одобренные увидят ваши записи и чек-ины.")
-                        else t("Профиль открыт — подписаться может любой. Закрыть его можно в настройках приватности.")
+                        if (state.privacy.closedProfile) t("Профиль закрыт: записи и чек-ины видят только друзья. Примите заявку — и человек станет вашим другом.")
+                        else t("Примите заявку — и человек станет вашим другом. Закрыть профиль от всех, кроме друзей, можно в настройках приватности.")
                     )
                 }
                 if (state.requestPeople.isEmpty()) item { Empty(t("Новых заявок нет.")) }
@@ -150,6 +141,22 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                         onDecline = { vm.declineRequest(person.id) },
                     )
                 }
+                // Мои заявки, которые ещё ждут ответа: их можно отозвать
+                if (state.sentRequestPeople.isNotEmpty()) {
+                    item {
+                        Text(
+                            t("ОТПРАВЛЕННЫЕ") + " · ${state.sentRequestPeople.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.Mist,
+                            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp),
+                        )
+                    }
+                    items(state.sentRequestPeople, key = { "sent-${it.id}" }) { person ->
+                        PersonRow(person, onOpen = { vm.openPerson(person.id) }) {
+                            GhostButton(t("Отменить"), onClick = { vm.toggleFriend(person.id) })
+                        }
+                    }
+                }
             }
             // «Моя музыка», «Студия» и «Итоги» — свои экраны
             ProfileSection.Music, ProfileSection.Stickers, ProfileSection.Recap, ProfileSection.Shelf -> Unit
@@ -159,8 +166,7 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
 
 private fun subtitle(state: UiState, section: ProfileSection): String = when (section) {
     ProfileSection.Posts -> plural(state.myPosts.size, "запись", "записи", "записей")
-    ProfileSection.Followers -> plural(state.followers.size, "подписчик", "подписчика", "подписчиков")
-    ProfileSection.Following -> plural(state.followedPeople.size, "подписка", "подписки", "подписок")
+    ProfileSection.Friends -> plural(state.friends.size, "друг", "друга", "друзей")
     ProfileSection.Groups -> plural(state.myGroups.size, "группа", "группы", "групп")
     ProfileSection.Saved -> plural(state.savedPrisms.size, "ролик", "ролика", "роликов")
     ProfileSection.Music -> plural(state.tracks.size, "трек", "трека", "треков")
@@ -170,7 +176,7 @@ private fun subtitle(state: UiState, section: ProfileSection): String = when (se
     ProfileSection.Requests -> plural(state.followRequests.size, "заявка", "заявки", "заявок")
 }
 
-/** Заявка на подписку: принять или отклонить. */
+/** Заявка в друзья ко мне: принять или отклонить. */
 @Composable
 private fun RequestRow(person: User, onOpen: () -> Unit, onApprove: () -> Unit, onDecline: () -> Unit) {
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
@@ -205,9 +211,12 @@ fun Empty(text: String) {
     )
 }
 
-/** Человек в списке: аватар, имя, подписка. Нажатие — его страница. */
+/**
+ * Человек в списке: аватар, имя и справа — кнопки (trailing: дружба,
+ * «Написать»…; null — без кнопок). Нажатие — его страница.
+ */
 @Composable
-fun PersonRow(person: User, following: Boolean, followLabel: String, onOpen: () -> Unit, onToggle: () -> Unit, showButton: Boolean = true) {
+fun PersonRow(person: User, onOpen: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -228,13 +237,32 @@ fun PersonRow(person: User, following: Boolean, followLabel: String, onOpen: () 
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (showButton) {
+            if (trailing != null) {
                 Spacer(Modifier.width(8.dp))
-                if (following) GhostButton(t("Вы подписаны"), onClick = onToggle)
-                else GlowButton(followLabel, onClick = onToggle)
+                trailing()
             }
         }
     }
+}
+
+/** Друг в моём списке: «Написать» и «⋯» → «Удалить из друзей» (с подтверждением). */
+@Composable
+private fun FriendActions(person: User, onWrite: () -> Unit, onRemove: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        GhostButton(t("Написать"), onClick = onWrite)
+        Box {
+            Box(
+                modifier = Modifier.size(36.dp).clip(CircleShape).clickable { menu = true },
+                contentAlignment = Alignment.Center,
+            ) { Glyph(LineIcon.More, Palette.Mist, size = 20.dp) }
+            MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
+                MenuRow(LineIcon.Trash, t("Удалить из друзей"), color = Palette.PearlPink) { menu = false; confirm = true }
+            }
+        }
+    }
+    if (confirm) RemoveFriendDialog(person.name, onDismiss = { confirm = false }, onConfirm = { confirm = false; onRemove() })
 }
 
 @Composable

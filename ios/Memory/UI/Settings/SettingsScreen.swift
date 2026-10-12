@@ -239,14 +239,14 @@ private struct PrivacyPage: View {
             SwitchRow(title: t("Закрытый профиль"), isOn: privacy.closedProfile) { v in update { $0.closedProfile = v } }
         }
         Hint(text: privacy.closedProfile
-             ? t("Записи и чек-ины видят только подписчики. Новые подписчики — по заявке: принять или отклонить её можно в профиле.")
-             : t("Закройте профиль, чтобы записи и чек-ины видели только те, чью заявку вы приняли. Нынешние подписчики останутся."))
+             ? t("Записи и чек-ины видят только ваши друзья. Заявки в друзья можно принять или отклонить в профиле.")
+             : t("Закройте профиль, чтобы записи и чек-ины видели только ваши друзья. Нынешние друзья останутся."))
         SettingsCard {
             VStack(alignment: .leading, spacing: 16) {
                 AudiencePicker(title: t("Кто видит сведения о себе"), subtitle: t("Город, день рождения, сайт и интересы"),
                                value: privacy.profileInfo) { v in update { $0.profileInfo = v } }
                 FadeLine()
-                AudiencePicker(title: t("Кто видит подписки и подписчиков"), value: privacy.followLists) { v in
+                AudiencePicker(title: t("Кто видит моих друзей"), value: privacy.followLists) { v in
                     update { $0.followLists = v }
                 }
                 FadeLine()
@@ -265,7 +265,7 @@ private struct PrivacyPage: View {
             Divider()
             SwitchRow(title: t("Показывать день рождения"), isOn: privacy.showBirthday) { v in update { $0.showBirthday = v } }
         }
-        Hint(text: t("«Мои подписки» — люди, на которых подписаны вы. Чтобы скрыть от одного человека всё сразу, добавьте его в чёрный список."))
+        Hint(text: t("«Друзья» — люди, с которыми вы друзья: вы приняли их заявку или они вашу. Чтобы скрыть от одного человека всё сразу, добавьте его в чёрный список."))
         SettingsCard {
             SwitchRow(title: t("Персональные рекомендации"), isOn: privacy.personalRecs) { v in update { $0.personalRecs = v } }
         }
@@ -352,7 +352,7 @@ private struct NotificationsPage: View {
             Divider()
             SwitchRow(title: t("Лайки и комментарии"), isOn: n.reactions, enabled: n.all) { v in update { $0.reactions = v } }
             Divider()
-            SwitchRow(title: t("Новые подписчики"), isOn: n.follows, enabled: n.all) { v in update { $0.follows = v } }
+            SwitchRow(title: t("Заявки в друзья"), isOn: n.follows, enabled: n.all) { v in update { $0.follows = v } }
             Divider()
             SwitchRow(title: t("Группы: новые записи и участники"), isOn: n.groups, enabled: n.all) { v in update { $0.groups = v } }
             Divider()

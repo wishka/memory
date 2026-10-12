@@ -78,7 +78,7 @@ final class Round10Tests: XCTestCase {
         let vm = AppModel(demoReplies: false)
         XCTAssertTrue(Demo.person(3)?.closed ?? false)
         XCTAssertFalse(vm.state.feed.contains { $0.author.id == 3 })
-        vm.toggleFollow(3)
+        vm.toggleFriend(3)
         XCTAssertTrue(vm.state.sentRequests.contains(3))
         XCTAssertFalse(vm.state.following.contains(3))
         vm.acceptSentRequest(3)
@@ -86,24 +86,104 @@ final class Round10Tests: XCTestCase {
         XCTAssertTrue(vm.state.feed.contains { $0.author.id == 3 })
     }
 
-    func testFollowRequestsWhenProfileClosed() {
+    func testFriendRequestsRegardlessOfClosedProfile() {
         let vm = AppModel(demoReplies: false)
-        vm.receiveFollowRequest(6)
+        // Открытый профиль — заявка в друзья всё равно приходит
+        vm.receiveFriendRequest(5)
+        XCTAssertEqual(vm.state.followRequests, [5])
+        XCTAssertEqual(vm.state.friendState(5), .incoming)
+        // Повторная — не дублируется; от друга (6) — не приходит
+        vm.receiveFriendRequest(5)
+        vm.receiveFriendRequest(6)
+        XCTAssertEqual(vm.state.followRequests, [5])
+        vm.approveRequest(5)
+        XCTAssertTrue(vm.state.following.contains(5))
+        XCTAssertTrue(vm.state.friends.contains { $0.id == 5 })
         XCTAssertTrue(vm.state.followRequests.isEmpty)
+        // Закрыли и снова открыли профиль — ждущая заявка не одобряется сама
+        let vm2 = AppModel(demoReplies: false)
         var closed = Privacy()
         closed.closedProfile = true
-        vm.setPrivacy(closed)
-        vm.receiveFollowRequest(6)
-        XCTAssertEqual(vm.state.followRequests, [6])
-        vm.approveRequest(6)
-        XCTAssertTrue(vm.state.followers.contains { $0.id == 6 })
-
-        let vm2 = AppModel(demoReplies: false)
         vm2.setPrivacy(closed)
-        vm2.receiveFollowRequest(6)
+        vm2.receiveFriendRequest(3)
         vm2.setPrivacy(Privacy())
+        XCTAssertEqual(vm2.state.followRequests, [3])
+        XCTAssertFalse(vm2.state.following.contains(3))
+        // Отклонили — заявка исчезает, в друзья не попадает
+        vm2.declineRequest(3)
         XCTAssertTrue(vm2.state.followRequests.isEmpty)
-        XCTAssertTrue(vm2.state.followers.contains { $0.id == 6 })
+        XCTAssertFalse(vm2.state.following.contains(3))
+        // Из чёрного списка заявки не приходят
+        vm2.block(5)
+        vm2.receiveFriendRequest(5)
+        XCTAssertTrue(vm2.state.followRequests.isEmpty)
+    }
+
+    func testSendingRequestToRequesterMakesFriendsAtOnce() {
+        let vm = AppModel(demoReplies: false)
+        vm.receiveFriendRequest(5)
+        vm.toggleFriend(5)
+        let s = vm.state
+        XCTAssertTrue(s.following.contains(5))
+        XCTAssertTrue(s.followRequests.isEmpty)
+        XCTAssertTrue(s.sentRequests.isEmpty)
+    }
+
+    func testOpenProfileRequestAcceptedAndCancelled() throws {
+        let vm = AppModel(demoReplies: false)
+        let timur = try XCTUnwrap(Demo.person(5))
+        let alina = try XCTUnwrap(Demo.person(4))
+        // Открытый профиль (Тимур) — тоже по заявке
+        XCTAssertFalse(timur.closed)
+        vm.toggleFriend(5)
+        XCTAssertEqual(vm.state.friendState(5), .requested)
+        XCTAssertFalse(vm.state.following.contains(5))
+        // Повторное нажатие — заявка отозвана; принять отозванную нельзя
+        vm.toggleFriend(5)
+        XCTAssertTrue(vm.state.sentRequests.isEmpty)
+        vm.acceptSentRequest(5)
+        XCTAssertFalse(vm.state.following.contains(5))
+        // Отправили снова — приняли: друзья и уведомление о принятой заявке
+        vm.toggleFriend(5)
+        vm.acceptSentRequest(5)
+        XCTAssertEqual(vm.state.friendState(5), .friends)
+        XCTAssertEqual(Nudges.requestAccepted(timur).text, "Тимур принял вашу заявку в друзья")
+        XCTAssertEqual(Nudges.requestAccepted(alina).text, "Алина приняла вашу заявку в друзья")
+        XCTAssertEqual(Nudges.followRequest(timur, common: []).text, "Тимур хочет добавить вас в друзья")
+    }
+
+    func testFriendsSurviveSnapshotAndDemoRequestsCome() {
+        let vm = AppModel(demoReplies: false)
+        vm.onNudge = { _ in }
+        vm.receiveFriendRequest(3)
+        vm.toggleFriend(5)
+        let snap = vm.snapshot()
+        let vm2 = AppModel(demoReplies: false)
+        vm2.restore(snap)
+        XCTAssertEqual(vm2.state.followRequests, [3])
+        XCTAssertEqual(vm2.state.sentRequests, [5])
+        XCTAssertEqual(vm2.state.following, vm.state.following)
+        // Демо-жизнь шлёт заявки и при открытом профиле
+        let vm3 = AppModel(demoReplies: false)
+        vm3.onNudge = { _ in }
+        for seed in 0..<200 {
+            var rng = SplitMix(seed: UInt64(seed))
+            vm3.demoEvent(using: &rng)
+        }
+        XCTAssertFalse(vm3.state.followRequests.isEmpty)
+        XCTAssertTrue(vm3.state.followRequests.allSatisfy { !vm3.state.following.contains($0) })
+    }
+
+    func testOldApprovedFollowersBecomeFriends() throws {
+        let vm = AppModel(demoReplies: false)
+        var snap = vm.snapshot()
+        XCTAssertNil(snap.approvedFollowers) // больше не записывается
+        snap.approvedFollowers = [3]
+        snap.followRequests = [3, 5]
+        let vm2 = AppModel(demoReplies: false)
+        vm2.restore(snap)
+        XCTAssertTrue(vm2.state.following.contains(3))
+        XCTAssertEqual(vm2.state.followRequests, [5])
     }
 
     func testNudgeMentionsDiscussedFilm() throws {

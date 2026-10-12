@@ -48,10 +48,12 @@ import ru.wishka.memory.ui.components.Stat
 import ru.wishka.memory.ui.components.UserInfo
 import ru.wishka.memory.ui.components.glass
 import ru.wishka.memory.ui.feed.PostCard
+import ru.wishka.memory.ui.FriendState
+import ru.wishka.memory.ui.components.FriendButton
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Страница другого человека: карточка, сведения, интересы, подписка,
+ * Страница другого человека: карточка, сведения, интересы, дружба,
  * «Написать» и его записи. Открывается нажатием на автора записи.
  */
 @Composable
@@ -60,11 +62,11 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
         PersonSectionScreen(vm, state, person, section, contentPadding)
         return
     }
-    val following = person.id in state.following
+    val friend = state.friendState(person.id)
     val blocked = state.isBlocked(person.id)
-    // Закрытый профиль: записи видны только подписчикам
+    // Закрытый профиль: записи видны только друзьям
     val hidden = !state.canSee(person)
-    val requested = person.id in state.sentRequests
+    val requested = friend == FriendState.Requested
     val posts = if (blocked || hidden) emptyList() else state.postsOf(person.id)
     var menu by remember { mutableStateOf(false) }
 
@@ -140,16 +142,13 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                     }
                     Spacer(Modifier.height(4.dp))
                     FadeLine()
-                    // Счётчики — кнопки: записи, подписчики и подписки человека
+                    // Счётчики — кнопки: записи и друзья человека
                     Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
                         StatButton(if (hidden) state.postsOf(person.id).size else posts.size, t("записи"), Modifier.weight(1f)) {
                             if (!hidden) vm.openPersonSection(ProfileSection.Posts)
                         }
-                        StatButton(person.followers + if (following) 1 else 0, t("подписчики"), Modifier.weight(1f)) {
-                            vm.openPersonSection(ProfileSection.Followers)
-                        }
-                        StatButton(person.followingCount, t("подписки"), Modifier.weight(1f)) {
-                            vm.openPersonSection(ProfileSection.Following)
+                        StatButton(state.friendsOf(person).size, t("друзья"), Modifier.weight(1f)) {
+                            vm.openPersonSection(ProfileSection.Friends)
                         }
                     }
                     if (blocked) {
@@ -161,13 +160,21 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                         )
                         GhostButton(t("Разблокировать"), onClick = { vm.unblock(person.id) })
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
-                            when {
-                                following -> GhostButton(t("Вы подписаны"), onClick = { vm.toggleFollow(person.id) })
-                                requested -> GhostButton(t("Заявка отправлена"), onClick = { vm.toggleFollow(person.id) })
-                                person.closed -> GlowButton(t("Отправить заявку"), onClick = { vm.toggleFollow(person.id) })
-                                else -> GlowButton(t("Подписаться"), onClick = { vm.toggleFollow(person.id) })
+                        // Человек сам прислал заявку — принять или отклонить
+                        if (friend == FriendState.Incoming) {
+                            Text(
+                                t("Хочет добавить вас в друзья"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Palette.Lilac,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                GlowButton(t("Принять заявку"), onClick = { vm.approveRequest(person.id) })
+                                GhostButton(t("Отклонить"), onClick = { vm.declineRequest(person.id) })
                             }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
+                            if (friend != FriendState.Incoming) FriendButton(friend, person.name, onToggle = { vm.toggleFriend(person.id) })
                             GhostButton(t("Написать"), onClick = { vm.writeTo(person.id) })
                         }
                     }
@@ -193,7 +200,7 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                     Spacer(Modifier.size(12.dp))
                     Text(
                         if (requested) t("Заявка отправлена. Когда её примут, здесь появятся записи и чек-ины.")
-                        else t("Это закрытый профиль. Записи и чек-ины видят только подписчики — отправьте заявку."),
+                        else t("Это закрытый профиль. Записи и чек-ины видят только друзья — добавьте человека в друзья."),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Ink,
                     )

@@ -91,7 +91,7 @@ val NudgeKind.soundTitle: String
         NudgeKind.Messages -> t("Сообщения")
         NudgeKind.Prism -> t("PRISM друзей")
         NudgeKind.Reactions -> t("Лайки и комментарии")
-        NudgeKind.Follows -> t("Новые подписчики")
+        NudgeKind.Follows -> t("Заявки в друзья")
         NudgeKind.Groups -> t("Группы")
         NudgeKind.Friends -> t("Друзья")
         NudgeKind.Recap -> t("Итоги")

@@ -164,6 +164,7 @@ func previewOf(_ message: Message) -> String {
     if !message.text.isEmpty { return message.text }
     if let poll = message.poll { return t("Опрос") + ": " + poll.question }
     if let place = message.place { return t("Геолокация") + (place.title.isEmpty ? "" : ": " + place.title) }
+    if let product = message.product { return t("Товар") + ": " + product.title }
     let a = message.attachments
     if a.isEmpty { return "" }
     if a.allSatisfy(\.isGif) { return "GIF" }

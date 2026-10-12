@@ -96,20 +96,25 @@ class AppViewModelTest {
 
     @Test
     fun storiesShowOnlyFollowed() {
-        val vm = AppViewModel()
+        val vm = AppViewModel(demoReplies = false)
         val s = vm.state.value
         assertTrue(s.stories.isNotEmpty())
         assertTrue(s.stories.all { it.author.id in s.following })
-        // Подписка на Тимура (5) добавляет его записи, отписка — убирает
-        // (Марк — закрытый профиль: к нему уходит заявка, см. Round10Test)
+        // Заявка Тимуру (5): пока не принята — его записей нет; принял — есть;
+        // удалили из друзей — снова нет
         assertFalse(s.stories.any { it.author.id == 5 })
-        vm.toggleFollow(5)
-        assertTrue(vm.state.value.stories.any { it.author.id == 5 })
-        vm.toggleFollow(5)
+        vm.toggleFriend(5)
+        assertTrue(5 in vm.state.value.sentRequests)
         assertFalse(vm.state.value.stories.any { it.author.id == 5 })
-        // На себя подписаться нельзя
-        vm.toggleFollow(vm.state.value.me.id)
+        vm.acceptSentRequest(5)
+        assertTrue(vm.state.value.stories.any { it.author.id == 5 })
+        vm.toggleFriend(5)
+        assertFalse(5 in vm.state.value.following)
+        assertFalse(vm.state.value.stories.any { it.author.id == 5 })
+        // Себя в друзья не добавить
+        vm.toggleFriend(vm.state.value.me.id)
         assertFalse(vm.state.value.me.id in vm.state.value.following)
+        assertFalse(vm.state.value.me.id in vm.state.value.sentRequests)
     }
 
     @Test
@@ -319,7 +324,7 @@ class AppViewModelTest {
     @Test
     fun profileSectionsAndBack() {
         val vm = AppViewModel()
-        assertTrue(vm.state.value.followers.isNotEmpty())
+        assertTrue(vm.state.value.friends.isNotEmpty())
         vm.openProfileSection(ProfileSection.Groups)
         assertEquals(Tab.Profile, vm.state.value.tab)
         // Группа из раздела профиля: «назад» — снова в раздел
@@ -416,19 +421,25 @@ class AppViewModelTest {
 
     @Test
     fun personSections() {
-        val vm = AppViewModel()
+        val vm = AppViewModel(demoReplies = false)
         val person = vm.state.value.posts.first { it.author.id != vm.state.value.me.id }.author
         vm.openPerson(person.id)
-        vm.openPersonSection(ProfileSection.Followers)
-        assertEquals(ProfileSection.Followers, vm.state.value.personSection)
+        vm.openPersonSection(ProfileSection.Friends)
+        assertEquals(ProfileSection.Friends, vm.state.value.personSection)
         // «Назад» сначала закрывает раздел, потом страницу
         assertTrue(vm.back())
         assertNull(vm.state.value.personSection)
         assertEquals(person.id, vm.state.value.openPersonId)
-        // Подписались — вы среди его подписчиков
-        if (person.id !in vm.state.value.following) vm.toggleFollow(person.id)
-        assertTrue(vm.state.value.followersOf(person).any { it.id == vm.state.value.me.id })
-        assertTrue(vm.state.value.followersOf(person).none { it.id == person.id })
+        // Друзья — вы среди его друзей
+        if (person.id !in vm.state.value.following) {
+            vm.toggleFriend(person.id)
+            vm.acceptSentRequest(person.id)
+        }
+        assertTrue(vm.state.value.friendsOf(person).any { it.id == vm.state.value.me.id })
+        assertTrue(vm.state.value.friendsOf(person).none { it.id == person.id })
+        // Удалили из друзей — вас в его списке нет
+        vm.removeFriend(person.id)
+        assertTrue(vm.state.value.friendsOf(person).none { it.id == vm.state.value.me.id })
     }
 
     @Test

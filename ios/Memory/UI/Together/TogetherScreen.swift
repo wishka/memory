@@ -107,10 +107,10 @@ func personOf(_ state: UiState, _ id: Int) -> User {
     return Demo.person(id) ?? User(id: id, name: t("Участник"), handle: "member")
 }
 
-/// Люди, которым можно что-то передать: ваши подписки и знакомые, без чёрного списка.
+/// Люди, которым можно что-то передать: ваши друзья и знакомые, без чёрного списка.
 func togetherPeople(_ state: UiState) -> [User] {
     var seen = Set<Int>()
-    return (state.followedPeople + Demo.people).filter { p in
+    return (state.friends + Demo.people).filter { p in
         guard !state.blocked.contains(p.id), !seen.contains(p.id) else { return false }
         seen.insert(p.id)
         return true

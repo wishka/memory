@@ -51,8 +51,8 @@ struct FeedScreen: View {
                     PostCard(
                         post: post,
                         onLike: { model.toggleLike(post.id) },
-                        following: post.author.id == state.me.id ? nil : state.following.contains(post.author.id),
-                        onFollow: { model.toggleFollow(post.author.id) },
+                        friend: post.author.id == state.me.id ? nil : state.friendState(post.author.id),
+                        onFriend: { model.toggleFriend(post.author.id) },
                         onAuthor: { model.openPerson(post.author.id) },
                         onComments: { model.openComments(post.id) },
                         onOpenMedia: model.openMedia,
@@ -118,13 +118,15 @@ func checkInCard(_ c: CheckIn, _ state: UiState) -> ShareCardSpec {
     )
 }
 
-/// Карточка записи. following: nil — это своя запись (кнопки подписки
-/// нет), true / false — подписан ли человек на автора.
+/// Карточка записи. friend: nil — это своя запись (кнопки дружбы нет),
+/// иначе — что между вами и автором: «Добавить в друзья», «Заявка
+/// отправлена», «Принять заявку» или «В друзьях».
 struct PostCard: View {
     let post: Post
     let onLike: () -> Void
-    var following: Bool? = nil
-    var onFollow: () -> Void = {}
+    var friend: FriendState? = nil
+    /// AppModel.toggleFriend автора; удаление из друзей кнопка сначала подтверждает.
+    var onFriend: () -> Void = {}
     /// Нажатие на аватар или имя — страница автора; nil — не нажимается.
     var onAuthor: (() -> Void)? = nil
     /// Открыть обсуждение; nil — значок комментариев не нажимается.
@@ -156,12 +158,8 @@ struct PostCard: View {
                 HStack(spacing: 8) {
                     author
                     Spacer(minLength: 0)
-                    if let following {
-                        if following {
-                            GhostButton(title: t("Вы подписаны"), action: onFollow)
-                        } else {
-                            GlowButton(title: t("Подписаться"), action: onFollow)
-                        }
+                    if let friend {
+                        FriendButton(state: friend, name: post.author.name, onToggle: onFriend)
                     }
                     if !menu.isEmpty || onReport != nil {
                         Button { showMenu = true } label: {

@@ -322,8 +322,8 @@ private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit, onRecsDoc
             SwitchRow(t("Закрытый профиль"), privacy.closedProfile) { onChange(privacy.copy(closedProfile = it)) }
         }
         Hint(
-            if (privacy.closedProfile) t("Записи и чек-ины видят только подписчики. Новые подписчики — по заявке: принять или отклонить её можно в профиле.")
-            else t("Закройте профиль, чтобы записи и чек-ины видели только те, чью заявку вы приняли. Нынешние подписчики останутся.")
+            if (privacy.closedProfile) t("Записи и чек-ины видят только ваши друзья. Заявки в друзья можно принять или отклонить в профиле.")
+            else t("Закройте профиль, чтобы записи и чек-ины видели только ваши друзья. Нынешние друзья останутся.")
         )
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -331,7 +331,7 @@ private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit, onRecsDoc
                     onChange(privacy.copy(profileInfo = it))
                 }
                 FadeLine()
-                AudiencePicker(t("Кто видит подписки и подписчиков"), null, privacy.followLists) {
+                AudiencePicker(t("Кто видит моих друзей"), null, privacy.followLists) {
                     onChange(privacy.copy(followLists = it))
                 }
                 FadeLine()
@@ -349,7 +349,7 @@ private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit, onRecsDoc
             Divider()
             SwitchRow(t("Показывать день рождения"), privacy.showBirthday) { onChange(privacy.copy(showBirthday = it)) }
         }
-        Hint(t("«Мои подписки» — люди, на которых подписаны вы. Чтобы скрыть от одного человека всё сразу, добавьте его в чёрный список."))
+        Hint(t("«Друзья» — люди, с которыми вы друзья: вы приняли их заявку или они вашу. Чтобы скрыть от одного человека всё сразу, добавьте его в чёрный список."))
         Card {
             SwitchRow(t("Персональные рекомендации"), privacy.personalRecs) { onChange(privacy.copy(personalRecs = it)) }
         }
@@ -422,7 +422,7 @@ private fun NotificationsPage(vm: AppViewModel, state: UiState) {
             Divider()
             SwitchRow(t("Лайки и комментарии"), n.reactions, enabled = n.all) { v -> set { it.copy(reactions = v) } }
             Divider()
-            SwitchRow(t("Новые подписчики"), n.follows, enabled = n.all) { v -> set { it.copy(follows = v) } }
+            SwitchRow(t("Заявки в друзья"), n.follows, enabled = n.all) { v -> set { it.copy(follows = v) } }
             Divider()
             SwitchRow(t("Группы: новые записи и участники"), n.groups, enabled = n.all) { v -> set { it.copy(groups = v) } }
             Divider()

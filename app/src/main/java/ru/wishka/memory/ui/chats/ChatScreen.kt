@@ -68,6 +68,8 @@ import ru.wishka.memory.ui.components.PollCard
 import ru.wishka.memory.ui.components.PollEditorDialog
 import ru.wishka.memory.ui.components.rememberLocate
 import ru.wishka.memory.data.Poll
+import ru.wishka.memory.data.ProductRef
+import ru.wishka.memory.ui.groups.ProductBubble
 import ru.wishka.memory.data.SharedPlace
 import ru.wishka.memory.data.backdropOr
 import androidx.compose.foundation.rememberScrollState
@@ -281,6 +283,9 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     onClosePoll = { poll -> vm.closeMessagePoll(chat.id, poll.id) },
                     onPlace = { viewingPlace = it },
                     onReport = { vm.reportMessage(chat.id, message) },
+                    onProduct = { ref ->
+                        if (!vm.openProduct(ref.groupId, ref.productId)) Toast.makeText(context, t("Этого товара уже нет в витрине"), Toast.LENGTH_SHORT).show()
+                    },
                 )
             }
         }
@@ -520,6 +525,7 @@ private fun Bubble(
     onClosePoll: (Poll) -> Unit,
     onPlace: (SharedPlace) -> Unit,
     onReport: () -> Unit,
+    onProduct: (ProductRef) -> Unit,
 ) {
     val mine = message.fromMe
     var menu by remember { mutableStateOf(false) }
@@ -597,6 +603,7 @@ private fun Bubble(
                     PollCard(poll, onVote = { onVote(poll, it) }, modifier = Modifier.width(270.dp), onClose = if (mine) ({ onClosePoll(poll) }) else null)
                 }
                 message.place?.let { place -> PlaceBubble(place) { onPlace(place) } }
+                message.product?.let { ref -> ProductBubble(ref) { onProduct(ref) } }
                 Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
                     if (message.text.isNotEmpty()) {
                         Text(message.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)

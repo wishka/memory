@@ -52,6 +52,8 @@ import ru.wishka.memory.ui.components.PollCard
 import ru.wishka.memory.ui.components.rememberMediaPicker
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.ProfileSection
+import ru.wishka.memory.ui.FriendState
+import ru.wishka.memory.ui.components.FriendButton
 import ru.wishka.memory.ui.components.CheckInBadge
 import ru.wishka.memory.ui.components.PostComposer
 import ru.wishka.memory.ui.components.StickerRow
@@ -125,8 +127,8 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 onVote = { vm.votePost(post.id, it) },
                 onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
                 onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
-                following = if (mine) null else post.author.id in state.following,
-                onFollow = { vm.toggleFollow(post.author.id) },
+                friend = if (mine) null else state.friendState(post.author.id),
+                onFriend = { vm.toggleFriend(post.author.id) },
                 onAuthor = { vm.openPerson(post.author.id) },
                 onComments = { vm.openComments(post.id) },
                 onOpenMedia = vm::openMedia,
@@ -187,15 +189,17 @@ fun checkInCard(c: CheckIn, state: UiState): ShareCardSpec {
 }
 
 /**
- * Карточка записи. following: null — это своя запись (кнопки подписки
- * нет), true / false — подписан ли человек на автора.
+ * Карточка записи. friend: null — это своя запись (кнопки дружбы нет),
+ * иначе — что между вами и автором: «Добавить в друзья», «Заявка
+ * отправлена», «Принять заявку» или «В друзьях».
  */
 @Composable
 fun PostCard(
     post: Post,
     onLike: () -> Unit,
-    following: Boolean? = null,
-    onFollow: () -> Unit = {},
+    friend: FriendState? = null,
+    /** AppViewModel.toggleFriend автора; удаление из друзей кнопка сначала подтверждает. */
+    onFriend: () -> Unit = {},
     /** Нажатие на аватар или имя — страница автора; null — не кликается. */
     onAuthor: (() -> Unit)? = null,
     /** Открыть обсуждение; null — значок комментариев не нажимается. */
@@ -235,10 +239,7 @@ fun PostCard(
                     )
                 }
                 }
-                if (following != null) {
-                    if (following) GhostButton(t("Вы подписаны"), onClick = onFollow)
-                    else GlowButton(t("Подписаться"), onClick = onFollow)
-                }
+                if (friend != null) FriendButton(friend, post.author.name, onFriend)
                 if (menu != null || onReport != null) {
                     Box {
                         Box(
