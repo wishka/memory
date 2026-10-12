@@ -46,6 +46,7 @@ struct DrawingSection: View {
     @State private var creating = false
     /// Новый рисунок открывается, когда окно создания закрылось.
     @State private var pendingId: Int64?
+    @State private var sharing: SharePayload?
 
     var body: some View {
         let state = model.state
@@ -69,7 +70,18 @@ struct DrawingSection: View {
             }
             if !done.isEmpty { TogetherCaption(text: t("Готовые")) }
             ForEach(done) { d in
-                DrawingCard(state: state, drawing: d, action: t("В ленту")) {
+                DrawingCard(state: state, drawing: d, action: t("В ленту"), onShare: {
+                    // Карточка с самим рисунком и кто рисовал — с кодом приглашения
+                    var seen = Set<String>()
+                    let names = d.turns.map { personOf(state, $0.authorId).firstName }.filter { seen.insert($0).inserted }
+                    let spec = ShareCardSpec(
+                        kicker: t("Рисунок"), emoji: "🎨", title: d.title,
+                        subtitle: tf("Нарисовали вместе: %s", names.joined(separator: ", ")),
+                        picture: drawingImage(d.strokes),
+                        author: "\(state.me.name) · @\(state.me.handle)"
+                    )
+                    sharing = shareCard(model, spec, name: "drawing-\(d.id)", action: .drawing, targetId: "\(d.id)", title: d.title)
+                }) {
                     if let image = saveDrawing(d) {
                         model.publish(tf("Нарисовали вместе: «%s» ✦", d.title), media: [image])
                         geo.show(t("Опубликовано"))
@@ -77,6 +89,7 @@ struct DrawingSection: View {
                 }
             }
         }
+        .shareSheet($sharing)
         .sheet(isPresented: $creating, onDismiss: {
             if let id = pendingId {
                 pendingId = nil
@@ -103,6 +116,8 @@ private struct DrawingCard: View {
     let state: UiState
     let drawing: CollabDrawing
     let action: String?
+    /// «Поделиться» карточкой с рисунком; nil — кнопки нет.
+    var onShare: (() -> Void)? = nil
     let onAction: () -> Void
 
     /// Кто уже рисовал — по разу, в порядке ходов.
@@ -130,8 +145,13 @@ private struct DrawingCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            if let action {
-                GlowButton(title: action, action: onAction)
+            HStack(spacing: 10) {
+                if let action {
+                    GlowButton(title: action, action: onAction)
+                }
+                if let onShare {
+                    GhostButton(title: t("Поделиться"), action: onShare)
+                }
             }
         }
     }

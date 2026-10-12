@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Значок — прозрачный кристалл PRISM на звёздном небе. Небо — фон,
-     кристалл с кольцом — передний слой (лаунчер слегка сдвигает их
-     при наклоне), monochrome — линии для тематических значков Android 13+.
+<!-- Значок — кристальная монограмма «M» и «Y» (внутренние линии «M» —
+     буква «Y») на лиловом небе. Небо — фон, буквы — передний слой,
+     monochrome — силуэт для тематических значков Android 13+.
      Картинки рисует scripts/crystal_icon.py. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@mipmap/ic_launcher_background" />

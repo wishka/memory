@@ -34,11 +34,22 @@ enum Unlock: String, CaseIterable, Identifiable {
 
     private var howRu: String {
         switch self {
-        case .hideCache: return "Найдите %s клада"
-        case .ownMission: return "Отметьте %s находок в миссиях"
-        case .ownGoal: return "Внесите вклад в %s общие цели"
-        case .mentor: return "Проведите %s занятий в банке времени"
-        case .keeper: return "Передайте дальше %s книги"
+        case .hideCache: return "Найдите %s"
+        case .ownMission: return "Отметьте в миссиях %s"
+        case .ownGoal: return "Внесите вклад в %s"
+        case .mentor: return "Проведите в банке времени %s"
+        case .keeper: return "Передайте дальше %s"
+        }
+    }
+
+    /// Слово при числе: одна, две, пять — «клад», «клада», «кладов».
+    private var forms: (one: String, few: String, many: String) {
+        switch self {
+        case .hideCache: return ("клад", "клада", "кладов")
+        case .ownMission: return ("находку", "находки", "находок")
+        case .ownGoal: return ("общую цель", "общие цели", "общих целей")
+        case .mentor: return ("занятие", "занятия", "занятий")
+        case .keeper: return ("книгу", "книги", "книг")
         }
     }
 
@@ -63,7 +74,8 @@ enum Unlock: String, CaseIterable, Identifiable {
     }
 
     var title: String { t(ru) }
-    var how: String { tf(howRu, need) }
+    /// «Найдите 3 клада» — число и слово согласованы при любом need.
+    var how: String { tf(howRu, plural(need, forms.one, forms.few, forms.many)) }
     var reward: String { t(gives) }
 }
 

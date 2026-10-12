@@ -260,4 +260,13 @@ class Round12Test {
         vm.restore(snap)
         assertEquals(snap.growth, vm.state.value.growth)
     }
+
+    @Test
+    fun unlockTextsAgreeWithNumbers() {
+        assertEquals("Найдите 3 клада", Unlock.HideCache.how)
+        assertEquals("Отметьте в миссиях 5 находок", Unlock.OwnMission.how)
+        assertEquals("Внесите вклад в 2 общие цели", Unlock.OwnGoal.how)
+        assertEquals("Проведите в банке времени 5 занятий", Unlock.Mentor.how)
+        assertEquals("Передайте дальше 3 книги", Unlock.Keeper.how)
+    }
 }

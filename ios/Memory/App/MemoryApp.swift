@@ -108,14 +108,17 @@ struct RootView: View {
             loadedFor = nil
             if let account {
                 model.setAccount(username: account.username, displayName: account.displayName, info: account.info)
-                if let snapshot = store.load(account.username) {
-                    model.restore(snapshot)
-                }
-                // Любимое из знакомства — на полку этого аккаунта
-                let picks = device.pendingPicks()
-                if !picks.isEmpty {
-                    model.addFavorites(picks)
-                    device.clearPicks()
+                let saved = store.load(account.username)
+                if let saved {
+                    model.restore(saved)
+                } else {
+                    // Любимое из знакомства — только на полку нового аккаунта (сохранённого ещё нет).
+                    // Вошли в старый — выбор ждёт следующей регистрации на этом телефоне.
+                    let picks = device.pendingPicks()
+                    if !picks.isEmpty {
+                        model.addFavorites(picks)
+                        device.clearPicks()
+                    }
                 }
                 loadedFor = account.username
                 // Открыли по ссылке-приглашению до входа — кто позвал и к чему

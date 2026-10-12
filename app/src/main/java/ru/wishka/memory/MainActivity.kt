@@ -160,11 +160,15 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
         if (account != null) {
             vm.setAccount(account.username, account.displayName, account.info)
             val me = vm.state.value.me
-            withContext(Dispatchers.IO) { store.load(account.username, me) }?.let(vm::restore)
-            // Любимое из знакомства — на полку этого аккаунта
-            device.pendingPicks().takeIf { it.isNotEmpty() }?.let { picks ->
-                vm.addFavorites(picks)
-                device.clearPicks()
+            val saved = withContext(Dispatchers.IO) { store.load(account.username, me) }
+            saved?.let(vm::restore)
+            // Любимое из знакомства — только на полку нового аккаунта (сохранённого ещё нет).
+            // Вошли в старый — выбор ждёт следующей регистрации на этом телефоне.
+            if (saved == null) {
+                device.pendingPicks().takeIf { it.isNotEmpty() }?.let { picks ->
+                    vm.addFavorites(picks)
+                    device.clearPicks()
+                }
             }
             loadedFor = account.username
             // Сохранённое на месте — можно считать итоги и оживлять демо

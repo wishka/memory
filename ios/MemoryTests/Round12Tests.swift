@@ -256,6 +256,14 @@ final class Round12Tests: XCTestCase {
         XCTAssertEqual(snap.growth, vm.state.growth)
     }
 
+    func testUnlockTextsAgreeWithNumbers() {
+        XCTAssertEqual("Найдите 3 клада", Unlock.hideCache.how)
+        XCTAssertEqual("Отметьте в миссиях 5 находок", Unlock.ownMission.how)
+        XCTAssertEqual("Внесите вклад в 2 общие цели", Unlock.ownGoal.how)
+        XCTAssertEqual("Проведите в банке времени 5 занятий", Unlock.mentor.how)
+        XCTAssertEqual("Передайте дальше 3 книги", Unlock.keeper.how)
+    }
+
     func testNewFieldsSurviveSaving() throws {
         let vm = AppModel(demoReplies: false)
         vm.planOnShelf("book", "Лавр")

@@ -1,21 +1,20 @@
-"""Значок приложения — прозрачный кристалл PRISM на звёздном небе.
+"""Значок приложения — кристальная монограмма «M» и «Y» на лиловом небе.
 
-Кристалл — тот же, что во вкладке PRISM: две четырёхгранные пирамиды,
-сиреневый контур с переливом (розовый → сиреневый → голубой), линия
-экватора, ребро-гребень и тонкое кольцо вокруг. Сам кристалл прозрачный:
-грани — лёгкое стекло, сквозь него видны звёзды и задние рёбра.
+Большая «M»: две ножки по краям, а её внутренние линии — буква «Y»:
+два плеча от верхних углов сходятся в центре и уходят вниз ножкой.
+Чтобы читались обе буквы, они разного стекла: ножки «M» — сиреневое с
+голубым, «Y» — светлее, розовое с белым, и лежит поверх. Буквы — стекло:
+полупрозрачная заливка, грани-фаски (светлая и тёмная половина каждого
+штриха), яркий переливающийся контур с белой сердцевиной и искры.
 
 Запуск: python3 scripts/crystal_icon.py  (нужны Pillow и numpy)
 Пишет прямо в проект:
-  app/src/main/res/mipmap-*/ic_launcher_background.png  — звёздное небо (108dp)
-  app/src/main/res/mipmap-*/ic_launcher_foreground.png  — кристалл и кольцо (108dp)
-  app/src/main/res/mipmap-*/ic_launcher_monochrome.png  — линии для тематических значков
+  app/src/main/res/mipmap-*/ic_launcher_background.png  — лиловое небо (108dp)
+  app/src/main/res/mipmap-*/ic_launcher_foreground.png  — монограмма (108dp)
+  app/src/main/res/mipmap-*/ic_launcher_monochrome.png  — силуэт для тематических значков
   app/src/main/res/mipmap-*/ic_launcher.png, ic_launcher_round.png — 48dp целиком
   ios/Memory/Assets.xcassets/AppIcon.appiconset/AppIcon.png — 1024×1024 без прозрачности
-
-Значки на телефоне не анимируются (ни Android, ни iPhone этого не дают),
-поэтому кристалл на значке стоит в повороте; вращается он в самом
-приложении — в шапке ленты (CrystalLogo).
+Рядом кладёт docs/icon-preview.png — как значок выглядит в круге и в квадрате.
 """
 import math
 import os
@@ -28,10 +27,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RES = os.path.join(ROOT, "app", "src", "main", "res")
 IOS = os.path.join(ROOT, "ios", "Memory", "Assets.xcassets", "AppIcon.appiconset")
 
-VOID, NIGHT, DEEP = 0x07081A, 0x0F153A, 0x1A1F5C
-LILAC, ORCHID, VIOLET, OCEAN, SKY = 0xBC92CD, 0x844CAD, 0x5F3F96, 0x195699, 0x307EC0
-EDGE = [0xFF9EDE, 0xC6A2FF, 0x8CC4FF]
-SS = 4  # рисуем с запасом и уменьшаем — края гладкие
+# Небо светлее прежнего: фиолетовый сверху, лиловый снизу
+SKY_TOP, SKY_MID, SKY_LOW = 0x2B2168, 0x47318E, 0x6A4BA8
+LILAC, ORCHID, VIOLET, OCEAN, PINK = 0xBC92CD, 0x844CAD, 0x5F3F96, 0x2F5FA8, 0xE79AD6
+M_EDGE = [0xC6A2FF, 0x9FB8FF, 0x8CC4FF]   # ножки «M»: сирень → голубой
+Y_EDGE = [0xFFB8E8, 0xFFD9F2, 0xFFFFFF]   # «Y»: розовый → белый
+SS = int(os.environ.get("SS", "4"))  # рисуем с запасом и уменьшаем — края гладкие
 
 
 def rgb(h):
@@ -57,44 +58,40 @@ def grid(n):
     return (x + 0.5) / n, (y + 0.5) / n
 
 
-# ---------- Звёздное небо ----------
+def blur(m, r):
+    return np.asarray(Image.fromarray((np.clip(m, 0, 1) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(r)), np.float32) / 255
 
-def sky(n, seed=7, count=1000):
-    """Ночное небо: градиент, туманность, count звёзд. Квадрат n×n, непрозрачный."""
+
+# ---------- Небо ----------
+
+def sky(n, seed=7, count=700):
+    """Лиловое небо: градиент, мягкая туманность, звёзды. Квадрат n×n, непрозрачный."""
     u, v = grid(n)
-    t = v
-    c = np.where((t < 0.5)[..., None],
-                 rgb(VOID) + (rgb(NIGHT) - rgb(VOID)) * (t / 0.5)[..., None],
-                 rgb(NIGHT) + (rgb(DEEP) - rgb(NIGHT)) * ((t - 0.5) / 0.5)[..., None])
+    c0, c1, c2 = rgb(SKY_TOP), rgb(SKY_MID), rgb(SKY_LOW)
+    c = np.where((v < 0.5)[..., None], c0 + (c1 - c0) * (v / 0.5)[..., None], c1 + (c2 - c1) * ((v - 0.5) / 0.5)[..., None])
     a = np.ones((n, n), np.float32)
-    rnd = random.Random(seed)
-    # Туманность — мягкие облака цветов палитры
-    for col, x, y, r, s in [(ORCHID, 0.25, 0.72, 0.42, 0.45), (OCEAN, 0.78, 0.30, 0.40, 0.45),
-                            (VIOLET, 0.70, 0.80, 0.35, 0.40), (SKY, 0.18, 0.22, 0.28, 0.22),
-                            (LILAC, 0.52, 0.50, 0.30, 0.18)]:
+    for col, x, y, r, s in [(ORCHID, 0.22, 0.75, 0.48, 0.50), (LILAC, 0.80, 0.25, 0.42, 0.35),
+                            (OCEAN, 0.85, 0.80, 0.40, 0.30), (PINK, 0.15, 0.18, 0.30, 0.18),
+                            (LILAC, 0.50, 0.52, 0.45, 0.22)]:
         d = np.sqrt((u - x) ** 2 + (v - y) ** 2) / r
-        k = np.clip(1 - d, 0, 1) ** 2 * s
-        c, a = over(c, a, np.broadcast_to(rgb(col), c.shape), k)
-    # Звёзды: много мелких, несколько ярких с ореолом и лучами
+        c, a = over(c, a, np.broadcast_to(rgb(col), c.shape), np.clip(1 - d, 0, 1) ** 2 * s)
     img = to_image(c, a)
+    rnd = random.Random(seed)
     stars = Image.new("RGBA", (n, n), (0, 0, 0, 0))
     d = ImageDraw.Draw(stars)
     for _ in range(count):
         x, y = rnd.random() * n, rnd.random() * n
-        r = n * (0.0012 + rnd.random() ** 3 * 0.0035)
-        al = int(90 + rnd.random() * 165)
-        tint = rnd.choice([(255, 255, 255), (230, 220, 255), (210, 230, 255), (255, 225, 245)])
-        d.ellipse([x - r, y - r, x + r, y + r], fill=tint + (al,))
-    glow = stars.filter(ImageFilter.GaussianBlur(n * 0.004))
-    img = Image.alpha_composite(img, glow)
+        r = n * (0.0012 + rnd.random() ** 3 * 0.0032)
+        tint = rnd.choice([(255, 255, 255), (240, 228, 255), (220, 235, 255), (255, 232, 248)])
+        d.ellipse([x - r, y - r, x + r, y + r], fill=tint + (int(80 + rnd.random() * 150),))
+    img = Image.alpha_composite(img, stars.filter(ImageFilter.GaussianBlur(n * 0.004)))
     img = Image.alpha_composite(img, stars)
     bright = Image.new("RGBA", (n, n), (0, 0, 0, 0))
     bd = ImageDraw.Draw(bright)
-    for x, y, r in [(0.16, 0.14, 0.022), (0.86, 0.18, 0.016), (0.82, 0.84, 0.02), (0.12, 0.80, 0.014), (0.30, 0.42, 0.010)]:
+    for x, y, r in [(0.14, 0.13, 0.020), (0.87, 0.15, 0.015), (0.85, 0.86, 0.018), (0.11, 0.84, 0.013)]:
         sparkle(bd, x * n, y * n, r * n, n)
     img = Image.alpha_composite(img, bright.filter(ImageFilter.GaussianBlur(n * 0.002)))
-    img = Image.alpha_composite(img, bright)
-    return img
+    return Image.alpha_composite(img, bright)
 
 
 def sparkle(d, x, y, r, n, alpha=255):
@@ -105,47 +102,65 @@ def sparkle(d, x, y, r, n, alpha=255):
     d.ellipse([x - q * 0.5, y - q * 0.5, x + q * 0.5, y + q * 0.5], fill=(255, 255, 255, alpha))
 
 
-# ---------- Кристалл ----------
+# ---------- Монограмма ----------
 
-ANGLE = 0.35        # поворот кристалла вокруг вертикали — как в шапке ленты
-LIGHT = np.array([-0.45, -0.55, 0.70]) / np.linalg.norm([-0.45, -0.55, 0.70])
+def band(a, b, w):
+    """Четырёхугольник-штрих шириной w вдоль отрезка a → b."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L = math.hypot(dx, dy)
+    nx, ny = -dy / L * w / 2, dx / L * w / 2
+    return [(a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny), (b[0] - nx, b[1] - ny), (a[0] - nx, a[1] - ny)]
 
 
-def geometry(n, ch):
-    """Вершины в пикселях: верх, низ и четыре на экваторе (x, y, z)."""
+def _hit(p, d, q, e):
+    """Пересечение прямых p + d·k и q + e·m."""
+    det = d[0] * (-e[1]) - d[1] * (-e[0])
+    k = ((q[0] - p[0]) * (-e[1]) - (q[1] - p[1]) * (-e[0])) / det
+    return (p[0] + d[0] * k, p[1] + d[1] * k)
+
+
+def glyph(n, h):
+    """Штрихи монограммы: (часть, центр-линия, полигон). h — высота букв, px.
+
+    «Y» собрана из кусков без нахлёста: плечо — от верхнего края до оси,
+    ножка — от места, где плечи встречаются, до низа; поэтому в развилке
+    нет швов.
+    """
     cx, cy = n / 2, n / 2
-    r = ch * 0.55
-    eq = [(cx + r * math.sin(ANGLE + k * math.pi / 2), cy, r * math.cos(ANGLE + k * math.pi / 2)) for k in range(4)]
-    return (cx, cy - ch, 0.0), (cx, cy + ch, 0.0), eq
-
-
-def edge_gradient(n, ch):
-    """Перелив рёбер по диагонали: розовый → сиреневый → голубой."""
-    u, v = grid(n)
-    cx, cy = 0.5, 0.5
-    s = ch / n
-    t = np.clip(((u - (cx - s * 0.6)) * 0.45 + (v - (cy - s)) * 0.9) / (s * 2 * 1.0), 0, 1)
-    c0, c1, c2 = (rgb(h) for h in EDGE)
-    return np.where((t < 0.5)[..., None], c0 + (c1 - c0) * (t / 0.5)[..., None], c1 + (c2 - c1) * ((t - 0.5) / 0.5)[..., None])
-
-
-def line_mask(n, segments, width, dashed=False):
-    m = Image.new("L", (n, n), 0)
-    d = ImageDraw.Draw(m)
-    for a, b in segments:
-        if dashed:
-            L = math.dist(a, b)
-            steps = max(2, int(L / (width * 4)))
-            for i in range(0, steps, 2):
-                p = (a[0] + (b[0] - a[0]) * i / steps, a[1] + (b[1] - a[1]) * i / steps)
-                q = (a[0] + (b[0] - a[0]) * (i + 1) / steps, a[1] + (b[1] - a[1]) * (i + 1) / steps)
-                d.line([p, q], fill=255, width=width)
-        else:
-            d.line([a, b], fill=255, width=width)
-            r = width / 2
-            for p in (a, b):
-                d.ellipse([p[0] - r, p[1] - r, p[0] + r, p[1] + r], fill=255)
-    return np.asarray(m, np.float32) / 255
+    w = h * 1.06                 # ширина «M»
+    t = h * 0.19                 # толщина ножек «M»
+    s = h * 0.17                 # толщина «Y»
+    top, bottom = cy - h / 2, cy + h / 2
+    left, right = cx - w / 2, cx + w / 2
+    jy = top + h * 0.56          # где сходятся оси плеч «Y»
+    parts = []
+    for x in (left + t / 2, right - t / 2):
+        parts.append(("M", ((x, top), (x, bottom)), [(x - t / 2, top), (x + t / 2, top), (x + t / 2, bottom), (x - t / 2, bottom)]))
+    horiz = (1.0, 0.0)
+    vert = (0.0, 1.0)
+    stem_top = None
+    arms = []
+    for sgn in (-1, 1):
+        a = (cx + sgn * (w / 2 - t * 0.5), top)
+        b = (cx, jy)
+        d = (b[0] - a[0], b[1] - a[1])
+        L = math.hypot(*d)
+        nx, ny = -d[1] / L * s / 2, d[0] / L * s / 2
+        # Внешняя кромка — дальше от оси, внутренняя — ближе
+        e1, e2 = (a[0] + nx, a[1] + ny), (a[0] - nx, a[1] - ny)
+        outer, inner = (e1, e2) if abs(e1[0] - cx) > abs(e2[0] - cx) or e1[1] > e2[1] else (e2, e1)
+        if outer[1] < inner[1]:
+            outer, inner = inner, outer
+        o_top = _hit(outer, d, (cx, top), horiz)
+        i_top = _hit(inner, d, (cx, top), horiz)
+        crotch = _hit(inner, d, (cx, top), vert)
+        foot = _hit(outer, d, (cx + sgn * s / 2, top), vert)
+        stem_top = foot[1]
+        arms.append((sgn, a, b, [o_top, i_top, crotch, (cx, foot[1]), foot]))
+    for sgn, a, b, pts in arms:
+        parts.append(("Y", (a, b), pts))
+    parts.append(("Y", ((cx, stem_top), (cx, bottom)), [(cx - s / 2, stem_top), (cx + s / 2, stem_top), (cx + s / 2, bottom), (cx - s / 2, bottom)]))
+    return parts, top
 
 
 def poly_mask(n, pts):
@@ -154,102 +169,100 @@ def poly_mask(n, pts):
     return np.asarray(m, np.float32) / 255
 
 
-def crystal(n, ch, ring=True):
-    """Прозрачный кристалл с кольцом на прозрачном фоне. ch — полувысота, px."""
-    top, bottom, eq = geometry(n, ch)
-    xy = lambda p: (p[0], p[1])
-    grad = edge_gradient(n, ch)
+def gradient(n, stops, h):
+    """Перелив по диагонали внутри букв."""
+    u, v = grid(n)
+    k = h / n
+    t = np.clip(((u - 0.5 + k * 0.55) * 0.55 + (v - 0.5 + k * 0.5) * 0.85) / (k * 1.4), 0, 1)
+    c0, c1, c2 = (rgb(x) for x in stops)
+    return np.where((t < 0.5)[..., None], c0 + (c1 - c0) * (t / 0.5)[..., None], c1 + (c2 - c1) * ((t - 0.5) / 0.5)[..., None])
+
+
+def edges(m, width):
+    """Контур маски: маска минус её сжатие."""
+    img = Image.fromarray((m * 255).astype(np.uint8))
+    size = max(3, int(width) | 1)
+    inner = np.asarray(img.filter(ImageFilter.MinFilter(size)), np.float32) / 255
+    return np.clip(m - inner, 0, 1)
+
+
+def letters(n, h):
+    """Кристальные буквы на прозрачном фоне."""
+    parts, top = glyph(n, h)
+    u, v = grid(n)
+    yy = v * n
+    clip_top = (yy >= top).astype(np.float32)
     c = np.zeros((n, n, 3), np.float32)
     a = np.zeros((n, n), np.float32)
-    u, v = grid(n)
-
-    # Ореол за стеклом
-    d = np.sqrt((u - 0.5) ** 2 + (v - 0.5) ** 2) / (ch * 1.55 / n)
-    c, a = over(c, a, np.broadcast_to(rgb(LILAC), c.shape), np.clip(1 - d, 0, 1) ** 2 * 0.38)
-
-    # Грани: почти прозрачное стекло. Задние — едва заметны, передние —
-    # светлее к свету и с лёгким переливом; у освещённых — блик.
-    faces = []
-    for k in range(4):
-        p, q = eq[k], eq[(k + 1) % 4]
-        for apex in (top, bottom):
-            A, P, Q = (np.array([apex[0], apex[1], apex[2]]), np.array(p), np.array(q))
-            nrm = np.cross(P - A, Q - A)
-            centre = (A + P + Q) / 3 - np.array([n / 2, n / 2, 0])
-            if np.dot(nrm, centre) < 0:
-                nrm = -nrm
-            nrm = nrm / np.linalg.norm(nrm)
-            faces.append((nrm[2], float(np.dot(nrm, LIGHT)), [xy(apex), xy(p), xy(q)]))
-    for front in (False, True):
-        for z, lit, pts in faces:
-            if (z > 0) != front:
+    masks = {"M": np.zeros((n, n), np.float32), "Y": np.zeros((n, n), np.float32)}
+    for kind, _, pts in parts:
+        masks[kind] = np.maximum(masks[kind], poly_mask(n, pts) * clip_top)
+    union = np.maximum(masks["M"], masks["Y"])
+    # Тёмная подложка-тень: буквы отделяются от светлого неба
+    c, a = over(c, a, np.broadcast_to(rgb(0x1A1240), c.shape), blur(union, h * 0.05) * 0.55)
+    # Ореол
+    c, a = over(c, a, np.broadcast_to(rgb(LILAC), c.shape), blur(union, h * 0.12) * 0.45)
+    lw = max(2, int(h * 0.022))
+    for kind, stops, glass in (("M", M_EDGE, 0x6E58C8), ("Y", Y_EDGE, 0xF2C6F0)):
+        grad = gradient(n, stops, h)
+        m = masks[kind]
+        # Стекло: полупрозрачная заливка с переливом
+        tint = grad * 0.5 + rgb(glass) * 0.5
+        c, a = over(c, a, tint, m * (0.42 if kind == "M" else 0.55))
+        # Фаски: у каждого штриха половина к свету светлее, другая темнее
+        for k2, (a0, b0), pts in parts:
+            if k2 != kind:
                 continue
-            m = poly_mask(n, pts)
-            if not front:
-                c, a = over(c, a, np.broadcast_to(rgb(VIOLET), c.shape), m * 0.10)
-                continue
-            tint = grad * 0.6 + 255 * 0.4
-            c, a = over(c, a, tint, m * (0.07 + 0.16 * max(0.0, lit)))
-            if lit < 0.35:
-                c, a = over(c, a, np.broadcast_to(rgb(0x4A2F9A), c.shape), m * 0.16)
-    # Блик по стеклу — диагональная полоса внутри силуэта
-    left = min(eq, key=lambda p: p[0])
-    right = max(eq, key=lambda p: p[0])
-    outline = [xy(top), xy(right), xy(bottom), xy(left)]
-    body = poly_mask(n, outline)
-    band = np.exp(-(((u - 0.5) * 1.0 + (v - 0.5) * 0.55 + 0.035 * ch / n * 4) / (ch / n * 0.16)) ** 2)
-    c, a = over(c, a, np.full_like(c, 255), body * band * 0.30)
-
-    # Рёбра: задние — тонкие и тусклые (видны сквозь стекло), передние и контур — яркие
-    back = [(xy(apex), xy(p)) for p in eq if p[2] < 0 and p not in (left, right) for apex in (top, bottom)]
-    front_ridge = [(xy(apex), xy(p)) for p in eq if p[2] > 0 and p not in (left, right) for apex in (top, bottom)]
-    w = max(1, int(ch * 0.035))
-    m_back = line_mask(n, back, max(1, int(w * 0.55)))
-    c, a = over(c, a, grad, m_back * 0.45)
-    # Экватор — сзади пунктиром, спереди сплошной
-    eq_back = [(xy(eq[k]), xy(eq[(k + 1) % 4])) for k in range(4) if eq[k][2] + eq[(k + 1) % 4][2] < 0]
-    eq_front = [(xy(eq[k]), xy(eq[(k + 1) % 4])) for k in range(4) if eq[k][2] + eq[(k + 1) % 4][2] >= 0]
-    c, a = over(c, a, grad, line_mask(n, eq_back, max(1, int(w * 0.55))) * 0.45)
-    strong = line_mask(n, front_ridge + eq_front + list(zip(outline, outline[1:] + outline[:1])), w)
-    glow = np.asarray(Image.fromarray((strong * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(w * 1.6)), np.float32) / 255
-    c, a = over(c, a, grad, np.clip(glow * 0.9, 0, 1))
-    c, a = over(c, a, grad, strong)
-    # Белая сердцевина рёбер — стеклянный блеск
-    core = line_mask(n, front_ridge + list(zip(outline, outline[1:] + outline[:1])), max(1, int(w * 0.35)))
-    c, a = over(c, a, np.full_like(c, 255), core * 0.55)
-
-    # Тонкое кольцо, как во вкладке PRISM
-    if ring:
-        rr = ch * 1.22
-        dist = np.abs(np.sqrt((u * n - n / 2) ** 2 + (v * n - n / 2) ** 2) - rr)
-        ring_m = np.clip(1 - dist / max(1.0, w * 0.4), 0, 1)
-        c, a = over(c, a, np.broadcast_to(rgb(LILAC), c.shape), ring_m * 0.45)
-
+            pm = poly_mask(n, pts) * clip_top
+            dx, dy = b0[0] - a0[0], b0[1] - a0[1]
+            side = (u * n - a0[0]) * dy - (v * n - a0[1]) * dx
+            # Свет сверху слева: светлая та сторона, нормаль которой смотрит туда
+            nx, ny = dy, -dx
+            lit_side = 1.0 if (nx * -0.6 + ny * -0.8) > 0 else -1.0
+            light = pm * (np.sign(side) * lit_side > 0)
+            shade = pm * (np.sign(side) * lit_side <= 0)
+            c, a = over(c, a, np.full_like(c, 255), light * 0.22)
+            c, a = over(c, a, np.broadcast_to(rgb(0x2A1C6A), c.shape), shade * 0.20)
+            # Гребень по середине штриха — граница фасок
+            ridge = Image.new("L", (n, n), 0)
+            ImageDraw.Draw(ridge).line([a0, b0], fill=255, width=max(1, lw // 2))
+            r = np.asarray(ridge, np.float32) / 255 * pm
+            c, a = over(c, a, grad, r * 0.75)
+        # Контур: перелив, свечение и белая сердцевина
+        e = edges(m, lw)
+        c, a = over(c, a, grad, np.clip(blur(e, lw * 1.4) * 1.2, 0, 1))
+        c, a = over(c, a, grad, e)
+        core = edges(m, max(2, lw // 2))
+        c, a = over(c, a, np.full_like(c, 255), core * (0.55 if kind == "M" else 0.8))
+    # Блик — диагональная полоса по стеклу
+    hb = np.exp(-(((u - 0.5) * 0.9 + (v - 0.5) * 0.5 + h / n * 0.12) / (h / n * 0.09)) ** 2)
+    c, a = over(c, a, np.full_like(c, 255), union * hb * 0.30)
     img = to_image(c, a)
-    # Искры на гранях
+    # Искры на вершинах
     sp = Image.new("RGBA", (n, n), (0, 0, 0, 0))
     sd = ImageDraw.Draw(sp)
-    sparkle(sd, n / 2 - ch * 0.12, n / 2 - ch * 0.42, ch * 0.13, n)
-    sparkle(sd, n / 2 + ch * 0.10, n / 2 + ch * 0.38, ch * 0.08, n, 220)
-    sparkle(sd, top[0], top[1], ch * 0.10, n, 200)
-    img = Image.alpha_composite(img, sp.filter(ImageFilter.GaussianBlur(ch * 0.02)))
-    img = Image.alpha_composite(img, sp)
-    return img
+    cx = n / 2
+    sparkle(sd, cx, top + h * 0.5, h * 0.10, n)
+    sparkle(sd, cx - h * 0.53 + h * 0.085, top, h * 0.08, n, 230)
+    sparkle(sd, cx + h * 0.53 - h * 0.085, top + h, h * 0.06, n, 200)
+    img = Image.alpha_composite(img, sp.filter(ImageFilter.GaussianBlur(h * 0.015)))
+    return Image.alpha_composite(img, sp)
 
 
-def lines_only(n, ch):
-    """Силуэт для тематических значков Android 13+: только линии кристалла и кольцо."""
-    top, bottom, eq = geometry(n, ch)
-    xy = lambda p: (p[0], p[1])
-    left = min(eq, key=lambda p: p[0])
-    right = max(eq, key=lambda p: p[0])
-    outline = [xy(top), xy(right), xy(bottom), xy(left)]
-    front = [(xy(apex), xy(p)) for p in eq if p[2] > 0 and p not in (left, right) for apex in (top, bottom)]
-    w = max(1, int(ch * 0.06))
-    m = line_mask(n, list(zip(outline, outline[1:] + outline[:1])) + front + [(xy(left), xy(right))], w)
-    u, v = grid(n)
-    dist = np.abs(np.sqrt((u * n - n / 2) ** 2 + (v * n - n / 2) ** 2) - ch * 1.22)
-    m = np.maximum(m, np.clip(1 - dist / (w * 0.4), 0, 1) * 0.8)
+def silhouette(n, h):
+    """Силуэт для тематических значков Android 13+: обе буквы, «Y» отделена тонким зазором."""
+    parts, top = glyph(n, h)
+    _, v = grid(n)
+    clip_top = (v * n >= top).astype(np.float32)
+    mm = np.zeros((n, n), np.float32)
+    ym = np.zeros((n, n), np.float32)
+    for kind, _, pts in parts:
+        if kind == "M":
+            mm = np.maximum(mm, poly_mask(n, pts) * clip_top)
+        else:
+            ym = np.maximum(ym, poly_mask(n, pts) * clip_top)
+    gap = np.asarray(Image.fromarray((ym * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(max(3, int(h * 0.03) | 1))), np.float32) / 255
+    m = np.maximum(mm * (1 - gap), ym)
     return to_image(np.full((n, n, 3), 255, np.float32), m)
 
 
@@ -257,12 +270,33 @@ def down(img, px):
     return img.resize((px, px), Image.LANCZOS)
 
 
+def preview(ios_img, fg_full):
+    """Как значок выглядит: квадрат iPhone и круг Android — рядом, на тёмном и светлом."""
+    W, H = 1400, 760
+    out = Image.new("RGB", (W, H), (24, 22, 40))
+    d = ImageDraw.Draw(out)
+    d.rectangle([W // 2, 0, W, H], fill=(236, 234, 244))
+    for i, x in enumerate((60, W // 2 + 60)):
+        sq = down(ios_img, 300)
+        m = Image.new("L", (1200, 1200), 0)
+        ImageDraw.Draw(m).rounded_rectangle([0, 0, 1199, 1199], radius=270, fill=255)
+        out.paste(sq, (x, 60), m.resize((300, 300), Image.LANCZOS))
+        circ = down(fg_full, 300)
+        cm = Image.new("L", (1200, 1200), 0)
+        ImageDraw.Draw(cm).ellipse([0, 0, 1199, 1199], fill=255)
+        out.paste(circ, (x + 340 - 30, 60), cm.resize((300, 300), Image.LANCZOS))
+        small = down(ios_img, 60)
+        out.paste(small, (x + 120, 470), m.resize((60, 60), Image.LANCZOS))
+        out.paste(down(ios_img, 120), (x + 260, 440), m.resize((120, 120), Image.LANCZOS))
+    return out
+
+
 def main():
     base = 432 * SS                         # 108dp × 4 (xxxhdpi) с запасом
-    ch = base * 25 / 108                    # кристалл 50dp, кольцо ~61dp — внутри безопасного круга 66dp
+    h = base * 40 / 108                     # буквы 40dp — внутри безопасного круга 66dp
     bg = sky(base)
-    fg = crystal(base, ch)
-    mono = lines_only(base, ch)
+    fg = letters(base, h)
+    mono = silhouette(base, h)
     full = Image.alpha_composite(bg, fg)
     densities = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
     for name, k in densities.items():
@@ -272,7 +306,7 @@ def main():
         down(bg, px).convert("RGB").save(os.path.join(d, "ic_launcher_background.png"))
         down(fg, px).save(os.path.join(d, "ic_launcher_foreground.png"))
         down(mono, px).save(os.path.join(d, "ic_launcher_monochrome.png"))
-        # Старые лаунчеры (на Android 8+ не нужны, но пусть будут): видимая часть 72dp из 108
+        # Старые лаунчеры: видимая часть 72dp из 108
         crop = full.crop((int(base * 18 / 108), int(base * 18 / 108), int(base * 90 / 108), int(base * 90 / 108)))
         legacy = int(48 * k)
         sq = down(crop, legacy)
@@ -286,11 +320,15 @@ def main():
         out = Image.new("RGBA", (legacy, legacy), (0, 0, 0, 0))
         out.paste(sq, (0, 0), cmask.resize((legacy, legacy), Image.LANCZOS))
         out.save(os.path.join(d, "ic_launcher_round.png"))
-    # iPhone: непрозрачный квадрат 1024, кристалл крупнее — углы скругляет система
+    # iPhone: непрозрачный квадрат 1024, буквы крупнее — углы скругляет система
     n = 1024 * SS
-    ios = Image.alpha_composite(sky(n, seed=9, count=520), crystal(n, n * 0.33))
+    ios = Image.alpha_composite(sky(n, seed=9, count=420), letters(n, n * 0.52))
     os.makedirs(IOS, exist_ok=True)
-    down(ios, 1024).convert("RGB").save(os.path.join(IOS, "AppIcon.png"))
+    ios_small = down(ios, 1024).convert("RGB")
+    ios_small.save(os.path.join(IOS, "AppIcon.png"))
+    # Android в круге: видимые 72dp из 108
+    circle = full.crop((int(base * 18 / 108), int(base * 18 / 108), int(base * 90 / 108), int(base * 90 / 108)))
+    preview(ios_small, circle).save(os.path.join(ROOT, "docs", "icon-preview.png"))
 
 
 if __name__ == "__main__":
