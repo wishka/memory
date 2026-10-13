@@ -158,10 +158,15 @@ fun SettingsScreen(
             SettingsPage.Language -> item { LanguagePage(prefs) }
             SettingsPage.About -> item { AboutPage(version, vm) }
             SettingsPage.Growth -> item { GrowthPage(vm, state, version) }
-            SettingsPage.Sounds -> item { SoundsPage(state) }
+            SettingsPage.Sounds -> item { SoundsPage(vm, state) }
             SettingsPage.Wallpaper -> item {
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    BackdropChooser(state.backdrop, vm::setBackdrop)
+                    BackdropChooser(
+                        state.backdrop, vm::setBackdrop,
+                        // Бесплатно — четыре фона, остальные и своё фото — Memory+
+                        locked = { it !in ru.wishka.memory.data.Premium.FREE_BACKDROPS && state.plan == ru.wishka.memory.data.PlanTier.Free },
+                        onLocked = { vm.require(ru.wishka.memory.data.PremiumFeature.Backdrops) },
+                    )
                     Text(
                         t("Фон для всех переписок. Свой фон для одной переписки — в её меню «⋯» вверху."),
                         style = MaterialTheme.typography.bodyMedium,
@@ -501,7 +506,7 @@ private fun MutedRow(title: String, kind: String, onUnmute: () -> Unit) {
  * Касание варианта — сразу слышно, как звучит.
  */
 @Composable
-private fun SoundsPage(state: UiState) {
+private fun SoundsPage(vm: AppViewModel, state: UiState) {
     val context = LocalContext.current
     val prefs = remember { SoundPrefs(context) }
     var version by remember { mutableStateOf(0) }
@@ -525,10 +530,18 @@ private fun SoundsPage(state: UiState) {
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     NotifySound.entries.forEach { sound ->
-                        ChoiceRow(sound.title + if (sound == NotifySound.default(kind)) " · " + t("по умолчанию") else "", current.getValue(kind) == sound) {
-                            MemoryNotifications.changeSound(context, kind, sound)
+                        // Бесплатно — Кристалл, «Как в телефоне», «Без звука» и звук по умолчанию
+                        val locked = state.plan == ru.wishka.memory.data.PlanTier.Free &&
+                            sound !in ru.wishka.memory.data.Premium.FREE_SOUNDS && sound != NotifySound.default(kind)
+                        ChoiceRow(
+                            sound.title + (if (sound == NotifySound.default(kind)) " · " + t("по умолчанию") else "") + (if (locked) " · PLUS" else ""),
+                            current.getValue(kind) == sound,
+                        ) {
                             SoundPlayer.play(context, sound)
-                            version++
+                            if (!locked || vm.require(ru.wishka.memory.data.PremiumFeature.Sounds)) {
+                                MemoryNotifications.changeSound(context, kind, sound)
+                                version++
+                            } else editing = null
                         }
                     }
                 }

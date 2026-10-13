@@ -341,6 +341,7 @@ extension GuideAction {
         case .language: return SettingsPage.language.title
         case .legal: return SettingsPage.legal.title
         case .growth: return SettingsPage.growth.title
+        case .premium: return ProfileSection.premium.title
         }
     }
 }

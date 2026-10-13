@@ -95,6 +95,9 @@ val CAMERA_LENGTHS = listOf(15, 30, 60)
  */
 @Composable
 fun PrismCamera(
+    /** Memory+: ролики до 60 секунд. */
+    plus: Boolean,
+    onLocked: (ru.wishka.memory.data.PremiumFeature) -> Unit,
     tracks: List<MusicTrack>,
     onAddTracks: (List<MusicTrack>) -> Unit,
     onVideo: (path: String, music: MusicTrack?) -> Unit,
@@ -248,8 +251,13 @@ fun PrismCamera(
                 CamChip(if (timer == 0) t("Таймер") else tf("%s с", timer), active = timer > 0) {
                     timer = CAMERA_TIMERS[(CAMERA_TIMERS.indexOf(timer) + 1) % CAMERA_TIMERS.size]
                 }
-                CamChip(tf("%s с", length), active = true) {
-                    length = CAMERA_LENGTHS[(CAMERA_LENGTHS.indexOf(length) + 1) % CAMERA_LENGTHS.size]
+                CamChip(tf("%s с", length) + if (!plus && length == 30) " · 60 PLUS" else "", active = true) {
+                    val next = CAMERA_LENGTHS[(CAMERA_LENGTHS.indexOf(length) + 1) % CAMERA_LENGTHS.size]
+                    // 60 секунд — Memory+: без него после 30 — снова 15 и шторка
+                    if (next !in ru.wishka.memory.data.Premium.FREE_LENGTHS && !plus) {
+                        onLocked(ru.wishka.memory.data.PremiumFeature.PrismLong)
+                        length = CAMERA_LENGTHS.first()
+                    } else length = next
                 }
             }
             CamButton(LineIcon.Flash, active = torch) {

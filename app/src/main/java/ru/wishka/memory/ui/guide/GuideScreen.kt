@@ -352,6 +352,7 @@ val GuideAction.title: String
         GuideAction.Language -> SettingsPage.Language.title
         GuideAction.Legal -> SettingsPage.Legal.title
         GuideAction.Growth -> SettingsPage.Growth.title
+        GuideAction.Premium -> ProfileSection.Premium.title
     }
 
 /** Карточка в ленте для новичка: открыть гид или скрыть карточку. */

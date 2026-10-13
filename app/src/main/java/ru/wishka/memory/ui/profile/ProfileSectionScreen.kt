@@ -159,7 +159,7 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                 }
             }
             // «Моя музыка», «Студия» и «Итоги» — свои экраны
-            ProfileSection.Music, ProfileSection.Stickers, ProfileSection.Recap, ProfileSection.Shelf -> Unit
+            ProfileSection.Music, ProfileSection.Stickers, ProfileSection.Recap, ProfileSection.Shelf, ProfileSection.Premium -> Unit
         }
     }
 }
@@ -173,6 +173,7 @@ private fun subtitle(state: UiState, section: ProfileSection): String = when (se
     ProfileSection.Stickers -> plural(state.stickers.size, "стикер", "стикера", "стикеров")
     ProfileSection.Shelf -> ""
     ProfileSection.Recap -> ""
+    ProfileSection.Premium -> ""
     ProfileSection.Requests -> plural(state.followRequests.size, "заявка", "заявки", "заявок")
 }
 

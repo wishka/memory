@@ -9,9 +9,11 @@ enum RecapImage {
     static let width: CGFloat = 1080
     static let height: CGFloat = 1350
 
-    static func render(_ recap: Recap, me: User) -> UIImage {
+    /// scale — во сколько раз крупнее: Memory+ сохраняет в 2160 × 2700.
+    static func render(_ recap: Recap, me: User, scale: Int = 1) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
+        // Раскладка — в точках 1080 × 1350, пикселей — в scale раз больше
+        format.scale = CGFloat(max(1, scale))
         format.opaque = true
         return UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { ctx in
             let c = ctx.cgContext
@@ -91,11 +93,11 @@ enum RecapImage {
     }
 
     /// В «Фото». false — нет разрешения или объяснения в Info.plist.
-    static func saveToPhotos(_ recap: Recap, me: User) async -> Bool {
+    static func saveToPhotos(_ recap: Recap, me: User, scale: Int = 1) async -> Bool {
         guard canSaveToPhotos else { return false }
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else { return false }
-        let image = render(recap, me: me)
+        let image = render(recap, me: me, scale: scale)
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 PHAssetChangeRequest.creationRequestForAsset(from: image)

@@ -81,6 +81,10 @@ class StateStore(private val context: Context) {
             .put("reports", JSONArray(s.reports.map { report(it) }))
             .put("guideRead", JSONArray(s.guideRead.toList()))
             .put("guideHidden", s.guideHidden)
+            .put("subscription", JSONObject()
+                .put("tier", s.subscription.tier.id).put("period", s.subscription.period.id)
+                .put("until", s.subscription.until).put("trial", s.subscription.trial)
+                .put("autoRenew", s.subscription.autoRenew).put("trialUsed", s.subscription.trialUsed))
 
         fun snapshot(o: JSONObject) = Snapshot(
             posts = o.getJSONArray("posts").objects().map { post(it) },
@@ -123,6 +127,12 @@ class StateStore(private val context: Context) {
             reports = o.optJSONArray("reports").objects().map { report(it) },
             guideRead = o.optJSONArray("guideRead")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
             guideHidden = o.optBoolean("guideHidden", false),
+            subscription = o.optJSONObject("subscription")?.let { p ->
+                Subscription(
+                    PlanTier.of(p.optString("tier")), BillingPeriod.of(p.optString("period")), p.optLong("until"),
+                    p.optBoolean("trial"), p.optBoolean("autoRenew"), p.optBoolean("trialUsed"),
+                )
+            } ?: Subscription(),
         )
 
         private fun report(r: Report) = JSONObject()

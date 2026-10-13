@@ -489,6 +489,17 @@ enum GuideContent {
             tip: GuideText(ru: "Собирайте стикеры в коллекции — они станут вкладками при выборе стикера.", en: "Group stickers into collections — they become tabs in the sticker picker."), action: .studio
         ))
         topics.append(GuideTopic(
+            id: "plus", title: GuideText(ru: "Memory+ и пробный период", en: "Memory+ and the free trial"),
+            steps: [
+                GuideText(ru: "Профиль → карточка «Memory+»: тарифы, цены и что входит.", en: "Profile → the “Memory+” card: plans, prices and what’s included."),
+                GuideText(ru: "Memory+ — стикеры, фоны, звуки, PRISM до 60 секунд, больше плейлистов и итоги за любой период.", en: "Memory+: stickers, backgrounds, sounds, PRISM up to 60 seconds, more playlists and recaps for any period."),
+                GuideText(ru: "Memory+ Бизнес — всё из Memory+ и витрина без ограничений, фон страницы группы и контакты.", en: "Memory+ Business: everything in Memory+, plus an unlimited shop, a group page background and contacts."),
+                GuideText(ru: "Попробуйте любой тариф 3 дня бесплатно — один раз на аккаунт.", en: "Try either plan free for 3 days — once per account."),
+                GuideText(ru: "Сменить тариф или срок и отменить продление — там же.", en: "Switch plan or term and cancel renewal in the same place."),
+            ],
+            tip: GuideText(ru: "Когда подписка заканчивается, ничего не пропадает: созданное остаётся, нельзя только добавить новое сверх бесплатного.", en: "When a subscription ends, nothing is lost: what you made stays; you just can’t add more beyond the free limits."), action: .premium
+        ))
+        topics.append(GuideTopic(
             id: "music", title: GuideText(ru: "Моя музыка", en: "My music"),
             steps: [
                 GuideText(ru: "Свои треки (mp3, m4a, flac) и плейлисты: создать, переименовать, поменять порядок.", en: "Your own tracks (mp3, m4a, flac) and playlists: create, rename, reorder."),
@@ -643,6 +654,13 @@ enum GuideContent {
                 GuideText(ru: "Внутри Memory оплаты нет. Напишите продавцу или купите на его сайте.", en: "There is no payment inside Memory. Message the seller or buy on their website."),
             ],
             tip: nil, action: nil
+        ))
+        topics.append(GuideTopic(
+            id: "plus-free", title: GuideText(ru: "Что останется бесплатным?", en: "What stays free?"),
+            steps: [
+                GuideText(ru: "Всё общение и безопасность: лента, истории, PRISM, чаты, голосовые, друзья, группы, покупки в витринах, приватность, жалобы и удаление аккаунта.", en: "All communication and safety: feed, stories, PRISM, chats, voice notes, friends, groups, buying from shops, privacy, reports and account deletion."),
+            ],
+            tip: nil, action: .premium
         ))
         topics.append(GuideTopic(
             id: "guide-again", title: GuideText(ru: "Как снова найти этот гид?", en: "How do I find this guide again?"),

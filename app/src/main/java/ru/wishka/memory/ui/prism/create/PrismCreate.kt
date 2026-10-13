@@ -127,6 +127,8 @@ fun PrismCreateFlow(vm: AppViewModel, state: UiState) {
     Box(Modifier.fillMaxSize().background(Palette.Void)) {
         when (stage) {
             Stage.Camera -> PrismCamera(
+                plus = state.plan != ru.wishka.memory.data.PlanTier.Free,
+                onLocked = { vm.require(it) },
                 tracks = state.tracks,
                 onAddTracks = vm::addTracks,
                 onVideo = { path, music -> captureMusic = music?.id; source = path; stage = Stage.Editor },
@@ -134,6 +136,8 @@ fun PrismCreateFlow(vm: AppViewModel, state: UiState) {
             )
             Stage.Editor -> edit?.let { current ->
                 PrismEditor(
+                    plus = state.plan != ru.wishka.memory.data.PlanTier.Free,
+                    onLocked = { vm.require(it) },
                     initial = current,
                     tracks = state.tracks,
                     onAddTracks = vm::addTracks,

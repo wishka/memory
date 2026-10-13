@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.groups
 
+import androidx.compose.runtime.collectAsState
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -75,6 +76,7 @@ import ru.wishka.memory.ui.theme.Palette
  */
 @Composable
 fun GroupSettingsScreen(vm: AppViewModel, group: Group, contentPadding: PaddingValues) {
+    val state = vm.state.collectAsState().value
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by rememberSaveable(group.id) { mutableStateOf(group.name) }
@@ -170,7 +172,7 @@ fun GroupSettingsScreen(vm: AppViewModel, group: Group, contentPadding: PaddingV
                     }
                 }
             }
-            item { InfoCard(vm, group) }
+            item { InfoCard(vm, group, business = state.plan == ru.wishka.memory.data.PlanTier.Business) }
             item {
                 Card {
                     Caption(t("Оформление"))
@@ -198,6 +200,10 @@ fun GroupSettingsScreen(vm: AppViewModel, group: Group, contentPadding: PaddingV
                         modifier = Modifier.padding(16.dp),
                         onReset = if (group.backdrop != null) ({ vm.setGroupBackdrop(group.id, null) }) else null,
                         resetLabel = t("Как везде"),
+                        // Фон страницы группы — Memory+ Бизнес
+                        locked = { state.plan != ru.wishka.memory.data.PlanTier.Business },
+                        onLocked = { vm.require(ru.wishka.memory.data.PremiumFeature.GroupBackdrop) },
+                        business = true,
                     )
                     Hint(t("Товары витрины добавляются и меняются на странице группы — вкладка «Витрина»."))
                 }
@@ -272,7 +278,7 @@ fun GroupSettingsScreen(vm: AppViewModel, group: Group, contentPadding: PaddingV
 
 /** Подробно о группе: описание, сайт и контакты — видны всем на странице группы. */
 @Composable
-private fun InfoCard(vm: AppViewModel, group: Group) {
+private fun InfoCard(vm: AppViewModel, group: Group, business: Boolean) {
     val context = LocalContext.current
     var about by rememberSaveable(group.id) { mutableStateOf(group.info.about) }
     var website by rememberSaveable(group.id) { mutableStateOf(group.info.website) }
@@ -287,10 +293,23 @@ private fun InfoCard(vm: AppViewModel, group: Group) {
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             GlassField(about, { about = it.take(2000) }, t("Подробное описание: чем занимаетесь, условия, доставка"), maxLines = 8, modifier = field)
             GlassField(website, { website = it.take(200) }, t("Сайт"), singleLine = true, keyboardType = KeyboardType.Uri, modifier = field)
-            GlassField(phone, { phone = it.take(40) }, t("Телефон"), singleLine = true, keyboardType = KeyboardType.Phone, modifier = field)
-            GlassField(email, { email = it.take(80) }, t("Почта"), singleLine = true, keyboardType = KeyboardType.Email, modifier = field)
-            GlassField(address, { address = it.take(160) }, t("Адрес"), singleLine = true, modifier = field)
-            GlassField(hours, { hours = it.take(80) }, t("Часы работы — например, «Пн–Пт 10–19»"), singleLine = true, modifier = field)
+            if (business) {
+                GlassField(phone, { phone = it.take(40) }, t("Телефон"), singleLine = true, keyboardType = KeyboardType.Phone, modifier = field)
+                GlassField(email, { email = it.take(80) }, t("Почта"), singleLine = true, keyboardType = KeyboardType.Email, modifier = field)
+                GlassField(address, { address = it.take(160) }, t("Адрес"), singleLine = true, modifier = field)
+                GlassField(hours, { hours = it.take(80) }, t("Часы работы — например, «Пн–Пт 10–19»"), singleLine = true, modifier = field)
+            } else {
+                // Контакты — в Бизнесе; уже заполненные остаются в карточке группы
+                Row(
+                    Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp))
+                        .clickable { vm.require(ru.wishka.memory.data.PremiumFeature.GroupContacts) }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(t("Телефон, почта, адрес и часы работы"), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, modifier = Modifier.weight(1f))
+                    ru.wishka.memory.ui.premium.PlusBadge(business = true)
+                }
+            }
         }
         Row(Modifier.padding(16.dp)) {
             GlowButton(t("Сохранить"), enabled = info != group.info, onClick = {

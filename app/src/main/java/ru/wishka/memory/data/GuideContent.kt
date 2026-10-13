@@ -473,6 +473,18 @@ internal object GuideContent {
                 action = GuideAction.Studio,
             ),
             GuideTopic(
+                "plus", GuideText("Memory+ и пробный период", "Memory+ and the free trial"),
+                listOf(
+                    GuideText("Профиль → карточка «Memory+»: тарифы, цены и что входит.", "Profile → the “Memory+” card: plans, prices and what’s included."),
+                    GuideText("Memory+ — стикеры, фоны, звуки, PRISM до 60 секунд, больше плейлистов и итоги за любой период.", "Memory+: stickers, backgrounds, sounds, PRISM up to 60 seconds, more playlists and recaps for any period."),
+                    GuideText("Memory+ Бизнес — всё из Memory+ и витрина без ограничений, фон страницы группы и контакты.", "Memory+ Business: everything in Memory+, plus an unlimited shop, a group page background and contacts."),
+                    GuideText("Попробуйте любой тариф 3 дня бесплатно — один раз на аккаунт.", "Try either plan free for 3 days — once per account."),
+                    GuideText("Сменить тариф или срок и отменить продление — там же.", "Switch plan or term and cancel renewal in the same place."),
+                ),
+                tip = GuideText("Когда подписка заканчивается, ничего не пропадает: созданное остаётся, нельзя только добавить новое сверх бесплатного.", "When a subscription ends, nothing is lost: what you made stays; you just can’t add more beyond the free limits."),
+                action = GuideAction.Premium,
+            ),
+            GuideTopic(
                 "music", GuideText("Моя музыка", "My music"),
                 listOf(
                     GuideText("Свои треки (mp3, m4a, flac) и плейлисты: создать, переименовать, поменять порядок.", "Your own tracks (mp3, m4a, flac) and playlists: create, rename, reorder."),
@@ -622,6 +634,13 @@ internal object GuideContent {
                 listOf(
                     GuideText("Внутри Memory оплаты нет. Напишите продавцу или купите на его сайте.", "There is no payment inside Memory. Message the seller or buy on their website."),
                 ),
+            ),
+            GuideTopic(
+                "plus-free", GuideText("Что останется бесплатным?", "What stays free?"),
+                listOf(
+                    GuideText("Всё общение и безопасность: лента, истории, PRISM, чаты, голосовые, друзья, группы, покупки в витринах, приватность, жалобы и удаление аккаунта.", "All communication and safety: feed, stories, PRISM, chats, voice notes, friends, groups, buying from shops, privacy, reports and account deletion."),
+                ),
+                action = GuideAction.Premium,
             ),
             GuideTopic(
                 "guide-again", GuideText("Как снова найти этот гид?", "How do I find this guide again?"),

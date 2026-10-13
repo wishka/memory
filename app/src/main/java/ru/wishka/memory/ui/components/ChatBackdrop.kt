@@ -196,7 +196,17 @@ private fun DrawScope.drawBackdrop(style: BackdropStyle, dots: List<Triple<Float
  * «Как везде» — сбросить свой фон к общему.
  */
 @Composable
-fun BackdropChooser(selected: Backdrop, onPick: (Backdrop) -> Unit, modifier: Modifier = Modifier, onReset: (() -> Unit)? = null, resetLabel: String = t("Как во всех переписках")) {
+fun BackdropChooser(
+    selected: Backdrop,
+    onPick: (Backdrop) -> Unit,
+    modifier: Modifier = Modifier,
+    onReset: (() -> Unit)? = null,
+    resetLabel: String = t("Как во всех переписках"),
+    /** Фон из премиума: на плитке значок, нажатие — onLocked. */
+    locked: (BackdropStyle) -> Boolean = { false },
+    onLocked: (BackdropStyle) -> Unit = {},
+    business: Boolean = false,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -237,8 +247,11 @@ fun BackdropChooser(selected: Backdrop, onPick: (Backdrop) -> Unit, modifier: Mo
                                 .clip(RoundedCornerShape(16.dp))
                                 .border(if (active) 2.5.dp else 1.dp, if (active) Palette.Lilac else Palette.Line, RoundedCornerShape(16.dp))
                                 .clickable {
-                                    if (style == BackdropStyle.Photo) picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                    else onPick(Backdrop(style.id, "", selected.dim))
+                                    when {
+                                        locked(style) -> onLocked(style)
+                                        style == BackdropStyle.Photo -> picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        else -> onPick(Backdrop(style.id, "", selected.dim))
+                                    }
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
@@ -247,6 +260,7 @@ fun BackdropChooser(selected: Backdrop, onPick: (Backdrop) -> Unit, modifier: Mo
                                 else Box(Modifier.fillMaxSize().background(Palette.Plum.copy(alpha = 0.5f)))
                                 Glyph(LineIcon.Image, Palette.Ink, size = 26.dp)
                             } else BackdropView(Backdrop(style.id), Modifier.fillMaxSize())
+                            if (locked(style)) ru.wishka.memory.ui.premium.PlusBadge(Modifier.align(Alignment.TopEnd).padding(6.dp), business = business)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(style.title, style = MaterialTheme.typography.labelSmall, color = if (active) Palette.Ink else Palette.Mist, maxLines = 1)

@@ -71,6 +71,15 @@ struct MainScreen: View {
         }
         .animation(.easeOut(duration: 0.2), value: state.echo != nil)
         .animation(.easeOut(duration: 0.2), value: state.openedInvite != nil)
+        // Шторка «Это в Memory+» — поверх всего, где бы ни нажали
+        .paywall(model)
+        // Подписка Memory+ сверяется с часами: закончилась — тариф бесплатный
+        .task {
+            while !Task.isCancelled {
+                model.refreshPlan()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
         // Обсуждение записи или PRISM — шторкой поверх любого экрана
         .sheet(isPresented: commentsShown) {
             // Жалоба на комментарий — окном поверх самой шторки
@@ -191,6 +200,8 @@ struct MainScreen: View {
                 RecapScreen(model: model)
             } else if model.state.profileSection == .shelf {
                 ShelfScreen(model: model)
+            } else if model.state.profileSection == .premium {
+                PremiumScreen(model: model)
             } else if let section = model.state.profileSection {
                 ProfileSectionScreen(model: model, section: section)
             } else {

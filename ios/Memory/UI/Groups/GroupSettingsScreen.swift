@@ -88,7 +88,7 @@ struct GroupSettingsScreen: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
                     }
-                    GroupInfoForm(model: model, group: group)
+                    GroupInfoForm(model: model, group: group, business: model.state.plan == .business)
                     card {
                         caption(t("Оформление"))
                         Text(t("Цвет группы — кнопки, цены и метки"))
@@ -117,7 +117,11 @@ struct GroupSettingsScreen: View {
                             selected: group.backdrop ?? Backdrop.default,
                             onPick: { model.setGroupBackdrop(group.id, $0) },
                             onReset: group.backdrop != nil ? { model.setGroupBackdrop(group.id, nil) } : nil,
-                            resetLabel: t("Как везде")
+                            resetLabel: t("Как везде"),
+                            // Фон страницы группы — Memory+ Бизнес
+                            locked: { _ in model.state.plan != .business },
+                            onLocked: { _ in model.require(.groupBackdrop) },
+                            business: true
                         )
                         .padding(16)
                         Text(t("Товары витрины добавляются и меняются на странице группы — вкладка «Витрина»."))
@@ -230,6 +234,8 @@ struct GroupSettingsScreen: View {
 private struct GroupInfoForm: View {
     let model: AppModel
     let group: MemoryGroup
+    /// Контакты — в Бизнесе.
+    let business: Bool
 
     @State private var about: String
     @State private var website: String
@@ -239,9 +245,10 @@ private struct GroupInfoForm: View {
     @State private var hours: String
     @State private var saved = false
 
-    init(model: AppModel, group: MemoryGroup) {
+    init(model: AppModel, group: MemoryGroup, business: Bool) {
         self.model = model
         self.group = group
+        self.business = business
         _about = State(initialValue: group.info.about)
         _website = State(initialValue: group.info.website)
         _phone = State(initialValue: group.info.phone)
@@ -264,14 +271,30 @@ private struct GroupInfoForm: View {
                     .glass(radius: 16)
                 GlassField(placeholder: t("Сайт"), text: $website, limit: 200, singleLine: true, keyboard: .URL, plain: true)
                     .glass(radius: 16)
-                GlassField(placeholder: t("Телефон"), text: $phone, limit: 40, singleLine: true, keyboard: .phonePad)
-                    .glass(radius: 16)
-                GlassField(placeholder: t("Почта"), text: $email, limit: 80, singleLine: true, keyboard: .emailAddress, plain: true)
-                    .glass(radius: 16)
-                GlassField(placeholder: t("Адрес"), text: $address, limit: 160, singleLine: true)
-                    .glass(radius: 16)
-                GlassField(placeholder: t("Часы работы — например, «Пн–Пт 10–19»"), text: $hours, limit: 80, singleLine: true)
-                    .glass(radius: 16)
+                if business {
+                    GlassField(placeholder: t("Телефон"), text: $phone, limit: 40, singleLine: true, keyboard: .phonePad)
+                        .glass(radius: 16)
+                    GlassField(placeholder: t("Почта"), text: $email, limit: 80, singleLine: true, keyboard: .emailAddress, plain: true)
+                        .glass(radius: 16)
+                    GlassField(placeholder: t("Адрес"), text: $address, limit: 160, singleLine: true)
+                        .glass(radius: 16)
+                    GlassField(placeholder: t("Часы работы — например, «Пн–Пт 10–19»"), text: $hours, limit: 80, singleLine: true)
+                        .glass(radius: 16)
+                } else {
+                    // Контакты — в Бизнесе; уже заполненные остаются в карточке группы
+                    Button { model.require(.groupContacts) } label: {
+                        HStack(spacing: 10) {
+                            Text(t("Телефон, почта, адрес и часы работы"))
+                                .textStyle(.bodySmall, Palette.mist)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            PlusBadge(business: true)
+                        }
+                        .padding(14)
+                        .glass(radius: 16)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
                 HStack(spacing: 10) {
                     GlowButton(title: t("Сохранить"), enabled: info != group.info) {
                         model.updateGroupInfo(group.id, info)

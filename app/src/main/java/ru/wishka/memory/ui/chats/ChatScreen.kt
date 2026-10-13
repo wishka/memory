@@ -405,6 +405,9 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     onPick = { vm.setChatBackdrop(chat.id, it) },
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     onReset = if (chat.backdrop != null) ({ vm.setChatBackdrop(chat.id, null) }) else null,
+                    // Свой фон у переписки — Memory+
+                    locked = { !vm.has(ru.wishka.memory.data.PremiumFeature.ChatBackdrop) },
+                    onLocked = { vm.require(ru.wishka.memory.data.PremiumFeature.ChatBackdrop) },
                 )
             },
             confirmButton = { TextButton(onClick = { choosingBackdrop = false }) { Text(t("Готово"), color = Palette.Lilac) } },

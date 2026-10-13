@@ -71,6 +71,8 @@ final class Round15Tests: XCTestCase {
     func testInfoAndLook() throws {
         let vm = makeModel()
         let id = try ownGroup(vm)
+        // Контакты и фон страницы — Memory+ Бизнес
+        XCTAssertNil(vm.startTrial(.business))
         vm.updateGroupInfo(id, GroupInfo(about: "  Свечи  ", website: "candles.ru", phone: "+7 900"))
         let info = try group(vm, id).info
         XCTAssertEqual(info.about, "Свечи")
@@ -134,6 +136,8 @@ final class Round15Tests: XCTestCase {
         let vm = makeModel()
         let id = try ownGroup(vm)
         vm.saveProduct(id, Product(id: 0, title: "Свеча", price: 500, category: "Свечи"))
+        // Часы работы — контакт группы, это Memory+ Бизнес
+        XCTAssertNil(vm.startTrial(.business))
         vm.updateGroupInfo(id, GroupInfo(about: "Свечи", hours: "Пн–Пт"))
         vm.setGroupAccent(id, .mint)
         let data = try JSONEncoder().encode(vm.snapshot())

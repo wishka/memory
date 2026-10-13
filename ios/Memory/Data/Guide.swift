@@ -21,6 +21,7 @@ enum GuideAction: String, CaseIterable {
     case friends, requests, saved, music, studio, shelf, recap
     case settings, privacy, security, blacklist, notifications, sounds
     case wallpaper, language, legal, growth
+    case premium
 }
 
 /// Тема: заголовок, шаги по порядку, совет и куда перейти.

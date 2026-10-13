@@ -1210,6 +1210,40 @@
      "action": "Studio"
     },
     {
+     "id": "plus",
+     "title": {
+      "ru": "Memory+ и пробный период",
+      "en": "Memory+ and the free trial"
+     },
+     "steps": [
+      {
+       "ru": "Профиль → карточка «Memory+»: тарифы, цены и что входит.",
+       "en": "Profile → the “Memory+” card: plans, prices and what’s included."
+      },
+      {
+       "ru": "Memory+ — стикеры, фоны, звуки, PRISM до 60 секунд, больше плейлистов и итоги за любой период.",
+       "en": "Memory+: stickers, backgrounds, sounds, PRISM up to 60 seconds, more playlists and recaps for any period."
+      },
+      {
+       "ru": "Memory+ Бизнес — всё из Memory+ и витрина без ограничений, фон страницы группы и контакты.",
+       "en": "Memory+ Business: everything in Memory+, plus an unlimited shop, a group page background and contacts."
+      },
+      {
+       "ru": "Попробуйте любой тариф 3 дня бесплатно — один раз на аккаунт.",
+       "en": "Try either plan free for 3 days — once per account."
+      },
+      {
+       "ru": "Сменить тариф или срок и отменить продление — там же.",
+       "en": "Switch plan or term and cancel renewal in the same place."
+      }
+     ],
+     "tip": {
+      "ru": "Когда подписка заканчивается, ничего не пропадает: созданное остаётся, нельзя только добавить новое сверх бесплатного.",
+      "en": "When a subscription ends, nothing is lost: what you made stays; you just can’t add more beyond the free limits."
+     },
+     "action": "Premium"
+    },
+    {
      "id": "music",
      "title": {
       "ru": "Моя музыка",
@@ -1563,6 +1597,21 @@
      ],
      "tip": null,
      "action": null
+    },
+    {
+     "id": "plus-free",
+     "title": {
+      "ru": "Что останется бесплатным?",
+      "en": "What stays free?"
+     },
+     "steps": [
+      {
+       "ru": "Всё общение и безопасность: лента, истории, PRISM, чаты, голосовые, друзья, группы, покупки в витринах, приватность, жалобы и удаление аккаунта.",
+       "en": "All communication and safety: feed, stories, PRISM, chats, voice notes, friends, groups, buying from shops, privacy, reports and account deletion."
+      }
+     ],
+     "tip": null,
+     "action": "Premium"
     },
     {
      "id": "guide-again",

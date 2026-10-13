@@ -27,9 +27,11 @@ object RecapImage {
     const val W = 1080
     const val H = 1350
 
-    fun render(recap: Recap, me: User): Bitmap {
-        val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+    /** scale — во сколько раз крупнее: Memory+ сохраняет в 2160 × 2700. */
+    fun render(recap: Recap, me: User, scale: Int = 1): Bitmap {
+        val bmp = Bitmap.createBitmap(W * scale, H * scale, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
+        if (scale != 1) c.scale(scale.toFloat(), scale.toFloat())
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
         // Небо
         p.shader = LinearGradient(0f, 0f, 0f, H.toFloat(), intArrayOf(0xFF07081A.toInt(), 0xFF0F153A.toInt(), 0xFF2A2152.toInt()), null, Shader.TileMode.CLAMP)
@@ -125,7 +127,7 @@ object RecapImage {
      * без разрешения на память это нельзя — false, тогда предлагаем
      * «Поделиться».
      */
-    fun saveToGallery(context: Context, recap: Recap, me: User): Boolean {
+    fun saveToGallery(context: Context, recap: Recap, me: User, scale: Int = 1): Boolean {
         if (Build.VERSION.SDK_INT < 29) return false
         return runCatching {
             val values = ContentValues().apply {
@@ -134,7 +136,7 @@ object RecapImage {
                 put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Memory")
             }
             val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-            context.contentResolver.openOutputStream(uri)?.use { render(recap, me).compress(Bitmap.CompressFormat.PNG, 100, it) } ?: return false
+            context.contentResolver.openOutputStream(uri)?.use { render(recap, me, scale).compress(Bitmap.CompressFormat.PNG, 100, it) } ?: return false
             true
         }.getOrDefault(false)
     }

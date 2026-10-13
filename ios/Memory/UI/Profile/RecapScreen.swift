@@ -123,8 +123,10 @@ struct RecapScreen: View {
     /// В «Фото»; если приложению нельзя — через «Поделиться».
     private func saveToPhotos(_ recap: Recap) {
         let me = model.state.me
+        // Memory+ — в высоком разрешении
+        let scale = model.state.plan != .free ? Premium.hiRes : 1
         Task { @MainActor in
-            if await RecapImage.saveToPhotos(recap, me: me) {
+            if await RecapImage.saveToPhotos(recap, me: me, scale: scale) {
                 show(t("Сохранено в «Фото»"))
             } else {
                 sharing = SharedImage(image: RecapImage.render(recap, me: me))

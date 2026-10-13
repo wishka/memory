@@ -29,6 +29,8 @@ enum ProfileSection: String, CaseIterable {
     case shelf = "Полка"
     /// Входящие заявки в друзья и отправленные мной.
     case requests = "Заявки в друзья"
+    /// Memory+: тарифы, пробный период, смена тарифа.
+    case premium = "Memory+"
 
     var title: String { t(rawValue) }
 }
@@ -206,6 +208,12 @@ struct UiState: Equatable {
     var guideHidden = false
     /// Вкладка, из которой открыли гид (не из настроек): «назад» вернёт в неё.
     var guideReturn: AppTab? = nil
+    /// Подписка Memory+ — как хранится.
+    var subscription = MemorySubscription()
+    /// Какой тариф действует сейчас (закончившаяся подписка — free). Обновляет refreshPlan().
+    var plan: PlanTier = .free
+    /// Шторка «Это в Memory+»: что пытались открыть без подписки.
+    var paywall: PremiumFeature? = nil
 
     /// Полка — собирается сама из чек-инов и отметок.
     var shelf: Shelf { Shelf.build(posts.datedCheckIns(me.id), shelfMarks) }
@@ -357,6 +365,8 @@ struct Snapshot: Codable, Equatable {
     /// Прочитанные темы гида и скрытая карточка гида в ленте.
     var guideRead: [String]? = nil
     var guideHidden: Bool? = nil
+    /// Подписка Memory+.
+    var subscription: MemorySubscription? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -525,7 +535,100 @@ final class AppModel {
         case .language: openSettings(.language)
         case .legal: openSettings(.legal)
         case .growth: openSettings(.growth)
+        case .premium: openPremium()
         }
+    }
+
+    // MARK: - Memory+
+
+    /// Тариф, который действует сейчас.
+    func plan() -> PlanTier { state.subscription.tierAt(clock()) }
+
+    /// Есть ли доступ к премиум-функции — без шторки.
+    func has(_ feature: PremiumFeature) -> Bool { plan().covers(feature.tier) }
+
+    /// Проверка перед премиум-действием: есть доступ — true; нет —
+    /// открывается шторка «Это в Memory+» и ответ false.
+    @discardableResult
+    func require(_ feature: PremiumFeature) -> Bool {
+        refreshPlan()
+        if has(feature) { return true }
+        state.paywall = feature
+        return false
+    }
+
+    func closePaywall() {
+        state.paywall = nil
+    }
+
+    /// Экран «Memory+» в профиле: тарифы, пробный период, смена тарифа.
+    func openPremium() {
+        refreshPlan()
+        state.paywall = nil
+        openProfileSection(.premium)
+    }
+
+    /// Сверить подписку с часами: закончилась — тариф бесплатный.
+    /// Оплаченная с продлением в демо продлевается сама — так сделает магазин.
+    func refreshPlan() {
+        let now = clock()
+        var sub = state.subscription
+        if sub.tier != .free && !sub.active(now) && sub.autoRenew && !sub.trial {
+            var until = sub.until
+            while until <= now { until = until.addingTimeInterval(Double(sub.period.days) * daySeconds) }
+            sub.until = until
+        }
+        let tier = sub.tierAt(now)
+        // Без лишних изменений состояния — экраны не перерисовываются зря
+        if sub != state.subscription { state.subscription = sub }
+        if tier != state.plan { state.plan = tier }
+    }
+
+    /// Пробный период — 3 дня, один раз на аккаунт, на любой тариф.
+    /// Ответ — текст ошибки или nil.
+    @discardableResult
+    func startTrial(_ tier: PlanTier) -> String? {
+        if tier == .free { return t("Выберите тариф") }
+        let now = clock()
+        let s = state.subscription
+        if s.trialUsed { return t("Пробный период уже использован") }
+        if s.active(now) && !s.trial { return t("Подписка уже оформлена") }
+        state.subscription = MemorySubscription(
+            tier: tier, period: .month, until: now.addingTimeInterval(Double(Premium.trialDays) * daySeconds),
+            trial: true, autoRenew: false, trialUsed: true
+        )
+        state.paywall = nil
+        refreshPlan()
+        return nil
+    }
+
+    /// Оформить или сменить тариф и срок. Новый действует сразу, срок
+    /// считается заново. Пока оплата демонстрационная — деньги не списываются.
+    func subscribe(_ tier: PlanTier, _ period: BillingPeriod) {
+        if tier == .free {
+            cancelRenewal()
+            return
+        }
+        let now = clock()
+        state.subscription = MemorySubscription(
+            tier: tier, period: period, until: now.addingTimeInterval(Double(period.days) * daySeconds),
+            trial: false, autoRenew: true, trialUsed: state.subscription.trialUsed
+        )
+        state.paywall = nil
+        refreshPlan()
+    }
+
+    /// Отменить продление: премиум работает до конца срока.
+    func cancelRenewal() {
+        if state.subscription.trial { return }
+        state.subscription.autoRenew = false
+    }
+
+    /// Вернуть продление, пока срок не кончился.
+    func resumeRenewal() {
+        let sub = state.subscription
+        if sub.trial || !sub.active(clock()) { return }
+        state.subscription.autoRenew = true
     }
 
     /// Записи или друзья другого человека — нажатием на счётчик на его странице.
@@ -1193,12 +1296,18 @@ final class AppModel {
         state.stickers.removeAll { $0.id == stickerId }
     }
 
-    /// Закрепить свою запись в витрине профиля (до трёх) или открепить.
+    /// Закрепить свою запись в витрине профиля или открепить. Бесплатно —
+    /// три записи (четвёртая открывает шторку Memory+), в Memory+ — шесть
+    /// (седьмая вытесняет самую давнюю).
     func toggleProfilePin(_ postId: Int64) {
+        let meId = state.me.id
+        let adding = !state.profilePins.contains(postId) && state.posts.contains(where: { $0.id == postId && $0.author.id == meId })
+        if adding && state.profilePins.count >= Premium.freePins && !require(.pins) { return }
+        let limit = has(.pins) ? Premium.plusPins : Self.maxPins
         if state.profilePins.contains(postId) {
             state.profilePins.removeAll { $0 == postId }
-        } else if state.posts.contains(where: { $0.id == postId && $0.author.id == state.me.id }) {
-            state.profilePins = Array(([postId] + state.profilePins).prefix(Self.maxPins))
+        } else if state.posts.contains(where: { $0.id == postId && $0.author.id == meId }) {
+            state.profilePins = Array(([postId] + state.profilePins).prefix(limit))
         }
     }
 
@@ -1232,6 +1341,8 @@ final class AppModel {
     func createPlaylist(_ name: String) -> Int64? {
         let title = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
         if title.isEmpty { return nil }
+        // Бесплатно — три плейлиста
+        if state.playlists.count >= Premium.freePlaylists && !require(.playlists) { return nil }
         let id = newId()
         state.playlists.append(Playlist(id: id, name: title))
         return id
@@ -1362,7 +1473,7 @@ final class AppModel {
     /// Подробное описание, сайт и контакты своей группы. Ссылка без схемы получает https://.
     func updateGroupInfo(_ groupId: Int, _ info: GroupInfo) {
         func clip(_ s: String, _ n: Int) -> String { String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(n)) }
-        let clean = GroupInfo(
+        var clean = GroupInfo(
             about: clip(info.about, 2000),
             website: String(normalizeUrl(info.website).prefix(200)),
             phone: clip(info.phone, 40),
@@ -1370,11 +1481,27 @@ final class AppModel {
             address: clip(info.address, 160),
             hours: clip(info.hours, 80)
         )
-        updateOwnGroup(groupId) { $0.info = clean }
+        // Телефон, почта, адрес и часы — в Бизнесе. Без него прежние контакты остаются как были
+        if !has(.groupContacts) {
+            let old = state.groups.first { $0.id == groupId }?.info ?? GroupInfo()
+            if clean.phone != old.phone || clean.email != old.email || clean.address != old.address || clean.hours != old.hours {
+                require(.groupContacts)
+            }
+            clean.phone = old.phone
+            clean.email = old.email
+            clean.address = old.address
+            clean.hours = old.hours
+        }
+        let saved = clean
+        updateOwnGroup(groupId) { $0.info = saved }
     }
 
     /// Фон страницы своей группы; nil — как везде.
     func setGroupBackdrop(_ groupId: Int, _ backdrop: Backdrop?) {
+        // Фон страницы группы — Бизнес; убрать фон можно всегда
+        // Тот же фон, что уже стоит (меняют только затемнение), — можно и без подписки
+        let current = state.groups.first { $0.id == groupId }?.backdrop
+        if let b = backdrop, !(b.style == current?.style && b.photo == current?.photo), !require(.groupBackdrop) { return }
         let before = backdropPhotos()
         updateOwnGroup(groupId) { $0.backdrop = backdrop }
         // Своё фото фона, которое больше нигде не стоит, — удалить копию
@@ -1392,6 +1519,11 @@ final class AppModel {
         let title = product.title.trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty { return t("Добавьте название товара") }
         if product.price < 0 { return t("Цена не может быть отрицательной") }
+        // Бесплатно — до 10 товаров; изменить уже добавленные можно всегда
+        let shop = state.groups.first { $0.id == groupId }?.shop ?? []
+        if product.id == 0 && shop.count >= Premium.freeProducts && !require(.shopUnlimited) {
+            return tf("Бесплатно — до %s товаров. Больше — в Memory+ Бизнес", Premium.freeProducts)
+        }
         var clean = product
         if clean.id == 0 { clean.id = newId() }
         clean.title = String(title.prefix(80))
@@ -1605,6 +1737,8 @@ final class AppModel {
     func createStickerPack(_ name: String) -> StickerPack? {
         let n = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30))
         if n.isEmpty || state.stickerPacks.contains(where: { $0.name.lowercased() == n.lowercased() }) { return nil }
+        // Бесплатно — две коллекции
+        if state.stickerPacks.count >= Premium.freePacks && !require(.stickerPacks) { return nil }
         let pack = StickerPack(id: "pack-" + String(UUID().uuidString.prefix(8)).lowercased(), name: n)
         state.stickerPacks.append(pack)
         return pack
@@ -1640,6 +1774,10 @@ final class AppModel {
 
     /// Общий фон переписок.
     func setBackdrop(_ backdrop: Backdrop) {
+        // Бесплатно — четыре фона; остальные и своё фото — Memory+
+        // Тот же фон, что уже стоит (меняют только затемнение), — можно и без подписки
+        let same = backdrop.style == state.backdrop.style && backdrop.photo == state.backdrop.photo
+        if !Premium.freeBackdrops.contains(backdrop.kind) && !same && !require(.backdrops) { return }
         let before = backdropPhotos()
         state.backdrop = backdrop
         dropBackdropPhotos(before)
@@ -1647,6 +1785,10 @@ final class AppModel {
 
     /// Свой фон у переписки; nil — как у всех.
     func setChatBackdrop(_ chatId: Int, _ backdrop: Backdrop?) {
+        // Свой фон у переписки — Memory+; вернуть «как у всех» можно всегда
+        // Тот же фон, что уже стоит у переписки (меняют только затемнение), — можно и без подписки
+        let current = state.chats.first { $0.id == chatId }?.backdrop
+        if let b = backdrop, !(b.style == current?.style && b.photo == current?.photo), !require(.chatBackdrop) { return }
         let before = backdropPhotos()
         updateChat(chatId) { $0.backdrop = backdrop }
         dropBackdropPhotos(before)
@@ -1923,7 +2065,11 @@ final class AppModel {
         state.recapBack = 0
     }
 
-    func setRecapBack(_ back: Int) { state.recapBack = max(0, back) }
+    func setRecapBack(_ back: Int) {
+        // Бесплатно — текущий и прошлый период; дальше в прошлое — Memory+
+        if back > Premium.freeRecapBack && back > state.recapBack && !require(.recapHistory) { return }
+        state.recapBack = max(0, back)
+    }
 
     /// Итоги за период.
     func recap(_ period: RecapPeriod, year: Int, month: Int) -> Recap {
@@ -2487,7 +2633,8 @@ final class AppModel {
             invitedBy: state.invitedBy, memorySeen: state.memorySeen,
             stickerPacks: state.stickerPacks, backdrop: state.backdrop, recentGifs: state.recentGifs,
             reports: state.reports,
-            guideRead: state.guideRead.sorted(), guideHidden: state.guideHidden
+            guideRead: state.guideRead.sorted(), guideHidden: state.guideHidden,
+            subscription: state.subscription
         )
     }
 
@@ -2549,8 +2696,10 @@ final class AppModel {
         // Отметки убранных тем не считаются
         s.guideRead = Set(snapshot.guideRead ?? []).intersection(Guide.keys)
         s.guideHidden = snapshot.guideHidden ?? false
+        s.subscription = snapshot.subscription ?? MemorySubscription()
         s.applyMe(s.me)
         state = s
+        refreshPlan()
     }
 
     private static func toggled(_ post: Post, _ postId: Int64) -> Post {

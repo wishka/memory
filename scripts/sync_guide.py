@@ -23,7 +23,7 @@ ACTIONS = [
     "Feed", "Stories", "Prism", "NewPrism", "Chats", "Groups", "Together", "Profile",
     "Friends", "Requests", "Saved", "Music", "Studio", "Shelf", "Recap",
     "Settings", "Privacy", "Security", "Blacklist", "Notifications", "Sounds",
-    "Wallpaper", "Language", "Legal", "Growth",
+    "Wallpaper", "Language", "Legal", "Growth", "Premium",
 ]
 
 
