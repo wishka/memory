@@ -43,7 +43,10 @@ struct StickerStudioScreen: View {
                 .padding(.vertical, 4)
 
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                    createTile(.scissors, t("Вырезка"), t("Объект с фото — как на iPhone")) { editor = .cutout }
+                    // Вырезка объекта — Memory+
+                    createTile(.scissors, t("Вырезка"), t("Объект с фото — как на iPhone"), locked: state.plan == .free) {
+                        if model.require(.stickerCutout) { editor = .cutout }
+                    }
                     createTile(.image, t("Из фото"), t("Форма, обводка, подпись")) { editor = .photo }
                     createTile(.brush, t("Рисунок"), t("Кисти, кадры, ластик")) { editor = .drawing }
                     createTile(.smile, t("Смайл"), t("Лицо, глаза, рот, детали")) { editor = .smiley }
@@ -82,10 +85,12 @@ struct StickerStudioScreen: View {
             .padding(.bottom, tabBarSpace)
         }
         .fullScreenCover(item: $editor) { kind in
-            StickerEditor(initial: kind, packId: pack?.id ?? "", onClose: { editor = nil }) { sticker in
+            StickerEditor(model: model, initial: kind, packId: pack?.id ?? "", onClose: { editor = nil }) { sticker in
                 model.addSticker(sticker)
                 editor = nil
             }
+            // Шторка Memory+ — поверх редактора
+            .paywall(model)
         }
         .glassActions(item: $menu, title: { $0.kind.title }) { sticker in
             [
@@ -160,13 +165,16 @@ struct StickerStudioScreen: View {
         }
     }
 
-    private func createTile(_ icon: LineIcon, _ title: String, _ hint: String, action: @escaping () -> Void) -> some View {
+    private func createTile(_ icon: LineIcon, _ title: String, _ hint: String, locked: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 6) {
                 Glyph(kind: icon, color: Palette.ink, size: 22)
                     .frame(width: 40, height: 40)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)))
-                Text(title).textStyle(.title)
+                HStack(spacing: 8) {
+                    Text(title).textStyle(.title)
+                    if locked { PlusBadge() }
+                }
                 Text(hint).textStyle(.bodySmall, Palette.mist).lineLimit(2).multilineTextAlignment(.leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -263,6 +271,7 @@ private struct PreviewKey: Equatable {
 /// Общие для всех способов — эффект (запекается в картинку) и движение.
 /// Рисунок может быть покадровым: прошлый кадр просвечивает «калькой».
 private struct StickerEditor: View {
+    let model: AppModel
     let initial: StickerKind
     /// Открытая в студии коллекция: новый стикер попадёт в неё.
     let packId: String
@@ -300,7 +309,8 @@ private struct StickerEditor: View {
     /// Больше кадров не нужно: дюжины хватает на живой стикер.
     private static let maxFrames = 12
 
-    init(initial: StickerKind, packId: String, onClose: @escaping () -> Void, onSaved: @escaping (Sticker) -> Void) {
+    init(model: AppModel, initial: StickerKind, packId: String, onClose: @escaping () -> Void, onSaved: @escaping (Sticker) -> Void) {
+        self.model = model
         self.initial = initial
         self.packId = packId
         self.onClose = onClose
@@ -310,6 +320,9 @@ private struct StickerEditor: View {
     }
 
     private var strokes: [DrawStroke] { frames.indices.contains(frameIx) ? frames[frameIx] : [] }
+
+    /// Memory+: живые эффекты, движение и кадры.
+    private var plus: Bool { model.state.plan != .free }
 
     private func setStrokes(_ list: [DrawStroke]) {
         guard frames.indices.contains(frameIx) else { return }
@@ -652,15 +665,24 @@ private struct StickerEditor: View {
                     }
                 }
                 if frames.count < Self.maxFrames {
+                    // Второй и следующие кадры — Memory+
                     Chip(text: "+ " + t("Кадр"), active: false) {
-                        frames.append([])
-                        frameIx = frames.count - 1
-                        setPlaying(false)
+                        if !plus {
+                            model.require(.stickerFrames)
+                        } else {
+                            frames.append([])
+                            frameIx = frames.count - 1
+                            setPlaying(false)
+                        }
                     }
                     Chip(text: t("Копия"), active: false) {
-                        frames.insert(strokes, at: frameIx + 1)
-                        frameIx += 1
-                        setPlaying(false)
+                        if !plus {
+                            model.require(.stickerFrames)
+                        } else {
+                            frames.insert(strokes, at: frameIx + 1)
+                            frameIx += 1
+                            setPlaying(false)
+                        }
                     }
                 }
                 Chip(text: t("Удалить кадр"), active: false) {
@@ -687,12 +709,23 @@ private struct StickerEditor: View {
     /// Эффект (запекается в картинку) и движение (играет при показе).
     @ViewBuilder
     private var liveControls: some View {
-        label(t("Эффект"))
-        choices(StickerEffect.allCases, effect, title: \.title) { effect = $0 }
-        label(t("Движение"))
+        // Эффекты и движение — Memory+; «Нет» — всегда
+        label(t("Эффект") + (plus ? "" : " · PLUS"))
+        choices(StickerEffect.allCases, effect, title: \.title) { e in
+            if e != .none && !plus {
+                model.require(.stickerLive)
+            } else {
+                effect = e
+            }
+        }
+        label(t("Движение") + (plus ? "" : " · PLUS"))
         choices(StickerAnim.allCases, anim, title: \.title) { a in
-            anim = a
-            setPlaying(a != .none || frames.count > 1)
+            if a != .none && !plus {
+                model.require(.stickerLive)
+            } else {
+                anim = a
+                setPlaying(a != .none || frames.count > 1)
+            }
         }
         if canPlay {
             HStack(spacing: 8) {

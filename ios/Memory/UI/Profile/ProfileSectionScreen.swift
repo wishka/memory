@@ -36,6 +36,7 @@ struct ProfileSectionScreen: View {
         case .stickers: return plural(state.stickers.count, "стикер", "стикера", "стикеров")
         case .recap: return ""
         case .shelf: return ""
+        case .premium: return ""
         case .requests: return plural(state.followRequests.count, "заявка", "заявки", "заявок")
         }
     }
@@ -103,8 +104,8 @@ struct ProfileSectionScreen: View {
                     }
                 }
             }
-        case .music, .stickers, .recap, .shelf:
-            // «Моя музыка», «Студия», «Итоги» и «Полка» — свои экраны (MainScreen), сюда не попадают
+        case .music, .stickers, .recap, .shelf, .premium:
+            // «Моя музыка», «Студия», «Итоги», «Полка» и «Memory+» — свои экраны (MainScreen), сюда не попадают
             EmptyView()
         }
     }

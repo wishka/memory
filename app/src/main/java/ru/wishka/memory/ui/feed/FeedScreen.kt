@@ -115,6 +115,10 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 recentGifs = state.recentGifs,
             )
         }
+        // Новичку — гид по приложению, пока карточку не скрыли
+        if (!state.guideHidden) {
+            item(key = "guide") { ru.wishka.memory.ui.guide.GuideFeedCard(vm) }
+        }
         // «Год назад вы…»: своя запись из этого же дня — пока не закрыли сегодня
         if (memories.isNotEmpty() && state.memorySeen != java.time.LocalDate.now().toString()) {
             item(key = "memory") { MemoryCard(vm, memories.first(), memories.size) }

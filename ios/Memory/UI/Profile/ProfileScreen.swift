@@ -99,6 +99,7 @@ struct ProfileScreen: View {
                     }
                     .cardPadding()
 
+                    PremiumProfileCard(model: model)
                     AchievementsCard(state: state)
                     ProfileContentTabs(model: model)
                     PeopleRows(model: model)

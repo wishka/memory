@@ -38,6 +38,10 @@ jobs:
       - name: Документы совпадают
         run: python3 scripts/sync_legal.py --check
 
+      # Гид в приложении собран из docs/guide/guide.json (Kotlin и Swift)
+      - name: Гид совпадает
+        run: python3 scripts/sync_guide.py --check
+
       - name: Сборка
         env:
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}

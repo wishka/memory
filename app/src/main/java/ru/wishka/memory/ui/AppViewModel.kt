@@ -12,6 +12,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import ru.wishka.memory.data.DAY_MS
+import ru.wishka.memory.data.Premium
+import ru.wishka.memory.data.PremiumFeature
+import ru.wishka.memory.data.Subscription
+import ru.wishka.memory.data.BillingPeriod
+import ru.wishka.memory.data.PlanTier
+import ru.wishka.memory.data.GuideTopic
+import ru.wishka.memory.data.GuideChapter
+import ru.wishka.memory.data.GuideAction
+import ru.wishka.memory.data.Guide
 import ru.wishka.memory.data.Chat
 import ru.wishka.memory.data.Backdrop
 import ru.wishka.memory.data.normalizeUrl
@@ -89,6 +99,8 @@ enum class ProfileSection(private val ru: String) {
     Shelf("Полка"),
     /** Входящие заявки в друзья и отправленные мной. */
     Requests("Заявки в друзья"),
+    /** Memory+: тарифы, пробный период, смена тарифа. */
+    Premium("Memory+"),
     ;
 
     /** Название на выбранном языке. */
@@ -109,6 +121,8 @@ enum class SettingsPage(private val ru: String) {
     Sounds("Звуки"),
     Wallpaper("Фон переписок"),
     Legal("Документы"),
+    /** Гид по Memory: главы → темы с шагами. */
+    Guide("Гид по Memory"),
     ;
 
     val title: String get() = t(ru)
@@ -224,6 +238,20 @@ data class UiState(
     val openedInvite: Invite? = null,
     /** День, когда закрыли «В этот день»: «2026-10-12». */
     val memorySeen: String = "",
+    /** Подписка Memory+ — как хранится. */
+    val subscription: Subscription = Subscription(),
+    /** Какой тариф действует сейчас (закончившаяся подписка — Free). Обновляет refreshPlan(). */
+    val plan: PlanTier = PlanTier.Free,
+    /** Шторка «Это в Memory+»: что пытались открыть без подписки. */
+    val paywall: PremiumFeature? = null,
+    /** Открытая глава гида; null — список глав. */
+    val guideChapter: String? = null,
+    /** Прочитанные темы гида: «глава/тема». */
+    val guideRead: Set<String> = emptySet(),
+    /** Карточку «Гид по Memory» в ленте закрыли. */
+    val guideHidden: Boolean = false,
+    /** Гид открыли не из настроек — «назад» из списка глав вернёт на эту вкладку. */
+    val guideReturn: Tab? = null,
     /** Полка: открытый раздел. */
     val shelfTab: ShelfTab = ShelfTab.Films,
     /** Коллекции стикеров, как наборы в iOS. */
@@ -341,6 +369,8 @@ class AppViewModel(
                 // Нажатие на «Профиль» внизу всегда ведёт на сам профиль
                 profileSection = null,
                 settingsPage = null,
+                guideChapter = null,
+                guideReturn = null,
             )
         }
     }
@@ -362,12 +392,191 @@ class AppViewModel(
 
     /** Настройки: шестерёнка в профиле открывает список, пункт списка — свою страницу. */
     fun openSettings(page: SettingsPage = SettingsPage.Main) {
-        _state.update { it.copy(tab = Tab.Profile, settingsPage = page, profileSection = null, openPersonId = null) }
+        _state.update {
+            it.copy(
+                tab = Tab.Profile, settingsPage = page, profileSection = null, openPersonId = null,
+                openChatId = null, openGroupId = null, groupSettingsOpen = false, openProduct = null,
+                guideChapter = null, guideReturn = null,
+            )
+        }
     }
 
-    /** «Назад» в настройках: со страницы — в список, из списка — в профиль. */
+    /**
+     * «Назад» в настройках: со страницы — в список, из списка — в профиль.
+     * В гиде: из главы — к списку глав; гид, открытый из ленты, — обратно в ленту.
+     */
     fun settingsBack() {
-        _state.update { it.copy(settingsPage = if (it.settingsPage == SettingsPage.Main) null else SettingsPage.Main) }
+        _state.update {
+            when {
+                it.settingsPage == SettingsPage.Guide && it.guideChapter != null -> it.copy(guideChapter = null)
+                it.settingsPage == SettingsPage.Guide && it.guideReturn != null ->
+                    it.copy(settingsPage = null, tab = it.guideReturn, guideReturn = null)
+                else -> it.copy(settingsPage = if (it.settingsPage == SettingsPage.Main) null else SettingsPage.Main)
+            }
+        }
+    }
+
+    // ==================== MEMORY+ ====================
+
+    /** Тариф, который действует сейчас. */
+    fun plan(): PlanTier = _state.value.subscription.tierAt(clock())
+
+    /** Есть ли доступ к премиум-функции — без шторки. */
+    fun has(feature: PremiumFeature): Boolean = plan().covers(feature.tier)
+
+    /**
+     * Проверка перед премиум-действием: есть доступ — true; нет —
+     * открывается шторка «Это в Memory+» и ответ false.
+     */
+    fun require(feature: PremiumFeature): Boolean {
+        refreshPlan()
+        if (has(feature)) return true
+        _state.update { it.copy(paywall = feature) }
+        return false
+    }
+
+    fun closePaywall() {
+        _state.update { it.copy(paywall = null) }
+    }
+
+    /** Экран «Memory+» в профиле: тарифы, пробный период, смена тарифа. */
+    fun openPremium() {
+        refreshPlan()
+        _state.update { it.copy(paywall = null) }
+        openProfileSection(ProfileSection.Premium)
+    }
+
+    /**
+     * Сверить подписку с часами: закончилась — тариф бесплатный.
+     * Оплаченная с продлением в демо продлевается сама — так сделает магазин.
+     */
+    fun refreshPlan() {
+        val now = clock()
+        _state.update { s ->
+            var sub = s.subscription
+            if (sub.tier != PlanTier.Free && !sub.active(now) && sub.autoRenew && !sub.trial) {
+                var until = sub.until
+                while (until <= now) until += sub.period.days * DAY_MS
+                sub = sub.copy(until = until)
+            }
+            val plan = sub.tierAt(now)
+            if (sub == s.subscription && plan == s.plan) s else s.copy(subscription = sub, plan = plan)
+        }
+    }
+
+    /**
+     * Пробный период — 3 дня, один раз на аккаунт, на любой тариф.
+     * Ответ — текст ошибки или null.
+     */
+    fun startTrial(tier: PlanTier): String? {
+        if (tier == PlanTier.Free) return t("Выберите тариф")
+        val now = clock()
+        val s = _state.value.subscription
+        if (s.trialUsed) return t("Пробный период уже использован")
+        if (s.active(now) && !s.trial) return t("Подписка уже оформлена")
+        _state.update {
+            it.copy(
+                subscription = Subscription(tier, BillingPeriod.Month, now + Premium.TRIAL_DAYS * DAY_MS, trial = true, autoRenew = false, trialUsed = true),
+                paywall = null,
+            )
+        }
+        refreshPlan()
+        return null
+    }
+
+    /**
+     * Оформить или сменить тариф и срок. Новый действует сразу, срок
+     * считается заново. Пока оплата демонстрационная — деньги не списываются.
+     */
+    fun subscribe(tier: PlanTier, period: BillingPeriod) {
+        if (tier == PlanTier.Free) {
+            cancelRenewal()
+            return
+        }
+        val now = clock()
+        _state.update {
+            it.copy(
+                subscription = Subscription(tier, period, now + period.days * DAY_MS, trial = false, autoRenew = true, trialUsed = it.subscription.trialUsed),
+                paywall = null,
+            )
+        }
+        refreshPlan()
+    }
+
+    /** Отменить продление: премиум работает до конца срока. */
+    fun cancelRenewal() {
+        _state.update { s -> if (s.subscription.trial) s else s.copy(subscription = s.subscription.copy(autoRenew = false)) }
+    }
+
+    /** Вернуть продление, пока срок не кончился. */
+    fun resumeRenewal() {
+        val now = clock()
+        _state.update { s ->
+            val sub = s.subscription
+            if (sub.trial || !sub.active(now)) s else s.copy(subscription = sub.copy(autoRenew = true))
+        }
+    }
+
+    // ==================== ГИД ====================
+
+    /** Гид: список глав или сразу глава. Открытый не из настроек помнит, куда вернуться. */
+    fun openGuide(chapterId: String? = null) {
+        val from = _state.value.let { if (it.settingsPage == null) it.tab else null }
+        openSettings(SettingsPage.Guide)
+        _state.update { it.copy(guideChapter = Guide.chapter(chapterId)?.id, guideReturn = from) }
+    }
+
+    fun openGuideChapter(chapterId: String) {
+        if (Guide.chapter(chapterId) == null) return
+        _state.update { it.copy(guideChapter = chapterId) }
+    }
+
+    fun closeGuideChapter() {
+        _state.update { it.copy(guideChapter = null) }
+    }
+
+    /** Тему раскрыли — она прочитана. */
+    fun markGuideRead(chapter: GuideChapter, topic: GuideTopic) {
+        val key = chapter.key(topic)
+        if (key in _state.value.guideRead) return
+        _state.update { it.copy(guideRead = it.guideRead + key) }
+    }
+
+    /** Убрать карточку гида из ленты; сам гид остаётся в настройках. */
+    fun hideGuideCard() {
+        _state.update { it.copy(guideHidden = true) }
+    }
+
+    /** Кнопка темы «Открыть …»: туда, о чём тема. */
+    fun guideGo(action: GuideAction) {
+        when (action) {
+            GuideAction.Feed -> selectTab(Tab.Feed)
+            GuideAction.Stories -> selectTab(Tab.Stories)
+            GuideAction.Prism -> selectTab(Tab.Prism)
+            GuideAction.NewPrism -> { selectTab(Tab.Prism); openPrismCreator() }
+            GuideAction.Chats -> { selectTab(Tab.Chats); _state.update { it.copy(openChatId = null) } }
+            GuideAction.Groups -> { selectTab(Tab.Groups); _state.update { it.copy(openGroupId = null) } }
+            GuideAction.Together -> selectTab(Tab.Together)
+            GuideAction.Profile -> selectTab(Tab.Profile)
+            GuideAction.Friends -> openProfileSection(ProfileSection.Friends)
+            GuideAction.Requests -> openProfileSection(ProfileSection.Requests)
+            GuideAction.Saved -> openProfileSection(ProfileSection.Saved)
+            GuideAction.Music -> openProfileSection(ProfileSection.Music)
+            GuideAction.Studio -> openProfileSection(ProfileSection.Stickers)
+            GuideAction.Shelf -> openProfileSection(ProfileSection.Shelf)
+            GuideAction.Recap -> openProfileSection(ProfileSection.Recap)
+            GuideAction.Settings -> openSettings(SettingsPage.Main)
+            GuideAction.Privacy -> openSettings(SettingsPage.Privacy)
+            GuideAction.Security -> openSettings(SettingsPage.Security)
+            GuideAction.Blacklist -> openSettings(SettingsPage.Blacklist)
+            GuideAction.Notifications -> openSettings(SettingsPage.Notifications)
+            GuideAction.Sounds -> openSettings(SettingsPage.Sounds)
+            GuideAction.Wallpaper -> openSettings(SettingsPage.Wallpaper)
+            GuideAction.Language -> openSettings(SettingsPage.Language)
+            GuideAction.Legal -> openSettings(SettingsPage.Legal)
+            GuideAction.Growth -> openSettings(SettingsPage.Growth)
+            GuideAction.Premium -> openPremium()
+        }
     }
 
     /** Записи или друзья другого человека — нажатием на счётчик на его странице. */
@@ -1024,6 +1233,8 @@ class AppViewModel(
     fun createPlaylist(name: String): Long? {
         val title = name.trim().take(60)
         if (title.isEmpty()) return null
+        // Бесплатно — три плейлиста
+        if (_state.value.playlists.size >= Premium.FREE_PLAYLISTS && !require(PremiumFeature.Playlists)) return null
         val id = nextId++
         _state.update { s -> s.copy(playlists = s.playlists + Playlist(id, title)) }
         return id
@@ -1075,13 +1286,21 @@ class AppViewModel(
         _state.update { it.copy(stickers = it.stickers.filterNot { s -> s.id == stickerId }) }
     }
 
-    /** Закрепить свою запись в витрине профиля (до трёх) или открепить. */
+    /**
+     * Закрепить свою запись в витрине профиля или открепить. Бесплатно —
+     * три записи (четвёртая открывает шторку Memory+), в Memory+ — шесть
+     * (седьмая вытесняет самую давнюю).
+     */
     fun toggleProfilePin(postId: Long) {
+        val s0 = _state.value
+        val adding = postId !in s0.profilePins && s0.posts.any { it.id == postId && it.author.id == s0.me.id }
+        if (adding && s0.profilePins.size >= Premium.FREE_PINS && !require(PremiumFeature.Pins)) return
+        val limit = if (has(PremiumFeature.Pins)) Premium.PLUS_PINS else MAX_PINS
         _state.update { s ->
             when {
                 postId in s.profilePins -> s.copy(profilePins = s.profilePins - postId)
                 s.posts.none { it.id == postId && it.author.id == s.me.id } -> s
-                else -> s.copy(profilePins = (listOf(postId) + s.profilePins).take(MAX_PINS))
+                else -> s.copy(profilePins = (listOf(postId) + s.profilePins).take(limit))
             }
         }
     }
@@ -1173,7 +1392,7 @@ class AppViewModel(
 
     /** Подробное описание, сайт и контакты своей группы. Ссылка без схемы получает https://. */
     fun updateGroupInfo(groupId: Int, info: GroupInfo) {
-        val clean = GroupInfo(
+        var clean = GroupInfo(
             about = info.about.trim().take(2000),
             website = normalizeUrl(info.website).take(200),
             phone = info.phone.trim().take(40),
@@ -1181,11 +1400,24 @@ class AppViewModel(
             address = info.address.trim().take(160),
             hours = info.hours.trim().take(80),
         )
+        // Телефон, почта, адрес и часы — в Бизнесе. Без него прежние контакты остаются как были
+        if (!has(PremiumFeature.GroupContacts)) {
+            val old = _state.value.groups.firstOrNull { it.id == groupId }?.info ?: GroupInfo()
+            val contacts = GroupInfo(phone = clean.phone, email = clean.email, address = clean.address, hours = clean.hours)
+            if (contacts != GroupInfo(phone = old.phone, email = old.email, address = old.address, hours = old.hours)) {
+                require(PremiumFeature.GroupContacts)
+            }
+            clean = clean.copy(phone = old.phone, email = old.email, address = old.address, hours = old.hours)
+        }
         updateOwnGroup(groupId) { it.copy(info = clean) }
     }
 
     /** Фон страницы своей группы; null — как везде. */
     fun setGroupBackdrop(groupId: Int, backdrop: Backdrop?) {
+        // Фон страницы группы — Бизнес; убрать фон можно всегда
+        // Тот же фон, что уже стоит (меняют только затемнение), — можно и без подписки
+        val cur = _state.value.groups.firstOrNull { it.id == groupId }?.backdrop
+        if (backdrop != null && !(backdrop.style == cur?.style && backdrop.photo == cur.photo) && !require(PremiumFeature.GroupBackdrop)) return
         val old = _state.value.groups.firstOrNull { it.id == groupId }?.backdrop?.photo.orEmpty()
         updateOwnGroup(groupId) { it.copy(backdrop = backdrop) }
         // Своё фото фона, которое больше не стоит, — удалить копию
@@ -1204,6 +1436,11 @@ class AppViewModel(
         val title = product.title.trim()
         if (title.isEmpty()) return t("Добавьте название товара")
         if (product.price < 0) return t("Цена не может быть отрицательной")
+        // Бесплатно — до 10 товаров; изменить уже добавленные можно всегда
+        val shop = _state.value.groups.firstOrNull { it.id == groupId }?.shop.orEmpty()
+        if (product.id == 0L && shop.size >= Premium.FREE_PRODUCTS && !require(PremiumFeature.ShopUnlimited)) {
+            return tf("Бесплатно — до %s товаров. Больше — в Memory+ Бизнес", Premium.FREE_PRODUCTS)
+        }
         val clean = product.copy(
             id = if (product.id == 0L) nextId++ else product.id,
             title = title.take(80),
@@ -1391,6 +1628,8 @@ class AppViewModel(
     fun createStickerPack(name: String): StickerPack? {
         val n = name.trim().take(30)
         if (n.isEmpty() || _state.value.stickerPacks.any { it.name.equals(n, ignoreCase = true) }) return null
+        // Бесплатно — две коллекции
+        if (_state.value.stickerPacks.size >= Premium.FREE_PACKS && !require(PremiumFeature.StickerPacks)) return null
         val pack = StickerPack("pack-" + UUID.randomUUID().toString().take(8), n)
         _state.update { it.copy(stickerPacks = it.stickerPacks + pack) }
         return pack
@@ -1415,6 +1654,11 @@ class AppViewModel(
 
     /** Общий фон переписок. */
     fun setBackdrop(backdrop: Backdrop) {
+        // Бесплатно — четыре фона; остальные и своё фото — Memory+
+        // Тот же фон, что уже стоит (меняют только затемнение), — можно и без подписки
+        val cur = _state.value.backdrop
+        val same = backdrop.style == cur.style && backdrop.photo == cur.photo
+        if (backdrop.kind !in Premium.FREE_BACKDROPS && !same && !require(PremiumFeature.Backdrops)) return
         val before = backdropPhotos(_state.value)
         _state.update { it.copy(backdrop = backdrop) }
         dropBackdropPhotos(before)
@@ -1422,6 +1666,10 @@ class AppViewModel(
 
     /** Свой фон у переписки; null — как у всех. */
     fun setChatBackdrop(chatId: Int, backdrop: Backdrop?) {
+        // Свой фон у переписки — Memory+; вернуть «как у всех» можно всегда
+        // Тот же фон, что уже стоит у переписки (меняют только затемнение), — можно и без подписки
+        val cur = _state.value.chats.firstOrNull { it.id == chatId }?.backdrop
+        if (backdrop != null && !(backdrop.style == cur?.style && backdrop.photo == cur.photo) && !require(PremiumFeature.ChatBackdrop)) return
         val before = backdropPhotos(_state.value)
         _state.update { s -> s.copy(chats = s.chats.map { if (it.id == chatId) it.copy(backdrop = backdrop) else it }) }
         dropBackdropPhotos(before)
@@ -1703,6 +1951,8 @@ class AppViewModel(
     }
 
     fun setRecapBack(back: Int) {
+        // Бесплатно — текущий и прошлый период; дальше в прошлое — Memory+
+        if (back > Premium.FREE_RECAP_BACK && back > _state.value.recapBack && !require(PremiumFeature.RecapHistory)) return
         _state.update { it.copy(recapBack = back.coerceAtLeast(0)) }
     }
 
@@ -2126,6 +2376,7 @@ class AppViewModel(
             it.checkInTemplates, it.followRequests, it.sentRequests, it.recapNotified,
             it.together, it.shelfMarks, it.dismissedRecs, it.growth, it.invitedBy, it.memorySeen,
             it.stickerPacks, it.backdrop, it.recentGifs, it.reports,
+            it.guideRead, it.guideHidden, it.subscription,
         )
     }
 
@@ -2172,8 +2423,12 @@ class AppViewModel(
                 backdrop = snapshot.backdrop,
                 recentGifs = snapshot.recentGifs,
                 reports = snapshot.reports,
+                guideRead = snapshot.guideRead intersect Guide.keys,
+                guideHidden = snapshot.guideHidden,
+                subscription = snapshot.subscription,
             ).withMe(s.me)
         }
+        refreshPlan()
     }
 
     private fun now(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
@@ -2243,6 +2498,9 @@ data class Snapshot(
     val backdrop: Backdrop = Backdrop.DEFAULT,
     val recentGifs: List<Attachment> = emptyList(),
     val reports: List<Report> = emptyList(),
+    val guideRead: Set<String> = emptySet(),
+    val guideHidden: Boolean = false,
+    val subscription: Subscription = Subscription(),
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

@@ -265,6 +265,20 @@ struct PrismEditor: View {
         .padding(.bottom, 8)
     }
 
+    /// Memory+: все фильтры и цветокоррекция.
+    private var plus: Bool { model.state.plan != .free }
+
+    @ViewBuilder
+    private var adjustPanel: some View {
+        AdjustSlider(title: t("Яркость"), value: $edit.brightness)
+        AdjustSlider(title: t("Контраст"), value: $edit.contrast)
+        AdjustSlider(title: t("Насыщенность"), value: $edit.saturation)
+        AdjustSlider(title: t("Тепло"), value: $edit.warmth)
+        GhostButton(title: t("Сбросить")) {
+            update { $0.brightness = 0; $0.contrast = 0; $0.saturation = 0; $0.warmth = 0 }
+        }
+    }
+
     @ViewBuilder
     private var panel: some View {
         switch tool {
@@ -279,16 +293,25 @@ struct PrismEditor: View {
         case .filters:
             FlowLayout {
                 ForEach(VideoFilter.allCases, id: \.self) { f in
-                    FilterSwatch(filter: f, active: edit.filter == f) { update { $0.filter = f } }
+                    // Memory+: все фильтры; бесплатно — пять
+                    let locked = !plus && !Premium.freeFilters.contains(f)
+                    FilterSwatch(filter: f, active: edit.filter == f, locked: locked) {
+                        if locked {
+                            model.require(.prismFilters)
+                        } else {
+                            update { $0.filter = f }
+                        }
+                    }
                 }
             }
         case .adjust:
-            AdjustSlider(title: t("Яркость"), value: $edit.brightness)
-            AdjustSlider(title: t("Контраст"), value: $edit.contrast)
-            AdjustSlider(title: t("Насыщенность"), value: $edit.saturation)
-            AdjustSlider(title: t("Тепло"), value: $edit.warmth)
-            GhostButton(title: t("Сбросить")) {
-                update { $0.brightness = 0; $0.contrast = 0; $0.saturation = 0; $0.warmth = 0 }
+            if !plus {
+                Text(t("Яркость, контраст, насыщенность и тепло ролика — в Memory+."))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+                GhostButton(title: t("Подробнее")) { model.require(.prismAdjust) }
+            } else {
+                adjustPanel
             }
         case .text: textPanel
         case .stickers: stickerPanel
@@ -592,6 +615,7 @@ private struct AdjustSlider: View {
 private struct FilterSwatch: View {
     let filter: VideoFilter
     let active: Bool
+    var locked: Bool = false
     let action: () -> Void
 
     private static let samples: [UInt32] = [0xFF9EDE, 0xBC92CD, 0x307EC0, 0xFFE08A]
@@ -606,6 +630,9 @@ private struct FilterSwatch: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(active ? Palette.ink : Palette.line, lineWidth: active ? 2 : 1)
                     )
+                    .overlay(alignment: .topTrailing) {
+                        if locked { PlusBadge().padding(4) }
+                    }
                 Text(filter.title).textStyle(.label, active ? Palette.ink : Palette.mist)
             }
         }

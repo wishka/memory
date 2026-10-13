@@ -83,9 +83,15 @@ fun ShelfScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
     val scope = rememberCoroutineScope()
     val shelf = remember(state.posts, state.shelfMarks, state.me.id) { state.shelf }
     // Подборка и план — не на каждую перерисовку: каждый вызов заново собирает полку
-    val recs = remember(shelf, state.dismissedRecs, state.blocked, state.privacy.personalRecs) {
+    val all = remember(shelf, state.dismissedRecs, state.blocked, state.privacy.personalRecs) {
         state.recommendations("film", shelf = shelf) to state.recommendations("book", shelf = shelf)
     }
+    // Бесплатно — три совета, в Memory+ — до двенадцати (по шесть фильмов и книг)
+    val free = state.plan == ru.wishka.memory.data.PlanTier.Free
+    val recs = if (!free) all else all.first.take(ru.wishka.memory.data.Premium.FREE_RECS).let { f ->
+        f to all.second.take((ru.wishka.memory.data.Premium.FREE_RECS - f.size).coerceAtLeast(0))
+    }
+    val moreRecs = free && all.first.size + all.second.size > recs.first.size + recs.second.size
     val plan = remember(state.posts, state.me.id) { state.runPlan }
     var rating by remember { mutableStateOf<Pair<String, String>?>(null) }
 
@@ -113,7 +119,16 @@ fun ShelfScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
             }
         }
         when (state.shelfTab) {
-            ShelfTab.ForYou -> forYou(vm, state, shelf, recs, plan) { rating = it }
+            ShelfTab.ForYou -> {
+                forYou(vm, state, shelf, recs, plan) { rating = it }
+                if (moreRecs) item {
+                    GhostButton(
+                        t("Ещё советы по вкусу — в Memory+"),
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        onClick = { vm.require(ru.wishka.memory.data.PremiumFeature.Recs) },
+                    )
+                }
+            }
             ShelfTab.Films -> films(vm, shelf) { rating = it }
             ShelfTab.Books -> books(shelf) { rating = it }
             ShelfTab.Sport -> sport(shelf)

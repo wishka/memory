@@ -211,6 +211,11 @@ struct BackdropChooser: View {
     var onReset: (() -> Void)? = nil
     /// Подпись кнопки сброса: в переписке — «Как во всех переписках», в группе — «Как везде».
     var resetLabel: String = t("Как во всех переписках")
+    /// Фон из премиума: на плитке значок, нажатие — onLocked.
+    var locked: (BackdropStyle) -> Bool = { _ in false }
+    var onLocked: (BackdropStyle) -> Void = { _ in }
+    /// Значок «BIZ» вместо «PLUS».
+    var business: Bool = false
     @State private var photoItem: PhotosPickerItem?
     @State private var showPicker = false
 
@@ -287,8 +292,11 @@ struct BackdropChooser: View {
     private func tile(_ style: BackdropStyle) -> some View {
         let active = selected.kind == style
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let isLocked = locked(style)
         return Button {
-            if style == .photo {
+            if isLocked {
+                onLocked(style)
+            } else if style == .photo {
                 showPicker = true
             } else {
                 onPick(Backdrop(style: style.id, photo: "", dim: selected.dim))
@@ -313,6 +321,11 @@ struct BackdropChooser: View {
                     }
                     .clipShape(shape)
                     .overlay(shape.stroke(active ? Palette.lilac : Palette.line, lineWidth: active ? 2.5 : 1))
+                    .overlay(alignment: .topTrailing) {
+                        if isLocked {
+                            PlusBadge(business: business).padding(6)
+                        }
+                    }
                 Text(style.title).textStyle(.label, active ? Palette.ink : Palette.mist).lineLimit(1)
             }
         }

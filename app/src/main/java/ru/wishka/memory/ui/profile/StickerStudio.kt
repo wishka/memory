@@ -145,7 +145,11 @@ fun StickerStudioScreen(vm: AppViewModel, state: UiState, contentPadding: Paddin
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CreateTile(LineIcon.Scissors, t("Вырезка"), t("Объект с фото — как на iPhone"), Modifier.weight(1f)) { editor = StickerKind.Cutout }
+                    // Вырезка объекта — Memory+
+                    CreateTile(
+                        LineIcon.Scissors, t("Вырезка"), t("Объект с фото — как на iPhone"), Modifier.weight(1f),
+                        locked = state.plan == ru.wishka.memory.data.PlanTier.Free,
+                    ) { if (vm.require(ru.wishka.memory.data.PremiumFeature.StickerCutout)) editor = StickerKind.Cutout }
                     CreateTile(LineIcon.Image, t("Из фото"), t("Форма, обводка, подпись"), Modifier.weight(1f)) { editor = StickerKind.Photo }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -213,7 +217,11 @@ fun StickerStudioScreen(vm: AppViewModel, state: UiState, contentPadding: Paddin
     }
 
     editor?.let { kind ->
-        StickerEditor(kind, pack?.id.orEmpty(), onClose = { editor = null }, onSaved = { sticker ->
+        StickerEditor(
+            kind, pack?.id.orEmpty(),
+            plus = state.plan != ru.wishka.memory.data.PlanTier.Free,
+            onLocked = { vm.require(it) },
+            onClose = { editor = null }, onSaved = { sticker ->
             vm.addSticker(sticker)
             editor = null
         })
@@ -272,7 +280,7 @@ fun StickerStudioScreen(vm: AppViewModel, state: UiState, contentPadding: Paddin
 }
 
 @Composable
-private fun CreateTile(icon: LineIcon, title: String, hint: String, modifier: Modifier, onClick: () -> Unit) {
+private fun CreateTile(icon: LineIcon, title: String, hint: String, modifier: Modifier, locked: Boolean = false, onClick: () -> Unit) {
     GlassCard(modifier = modifier) {
         Column(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(14.dp),
@@ -285,7 +293,13 @@ private fun CreateTile(icon: LineIcon, title: String, hint: String, modifier: Mo
                     .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean))),
                 contentAlignment = Alignment.Center,
             ) { Glyph(icon, Palette.Ink, size = 22.dp) }
-            Text(title, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+                if (locked) {
+                    Spacer(Modifier.width(8.dp))
+                    ru.wishka.memory.ui.premium.PlusBadge()
+                }
+            }
             Text(hint, style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, maxLines = 2)
         }
     }
@@ -349,7 +363,15 @@ private fun StickerTile(sticker: Sticker, vm: AppViewModel, modifier: Modifier, 
  * Рисунок может быть покадровым: прошлый кадр просвечивает «калькой».
  */
 @Composable
-private fun StickerEditor(initial: StickerKind, packId: String, onClose: () -> Unit, onSaved: (Sticker) -> Unit) {
+private fun StickerEditor(
+    initial: StickerKind,
+    packId: String,
+    /** Memory+: живые эффекты, движение и кадры. */
+    plus: Boolean,
+    onLocked: (ru.wishka.memory.data.PremiumFeature) -> Unit,
+    onClose: () -> Unit,
+    onSaved: (Sticker) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var kind by remember { mutableStateOf(initial) }
@@ -565,8 +587,15 @@ private fun StickerEditor(initial: StickerKind, packId: String, onClose: () -> U
                         FrameControls(
                             count = frames.size, index = frameIx, fps = fps,
                             onSelect = { frameIx = it; playing = false },
-                            onAdd = { frames = frames + listOf(emptyList()); frameIx = frames.lastIndex; playing = false },
-                            onDuplicate = { frames = frames.take(frameIx + 1) + listOf(strokes) + frames.drop(frameIx + 1); frameIx += 1; playing = false },
+                            // Второй и следующие кадры — Memory+
+                            onAdd = {
+                                if (!plus) onLocked(ru.wishka.memory.data.PremiumFeature.StickerFrames)
+                                else { frames = frames + listOf(emptyList()); frameIx = frames.lastIndex; playing = false }
+                            },
+                            onDuplicate = {
+                                if (!plus) onLocked(ru.wishka.memory.data.PremiumFeature.StickerFrames)
+                                else { frames = frames.take(frameIx + 1) + listOf(strokes) + frames.drop(frameIx + 1); frameIx += 1; playing = false }
+                            },
                             onDelete = {
                                 if (frames.size > 1) {
                                     frames = frames.filterIndexed { i, _ -> i != frameIx }
@@ -588,8 +617,15 @@ private fun StickerEditor(initial: StickerKind, packId: String, onClose: () -> U
                     StickerKind.Badge -> BadgeControls(badge) { badge = it }
                 }
                 LiveControls(
-                    effect = effect, onEffect = { effect = it },
-                    anim = anim, onAnim = { anim = it; playing = it != StickerAnim.None || frames.size > 1 },
+                    // Эффекты и движение — Memory+; «Нет» — всегда
+                    effect = effect, onEffect = { e ->
+                        if (e != StickerEffect.None && !plus) onLocked(ru.wishka.memory.data.PremiumFeature.StickerLive) else effect = e
+                    },
+                    anim = anim, onAnim = { a ->
+                        if (a != StickerAnim.None && !plus) onLocked(ru.wishka.memory.data.PremiumFeature.StickerLive)
+                        else { anim = a; playing = a != StickerAnim.None || frames.size > 1 }
+                    },
+                    plus = plus,
                     canPlay = anim != StickerAnim.None || (kind == StickerKind.Drawing && drawnFrames.size > 1),
                     playing = playing, onPlaying = { playing = it },
                 )
@@ -626,11 +662,12 @@ private fun FrameControls(
 private fun LiveControls(
     effect: StickerEffect, onEffect: (StickerEffect) -> Unit,
     anim: StickerAnim, onAnim: (StickerAnim) -> Unit,
+    plus: Boolean,
     canPlay: Boolean, playing: Boolean, onPlaying: (Boolean) -> Unit,
 ) {
-    Label(t("Эффект"))
+    Label(t("Эффект") + if (plus) "" else " · PLUS")
     Choices(StickerEffect.entries, effect, { it.title }, onEffect)
-    Label(t("Движение"))
+    Label(t("Движение") + if (plus) "" else " · PLUS")
     Choices(StickerAnim.entries, anim, { it.title }, onAnim)
     if (canPlay) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

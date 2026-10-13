@@ -81,6 +81,8 @@ class Round15Test {
     fun infoAndLook() {
         val vm = vm()
         val id = ownGroup(vm)
+        // Контакты и фон страницы — Memory+ Бизнес
+        assertNull(vm.startTrial(ru.wishka.memory.data.PlanTier.Business))
         vm.updateGroupInfo(id, GroupInfo(about = "  Свечи  ", website = "candles.ru", phone = "+7 900"))
         val info = vm.state.value.groups.first { it.id == id }.info
         assertEquals("Свечи", info.about)

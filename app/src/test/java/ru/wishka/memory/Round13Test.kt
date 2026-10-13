@@ -200,6 +200,8 @@ class Round13Test {
         vm.setBackdrop(Backdrop(BackdropStyle.Aurora.id))
         val chat = vm.state.value.chats.first()
         assertEquals(BackdropStyle.Aurora, chat.backdropOr(vm.state.value.backdrop).kind)
+        // Свой фон у переписки — Memory+
+        assertNull(vm.startTrial(ru.wishka.memory.data.PlanTier.Plus))
         vm.setChatBackdrop(chat.id, Backdrop(BackdropStyle.Prism.id))
         val own = vm.state.value.chats.first { it.id == chat.id }
         assertEquals(BackdropStyle.Prism, own.backdropOr(vm.state.value.backdrop).kind)

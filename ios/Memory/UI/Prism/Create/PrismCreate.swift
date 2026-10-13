@@ -48,6 +48,8 @@ struct PrismCreateFlow: View {
                 }
             }
         }
+        // Шторка Memory+ — поверх камеры и редактора
+        .paywall(model)
         .glassActions(
             $failed,
             title: t("Видео слишком короткое или не читается"),

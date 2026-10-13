@@ -292,6 +292,13 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             }
         }
     }
+    // Подписка Memory+ сверяется с часами: закончилась — тариф бесплатный
+    LaunchedEffect(Unit) {
+        while (true) {
+            vm.refreshPlan()
+            delay(60_000)
+        }
+    }
     // Android 13+: разрешение на уведомления — один раз, при первом входе
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
@@ -358,6 +365,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                             section == ProfileSection.Stickers -> StickerStudioScreen(vm, state, padding)
                             section == ProfileSection.Recap -> RecapScreen(vm, state, padding)
                             section == ProfileSection.Shelf -> ShelfScreen(vm, state, padding)
+                            section == ProfileSection.Premium -> ru.wishka.memory.ui.premium.PremiumScreen(vm, state, padding)
                             section != null -> ProfileSectionScreen(vm, state, section, padding)
                             else -> ProfileScreen(vm, state, padding, onSaveProfile)
                         }
@@ -410,6 +418,8 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                 )
             }
         }
+        // Шторка «Это в Memory+» — поверх всего, где бы ни нажали
+        state.paywall?.let { feature -> ru.wishka.memory.ui.premium.PaywallSheet(vm, state, feature) }
         state.banner?.let { nudge ->
             NudgeBanner(
                 nudge,

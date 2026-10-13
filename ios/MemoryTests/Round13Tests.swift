@@ -165,6 +165,8 @@ final class Round13Tests: XCTestCase {
         vm.setBackdrop(Backdrop(style: BackdropStyle.aurora.id))
         let chat = vm.state.chats[0]
         XCTAssertEqual(BackdropStyle.aurora, chat.backdropOr(vm.state.backdrop).kind)
+        // Свой фон у переписки — Memory+
+        XCTAssertNil(vm.startTrial(.plus))
         vm.setChatBackdrop(chat.id, Backdrop(style: BackdropStyle.prism.id))
         let own = try XCTUnwrap(vm.state.chats.first { $0.id == chat.id })
         XCTAssertEqual(BackdropStyle.prism, own.backdropOr(vm.state.backdrop).kind)

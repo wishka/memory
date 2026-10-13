@@ -125,6 +125,9 @@ enum class EditorTool(val title: String, val icon: LineIcon) {
  */
 @Composable
 fun PrismEditor(
+    /** Memory+: все фильтры и цветокоррекция. */
+    plus: Boolean,
+    onLocked: (ru.wishka.memory.data.PremiumFeature) -> Unit,
     initial: VideoEdit,
     tracks: List<MusicTrack>,
     onAddTracks: (List<MusicTrack>) -> Unit,
@@ -209,10 +212,21 @@ fun PrismEditor(
                 EditorTool.Frame -> FramePanel(edit, ::update)
                 EditorTool.Filters -> FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     VideoFilter.entries.forEach { f ->
-                        FilterChip(f, active = edit.filter == f) { update { it.copy(filter = f) } }
+                        val locked = !plus && f !in ru.wishka.memory.data.Premium.FREE_FILTERS
+                        FilterChip(f, active = edit.filter == f, locked = locked) {
+                            if (locked) onLocked(ru.wishka.memory.data.PremiumFeature.PrismFilters)
+                            else update { it.copy(filter = f) }
+                        }
                     }
                 }
-                EditorTool.Adjust -> {
+                EditorTool.Adjust -> if (!plus) {
+                    Text(
+                        t("Яркость, контраст, насыщенность и тепло ролика — в Memory+."),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Palette.Mist,
+                    )
+                    GhostButton(t("Подробнее"), onClick = { onLocked(ru.wishka.memory.data.PremiumFeature.PrismAdjust) })
+                } else {
                     AdjustSlider(t("Яркость"), edit.brightness) { v -> update { it.copy(brightness = v) } }
                     AdjustSlider(t("Контраст"), edit.contrast) { v -> update { it.copy(contrast = v) } }
                     AdjustSlider(t("Насыщенность"), edit.saturation) { v -> update { it.copy(saturation = v) } }
@@ -485,7 +499,7 @@ private fun FramePanel(edit: VideoEdit, update: ((VideoEdit) -> VideoEdit) -> Un
 
 /** Фильтр: образец цвета (сиреневый кружок через матрицу фильтра) и название. */
 @Composable
-private fun FilterChip(f: VideoFilter, active: Boolean, onClick: () -> Unit) {
+private fun FilterChip(f: VideoFilter, active: Boolean, locked: Boolean = false, onClick: () -> Unit) {
     val sample = remember(f) {
         val (r, g, b) = ColorMatrix.apply(f.matrix, 0.74f, 0.57f, 0.8f)
         Color(r, g, b)
@@ -500,6 +514,10 @@ private fun FilterChip(f: VideoFilter, active: Boolean, onClick: () -> Unit) {
         Box(Modifier.size(18.dp).clip(CircleShape).background(sample))
         Spacer(Modifier.width(6.dp))
         Text(t(f.title), style = MaterialTheme.typography.labelLarge, color = if (active) Palette.Ink else Palette.Lilac)
+        if (locked) {
+            Spacer(Modifier.width(6.dp))
+            ru.wishka.memory.ui.premium.PlusBadge()
+        }
     }
 }
 

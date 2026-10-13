@@ -15,48 +15,66 @@ struct SettingsScreen: View {
     let model: AppModel
     let page: SettingsPage
     let account: AccountActions
+    // Гид: поиск и раскрытые темы переживают переход между главами
+    @State private var guideQuery = ""
+    @State private var guideOpen: Set<String> = []
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 14) {
-                HStack(spacing: 14) {
-                    RoundGlyphButton(icon: .back) { model.settingsBack() }
-                    Text(page.title.uppercased())
-                        .textStyle(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-
-                switch page {
-                case .main: MainSettings(model: model, account: account)
-                case .security: SecurityPage(account: account)
-                case .privacy: PrivacyPage(model: model)
-                case .blacklist: BlacklistPage(model: model)
-                case .notifications: NotificationsPage(model: model)
-                case .textSize: TextSizePage()
-                case .language: LanguagePage()
-                case .about: AboutPage(model: model)
-                case .legal: LegalPage(model: model)
-                case .growth: GrowthPage(model: model)
-                case .sounds: SoundsPage(model: model)
-                case .wallpaper:
-                    VStack(alignment: .leading, spacing: 12) {
-                        BackdropChooser(selected: model.state.backdrop, onPick: model.setBackdrop)
-                        Text(t("Фон для всех переписок. Свой фон для одной переписки — в её меню «⋯» вверху."))
-                            .textStyle(.bodySmall, Palette.mist)
-                            .fixedSize(horizontal: false, vertical: true)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    HStack(spacing: 14) {
+                        RoundGlyphButton(icon: .back) { model.settingsBack() }
+                        Text(page.title.uppercased())
+                            .textStyle(.headline)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        Spacer()
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .id(Self.top)
+
+                    switch page {
+                    case .main: MainSettings(model: model, account: account)
+                    case .security: SecurityPage(account: account)
+                    case .privacy: PrivacyPage(model: model)
+                    case .blacklist: BlacklistPage(model: model)
+                    case .notifications: NotificationsPage(model: model)
+                    case .textSize: TextSizePage()
+                    case .language: LanguagePage()
+                    case .about: AboutPage(model: model)
+                    case .legal: LegalPage(model: model)
+                    case .growth: GrowthPage(model: model)
+                    case .sounds: SoundsPage(model: model)
+                    case .guide: GuidePage(model: model, query: $guideQuery, expanded: $guideOpen)
+                    case .wallpaper:
+                        VStack(alignment: .leading, spacing: 12) {
+                            BackdropChooser(
+                                selected: model.state.backdrop,
+                                onPick: model.setBackdrop,
+                                // Бесплатно — четыре фона; остальные и своё фото — Memory+
+                                locked: { !Premium.freeBackdrops.contains($0) && model.state.plan == .free },
+                                onLocked: { _ in model.require(.backdrops) }
+                            )
+                            Text(t("Фон для всех переписок. Свой фон для одной переписки — в её меню «⋯» вверху."))
+                                .textStyle(.bodySmall, Palette.mist)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 16)
+                    }
                 }
+                .padding(.top, 12)
+                .padding(.bottom, tabBarSpace)
             }
-            .padding(.top, 12)
-            .padding(.bottom, tabBarSpace)
+            .scrollDismissesKeyboard(.interactively)
+            // Новая страница или глава гида — с самого верха
+            .onChange(of: page) { _, _ in proxy.scrollTo(Self.top, anchor: .top) }
+            .onChange(of: model.state.guideChapter) { _, _ in proxy.scrollTo(Self.top, anchor: .top) }
         }
-        .scrollDismissesKeyboard(.interactively)
     }
+
+    private static let top = "settings-top"
 }
 
 /// Версия приложения: «1.4 (12)».
@@ -76,6 +94,12 @@ private struct MainSettings: View {
 
     var body: some View {
         let state = model.state
+        SettingsCard {
+            NavRow(
+                icon: .info, title: t("Гид по Memory"),
+                value: tf("%s из %s", min(state.guideRead.count, Guide.topicCount), Guide.topicCount)
+            ) { model.openGuide() }
+        }
         SettingsCard {
             NavRow(icon: .shield, title: t("Безопасность")) { model.openSettings(.security) }
             Divider()
@@ -408,7 +432,10 @@ private struct SoundsPage: View {
         }
         Color.clear.frame(height: 0)
             .sheet(item: $editing) { kind in
-                SoundChooser(kind: kind, selected: current[kind] ?? NotifySound.default(kind)) { sound in
+                SoundChooser(
+                    kind: kind, selected: current[kind] ?? NotifySound.default(kind), free: model.state.plan == .free,
+                    onLocked: { model.require(.sounds) }
+                ) { sound in
                     SoundPrefs().set(kind, sound)
                     SoundPlayer.play(sound)
                     current = SoundPrefs().all()
@@ -425,6 +452,9 @@ extension NudgeKind: Identifiable {
 private struct SoundChooser: View {
     let kind: NudgeKind
     let selected: NotifySound
+    /// Бесплатный тариф: звуки Memory, кроме звука по умолчанию, — в Memory+.
+    let free: Bool
+    let onLocked: () -> Void
     let onPick: (NotifySound) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var chosen: NotifySound?
@@ -443,9 +473,21 @@ private struct SoundChooser: View {
                 VStack(spacing: 0) {
                     ForEach(Array(NotifySound.allCases.enumerated()), id: \.element) { i, sound in
                         if i > 0 { Divider() }
-                        ChoiceRow(title: sound.title + (sound == NotifySound.default(kind) ? " · " + t("по умолчанию") : ""), selected: active == sound) {
-                            chosen = sound
-                            onPick(sound)
+                        // Бесплатно — Кристалл, «Как в телефоне», «Без звука» и звук по умолчанию
+                        let locked = free && !Premium.freeSounds.contains(sound) && sound != NotifySound.default(kind)
+                        ChoiceRow(
+                            title: sound.title + (sound == NotifySound.default(kind) ? " · " + t("по умолчанию") : "") + (locked ? " · PLUS" : ""),
+                            selected: active == sound
+                        ) {
+                            if locked {
+                                // Послушать можно, выбрать — в Memory+
+                                SoundPlayer.play(sound)
+                                onLocked()
+                                dismiss()
+                            } else {
+                                chosen = sound
+                                onPick(sound)
+                            }
                         }
                     }
                 }

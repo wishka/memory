@@ -291,8 +291,16 @@ struct PrismCamera: View {
                         chip(timer == 0 ? t("Таймер") : tf("%s с", timer), active: timer > 0) {
                             timer = cameraTimers[(cameraTimers.firstIndex(of: timer)! + 1) % cameraTimers.count]
                         }
-                        chip(tf("%s с", length), active: true) {
-                            length = cameraLengths[(cameraLengths.firstIndex(of: length)! + 1) % cameraLengths.count]
+                        let plus = model.state.plan != .free
+                        chip(tf("%s с", length) + (!plus && length == 30 ? " · 60 PLUS" : ""), active: true) {
+                            let next = cameraLengths[((cameraLengths.firstIndex(of: length) ?? 0) + 1) % cameraLengths.count]
+                            // 60 секунд — Memory+: без него после 30 — снова 15 и шторка
+                            if !Premium.freeLengths.contains(next) && !plus {
+                                model.require(.prismLong)
+                                length = cameraLengths[0]
+                            } else {
+                                length = next
+                            }
                         }
                     }
                     RoundGlyphButton(icon: .flash, color: camera.torch ? Palette.ink : Palette.lilac, strong: camera.torch) {

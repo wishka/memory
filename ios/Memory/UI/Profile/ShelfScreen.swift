@@ -7,6 +7,13 @@ private struct RateTarget: Identifiable {
     var id: String { activity + ":" + subject }
 }
 
+/// Советы «Для вас»: фильмы, книги и есть ли ещё — в Memory+.
+private struct ShelfRecs {
+    let films: [Recommendation]
+    let books: [Recommendation]
+    let more: Bool
+}
+
 /// Друг и насколько совпадает вкус.
 private struct TasteFriend: Identifiable {
     let id: Int
@@ -42,7 +49,13 @@ struct ShelfScreen: View {
                     .padding(.horizontal, 16)
                 }
                 switch state.shelfTab {
-                case .forYou: forYou(state, shelf)
+                case .forYou:
+                    let recs = forYouRecs(state, shelf)
+                    forYou(state, shelf, recs)
+                    if recs.more {
+                        GhostButton(title: t("Ещё советы по вкусу — в Memory+")) { model.require(.recs) }
+                            .padding(.horizontal, 16)
+                    }
                 case .films: films(shelf)
                 case .books: books(shelf)
                 case .sport: sport(shelf)
@@ -74,22 +87,32 @@ struct ShelfScreen: View {
 
     // MARK: Для вас
 
+    /// Бесплатно — три совета, в Memory+ — до двенадцати (по шесть фильмов и книг).
+    private func forYouRecs(_ state: UiState, _ shelf: Shelf) -> ShelfRecs {
+        let films = state.recommendations("film", shelf: shelf)
+        let books = state.recommendations("book", shelf: shelf)
+        if state.plan != .free { return ShelfRecs(films: films, books: books, more: false) }
+        let f = Array(films.prefix(Premium.freeRecs))
+        let b = Array(books.prefix(max(0, Premium.freeRecs - f.count)))
+        return ShelfRecs(films: f, books: b, more: films.count + books.count > f.count + b.count)
+    }
+
     @ViewBuilder
-    private func forYou(_ state: UiState, _ shelf: Shelf) -> some View {
+    private func forYou(_ state: UiState, _ shelf: Shelf, _ recs: ShelfRecs) -> some View {
         RunPlanCard(plan: state.runPlan)
         if !state.privacy.personalRecs {
             // Персональные рекомендации выключены в «Приватности» — ни подборки, ни «Похожего вкуса»
             ShelfHint(text: t("Персональные рекомендации выключены в «Настройках → Приватность». Включите их, чтобы полка советовала фильмы и книги."))
             RecsHow(model: model)
         } else {
-            recommended(state, shelf)
+            recommended(state, shelf, recs)
         }
     }
 
     @ViewBuilder
-    private func recommended(_ state: UiState, _ shelf: Shelf) -> some View {
-        let films = state.recommendations("film", shelf: shelf)
-        let books = state.recommendations("book", shelf: shelf)
+    private func recommended(_ state: UiState, _ shelf: Shelf, _ recs: ShelfRecs) -> some View {
+        let films = recs.films
+        let books = recs.books
         if shelf.rated.count < 3 {
             ShelfHint(text: t("Оцените ещё пару фильмов или книг — подборка станет точнее. Мы советуем то, что любят люди с похожим вкусом."))
         }

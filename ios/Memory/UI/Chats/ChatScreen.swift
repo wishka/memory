@@ -458,13 +458,18 @@ private struct BackdropSheet: View {
                 BackdropChooser(
                     selected: chat?.backdropOr(model.state.backdrop) ?? model.state.backdrop,
                     onPick: { model.setChatBackdrop(chatId, $0) },
-                    onReset: chat?.backdrop != nil ? { model.setChatBackdrop(chatId, nil) } : nil
+                    onReset: chat?.backdrop != nil ? { model.setChatBackdrop(chatId, nil) } : nil,
+                    // Свой фон у переписки — Memory+
+                    locked: { _ in !model.has(.chatBackdrop) },
+                    onLocked: { _ in model.require(.chatBackdrop) }
                 )
                 .padding(.bottom, 16)
             }
         }
         .padding(16)
         .background(Palette.night.ignoresSafeArea())
+        // Шторка Memory+ — внутри окна выбора фона, иначе её не видно
+        .paywall(model)
         .presentationDetents([.large])
         .presentationBackground(Palette.night)
         .presentationCornerRadius(28)

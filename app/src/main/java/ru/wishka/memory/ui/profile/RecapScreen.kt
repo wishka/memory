@@ -158,7 +158,11 @@ fun RecapScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
                     GhostButton(t("Отправить в чат"), onClick = { choosingChat = true })
                     GhostButton(t("В галерею"), onClick = {
                         scope.launch {
-                            val saved = withContext(Dispatchers.IO) { RecapImage.saveToGallery(context, recap, state.me) }
+                            val saved = withContext(Dispatchers.IO) { RecapImage.saveToGallery(
+                                context, recap, state.me,
+                                // Memory+ — в высоком разрешении
+                                if (state.plan != ru.wishka.memory.data.PlanTier.Free) ru.wishka.memory.data.Premium.HI_RES else 1,
+                            ) }
                             if (saved) {
                                 Toast.makeText(context, t("Сохранено в галерею: Pictures/Memory"), Toast.LENGTH_SHORT).show()
                             } else {
