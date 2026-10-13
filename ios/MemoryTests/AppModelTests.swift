@@ -1,7 +1,7 @@
 import XCTest
 @testable import Memory
 
-/// Правила приложения: лайки, записи, чаты, подписки, группы, профиль.
+/// Правила приложения: лайки, записи, чаты, друзья, группы, профиль.
 /// Те же проверки, что AppViewModelTest на Android.
 final class AppModelTests: XCTestCase {
 
@@ -59,20 +59,25 @@ final class AppModelTests: XCTestCase {
     }
 
     func testStoriesShowOnlyFollowed() {
-        let vm = AppModel()
+        let vm = AppModel(demoReplies: false)
         let s = vm.state
         XCTAssertFalse(s.stories.isEmpty)
         XCTAssertTrue(s.stories.allSatisfy { s.following.contains($0.author.id) })
-        // Подписка на Тимура (5) добавляет его записи, отписка — убирает
-        // (Марк — закрытый профиль: к нему уходит заявка, см. Round10Tests)
+        // Заявка Тимуру (5): пока не принята — его записей нет; принял — есть;
+        // удалили из друзей — снова нет
         XCTAssertFalse(s.stories.contains { $0.author.id == 5 })
-        vm.toggleFollow(5)
-        XCTAssertTrue(vm.state.stories.contains { $0.author.id == 5 })
-        vm.toggleFollow(5)
+        vm.toggleFriend(5)
+        XCTAssertTrue(vm.state.sentRequests.contains(5))
         XCTAssertFalse(vm.state.stories.contains { $0.author.id == 5 })
-        // На себя подписаться нельзя
-        vm.toggleFollow(vm.state.me.id)
+        vm.acceptSentRequest(5)
+        XCTAssertTrue(vm.state.stories.contains { $0.author.id == 5 })
+        vm.toggleFriend(5)
+        XCTAssertFalse(vm.state.following.contains(5))
+        XCTAssertFalse(vm.state.stories.contains { $0.author.id == 5 })
+        // Себя в друзья не добавить
+        vm.toggleFriend(vm.state.me.id)
         XCTAssertFalse(vm.state.following.contains(vm.state.me.id))
+        XCTAssertFalse(vm.state.sentRequests.contains(vm.state.me.id))
     }
 
     func testAccountNameAndReset() {
@@ -280,7 +285,7 @@ final class AppModelTests: XCTestCase {
 
     func testProfileSectionsAndBack() throws {
         let vm = AppModel()
-        XCTAssertFalse(vm.state.followers.isEmpty)
+        XCTAssertFalse(vm.state.friends.isEmpty)
         vm.openProfileSection(.groups)
         XCTAssertEqual(vm.state.tab, .profile)
         // Группа из раздела профиля: «назад» — снова в раздел
@@ -404,19 +409,25 @@ final class AppModelTests: XCTestCase {
     }
 
     func testPersonSections() throws {
-        let vm = AppModel()
+        let vm = AppModel(demoReplies: false)
         let person = try XCTUnwrap(vm.state.posts.first { $0.author.id != vm.state.me.id }?.author)
         vm.openPerson(person.id)
-        vm.openPersonSection(.followers)
-        XCTAssertEqual(vm.state.personSection, .followers)
+        vm.openPersonSection(.friends)
+        XCTAssertEqual(vm.state.personSection, .friends)
         // «Назад» сначала закрывает раздел, потом страницу
         XCTAssertTrue(vm.back())
         XCTAssertNil(vm.state.personSection)
         XCTAssertEqual(vm.state.openPersonId, person.id)
-        // Подписались — вы среди его подписчиков
-        if !vm.state.following.contains(person.id) { vm.toggleFollow(person.id) }
-        XCTAssertTrue(vm.state.followersOf(person).contains { $0.id == vm.state.me.id })
-        XCTAssertFalse(vm.state.followersOf(person).contains { $0.id == person.id })
+        // Друзья — вы среди его друзей
+        if !vm.state.following.contains(person.id) {
+            vm.toggleFriend(person.id)
+            vm.acceptSentRequest(person.id)
+        }
+        XCTAssertTrue(vm.state.friendsOf(person).contains { $0.id == vm.state.me.id })
+        XCTAssertFalse(vm.state.friendsOf(person).contains { $0.id == person.id })
+        // Удалили из друзей — вас в его списке нет
+        vm.removeFriend(person.id)
+        XCTAssertFalse(vm.state.friendsOf(person).contains { $0.id == vm.state.me.id })
     }
 
     func testBlockHidesPostsAndUnfollows() throws {

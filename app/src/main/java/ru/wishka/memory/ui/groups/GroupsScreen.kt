@@ -176,7 +176,7 @@ private fun GroupRow(group: Group, onOpen: () -> Unit, onToggle: () -> Unit) {
                     if (group.muted && !group.mine) Glyph(LineIcon.BellOff, Palette.Mist, size = 16.dp, modifier = Modifier.padding(start = 6.dp))
                 }
                 Text(
-                    "${t(group.topic)} · ${plural(group.members, "участник", "участника", "участников")}",
+                    "${t(group.topic)} · ${plural(group.members, "участник", "участника", "участников")}" + if (group.shop.isNotEmpty()) " · " + t("Витрина") else "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                 )

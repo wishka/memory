@@ -446,10 +446,10 @@ private fun PrismTile(prism: Prism, onClick: () -> Unit) {
     }
 }
 
-/** Мои группы и взаимные подписки — лентами. */
+/** Мои группы и друзья — лентами. */
 @Composable
 fun PeopleRows(vm: AppViewModel, state: UiState) {
-    val mutual = state.followers.filter { it.id in state.following && it.id !in state.blocked }
+    val mutual = state.friends.filter { it.id !in state.blocked }
     if (state.myGroups.isEmpty() && mutual.isEmpty()) return
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -469,7 +469,7 @@ fun PeopleRows(vm: AppViewModel, state: UiState) {
                 }
             }
             if (mutual.isNotEmpty()) {
-                CardTitle(tf("Взаимные подписки · %s", mutual.size), Modifier.padding(horizontal = 16.dp))
+                CardTitle(tf("Друзья · %s", mutual.size), Modifier.padding(horizontal = 16.dp))
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(mutual, key = { it.id }) { person ->
                         Column(

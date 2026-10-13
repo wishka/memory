@@ -23,29 +23,25 @@ import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.LineIcon
 import ru.wishka.memory.ui.components.ScreenTitle
 import ru.wishka.memory.ui.feed.PostCard
+import ru.wishka.memory.ui.components.FriendButton
 import ru.wishka.memory.ui.profile.Empty
 import ru.wishka.memory.ui.profile.PersonRow
 import ru.wishka.memory.ui.profile.RoundIconButton
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Записи, подписчики или подписки другого человека — по нажатию на
- * счётчик на его странице. Пока сервера нет, в списках видны только
- * знакомые люди; число на счётчике — настоящее.
+ * Записи или друзья другого человека — по нажатию на счётчик на его
+ * странице. Пока сервера нет, в списке видны только знакомые люди;
+ * число на счётчике — настоящее.
  */
 @Composable
 fun PersonSectionScreen(vm: AppViewModel, state: UiState, person: User, section: ProfileSection, contentPadding: PaddingValues) {
     val blocked = state.isBlocked(person.id)
     val posts = if (blocked || !state.canSee(person)) emptyList() else state.postsOf(person.id)
-    val people = when (section) {
-        ProfileSection.Followers -> state.followersOf(person)
-        ProfileSection.Following -> state.followingOf(person)
-        else -> emptyList()
-    }
+    val people = if (section == ProfileSection.Friends) state.friendsOf(person) else emptyList()
     val subtitle = when (section) {
         ProfileSection.Posts -> plural(posts.size, "запись", "записи", "записей")
-        ProfileSection.Followers -> plural(person.followers + if (person.id in state.following) 1 else 0, "подписчик", "подписчика", "подписчиков")
-        else -> plural(person.followingCount, "подписка", "подписки", "подписок")
+        else -> plural(state.friendsOf(person).size, "друг", "друга", "друзей")
     }
 
     LazyColumn(
@@ -84,11 +80,10 @@ fun PersonSectionScreen(vm: AppViewModel, state: UiState, person: User, section:
                 val me = other.id == state.me.id
                 PersonRow(
                     other,
-                    following = me || other.id in state.following,
-                    followLabel = t("Подписаться"),
                     onOpen = { vm.openPerson(other.id) },
-                    onToggle = { vm.toggleFollow(other.id) },
-                    showButton = !me,
+                    trailing = if (me) null else ({
+                        FriendButton(state.friendState(other.id), other.name, onToggle = { vm.toggleFriend(other.id) })
+                    }),
                 )
             }
         }

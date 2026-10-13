@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.prism
 
+import ru.wishka.memory.ui.FriendState
+import ru.wishka.memory.ui.components.FriendButton
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.background
@@ -66,7 +68,8 @@ import ru.wishka.memory.ui.theme.Palette
  */
 @Composable
 fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
-    val prisms = state.prisms.filter { it.author.id !in state.blocked }
+    // Закрытый профиль — только друзьям, как в ленте
+    val prisms = state.prisms.filter { it.author.id !in state.blocked && state.canSee(it.author) }
     val context = LocalContext.current
     val pager = rememberPagerState(pageCount = { prisms.size })
     // Открыли из «Сохранённого» — сразу на нужный ролик
@@ -89,11 +92,11 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
             mine = prism.author.id == state.me.id && prism.video != null,
             onDelete = { confirmDelete = prism },
             active = pager.currentPage == page,
-            following = if (prism.author.id == state.me.id) null else prism.author.id in state.following,
+            friend = if (prism.author.id == state.me.id) null else state.friendState(prism.author.id),
             contentPadding = contentPadding,
             onLike = { vm.togglePrismLike(prism.id) },
             onAuthor = { vm.openPerson(prism.author.id) },
-            onFollow = { vm.toggleFollow(prism.author.id) },
+            onFriend = { vm.toggleFriend(prism.author.id) },
             onComments = { vm.openPrismComments(prism.id) },
             onShare = { sharePrism(context, prism) },
             onSave = { vm.togglePrismSave(prism.id) },
@@ -179,11 +182,12 @@ private fun PrismPage(
     mine: Boolean,
     onDelete: () -> Unit,
     active: Boolean,
-    following: Boolean?,
+    /** Дружба с автором; null — свой ролик, кнопки нет. */
+    friend: FriendState?,
     contentPadding: PaddingValues,
     onLike: () -> Unit,
     onAuthor: () -> Unit,
-    onFollow: () -> Unit,
+    onFriend: () -> Unit,
     onComments: () -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit,
@@ -300,8 +304,7 @@ private fun PrismPage(
                     Text(prism.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
                 }
                 Spacer(Modifier.width(10.dp))
-                if (following == false) GlowButton(t("Подписаться"), onClick = onFollow)
-                else if (following == true) GhostButton(t("Вы подписаны"), onClick = onFollow)
+                if (friend != null) FriendButton(friend, prism.author.name, onFriend)
             }
             Text(prism.caption, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
             Row(verticalAlignment = Alignment.CenterVertically) {

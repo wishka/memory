@@ -92,7 +92,7 @@ class Round10Test {
         val mark = Demo.person(3)!!
         assertTrue(mark.closed)
         assertFalse(vm.state.value.feed.any { it.author.id == 3 })
-        vm.toggleFollow(3)
+        vm.toggleFriend(3)
         assertTrue(3 in vm.state.value.sentRequests)
         assertFalse(3 in vm.state.value.following)
         vm.acceptSentRequest(3)
@@ -101,23 +101,86 @@ class Round10Test {
     }
 
     @Test
-    fun followRequestsWhenProfileClosed() {
+    fun friendRequestsRegardlessOfClosedProfile() {
         val vm = AppViewModel(demoReplies = false)
-        vm.receiveFollowRequest(6)
+        // Открытый профиль — заявка в друзья всё равно приходит
+        vm.receiveFriendRequest(5)
+        assertEquals(listOf(5), vm.state.value.followRequests)
+        assertEquals(ru.wishka.memory.ui.FriendState.Incoming, vm.state.value.friendState(5))
+        // Повторная — не дублируется; от друга (6) — не приходит
+        vm.receiveFriendRequest(5)
+        vm.receiveFriendRequest(6)
+        assertEquals(listOf(5), vm.state.value.followRequests)
+        vm.approveRequest(5)
+        assertTrue(5 in vm.state.value.following)
+        assertTrue(vm.state.value.friends.any { it.id == 5 })
         assertTrue(vm.state.value.followRequests.isEmpty())
-        vm.setPrivacy(Privacy(closedProfile = true))
-        vm.receiveFollowRequest(6)
-        assertEquals(listOf(6), vm.state.value.followRequests)
-        vm.approveRequest(6)
-        assertTrue(vm.state.value.followers.any { it.id == 6 })
-        vm.setPrivacy(Privacy(closedProfile = true))
-        // Открыли профиль — оставшиеся заявки одобряются
+        // Закрыли и снова открыли профиль — ждущая заявка не одобряется сама
         val vm2 = AppViewModel(demoReplies = false)
         vm2.setPrivacy(Privacy(closedProfile = true))
-        vm2.receiveFollowRequest(6)
+        vm2.receiveFriendRequest(3)
         vm2.setPrivacy(Privacy(closedProfile = false))
+        assertEquals(listOf(3), vm2.state.value.followRequests)
+        assertFalse(3 in vm2.state.value.following)
+        // Отклонили — заявка исчезает, в друзья не попадает
+        vm2.declineRequest(3)
         assertTrue(vm2.state.value.followRequests.isEmpty())
-        assertTrue(vm2.state.value.followers.any { it.id == 6 })
+        assertFalse(3 in vm2.state.value.following)
+        // Из чёрного списка заявки не приходят
+        vm2.block(5)
+        vm2.receiveFriendRequest(5)
+        assertTrue(vm2.state.value.followRequests.isEmpty())
+    }
+
+    @Test
+    fun sendingRequestToRequesterMakesFriendsAtOnce() {
+        val vm = AppViewModel(demoReplies = false)
+        vm.receiveFriendRequest(5)
+        vm.toggleFriend(5)
+        val s = vm.state.value
+        assertTrue(5 in s.following)
+        assertTrue(s.followRequests.isEmpty())
+        assertTrue(s.sentRequests.isEmpty())
+    }
+
+    @Test
+    fun openProfileRequestAcceptedAndCancelled() {
+        val vm = AppViewModel(demoReplies = false)
+        // Открытый профиль (Тимур) — тоже по заявке
+        assertFalse(Demo.person(5)!!.closed)
+        vm.toggleFriend(5)
+        assertEquals(ru.wishka.memory.ui.FriendState.Requested, vm.state.value.friendState(5))
+        assertFalse(5 in vm.state.value.following)
+        // Повторное нажатие — заявка отозвана; принять отозванную нельзя
+        vm.toggleFriend(5)
+        assertTrue(vm.state.value.sentRequests.isEmpty())
+        vm.acceptSentRequest(5)
+        assertFalse(5 in vm.state.value.following)
+        // Отправили снова — приняли: друзья и уведомление о принятой заявке
+        vm.toggleFriend(5)
+        vm.acceptSentRequest(5)
+        assertEquals(ru.wishka.memory.ui.FriendState.Friends, vm.state.value.friendState(5))
+        assertEquals("Тимур принял вашу заявку в друзья", Nudges.requestAccepted(Demo.person(5)!!).text)
+        assertEquals("Алина приняла вашу заявку в друзья", Nudges.requestAccepted(Demo.person(4)!!).text)
+        assertEquals("Тимур хочет добавить вас в друзья", Nudges.followRequest(Demo.person(5)!!, emptyList()).text)
+    }
+
+    @Test
+    fun friendsSurviveSnapshotAndDemoRequestsCome() {
+        val vm = AppViewModel(demoReplies = false)
+        vm.receiveFriendRequest(3)
+        vm.toggleFriend(5)
+        val snap = vm.snapshot()
+        val vm2 = AppViewModel(demoReplies = false)
+        vm2.restore(snap)
+        assertEquals(listOf(3), vm2.state.value.followRequests)
+        assertEquals(setOf(5), vm2.state.value.sentRequests)
+        assertEquals(vm.state.value.following, vm2.state.value.following)
+        // Демо-жизнь шлёт заявки и при открытом профиле
+        val vm3 = AppViewModel(demoReplies = false)
+        repeat(200) { vm3.demoEvent(Random(it)) }
+        assertTrue(vm3.state.value.followRequests.isNotEmpty())
+        assertTrue(vm3.state.value.followRequests.none { it in vm3.state.value.following })
     }
 
     @Test

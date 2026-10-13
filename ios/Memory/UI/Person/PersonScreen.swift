@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Страница другого человека: карточка, сведения, интересы, подписка,
+/// Страница другого человека: карточка, сведения, интересы, дружба,
 /// «Написать» и его записи. Открывается нажатием на автора записи.
 struct PersonScreen: View {
     let model: AppModel
@@ -17,11 +17,11 @@ struct PersonScreen: View {
 
     private var page: some View {
         let state = model.state
-        let following = state.following.contains(person.id)
+        let friend = state.friendState(person.id)
         let blocked = state.isBlocked(person.id)
-        // Закрытый профиль: записи видны только подписчикам
+        // Закрытый профиль: записи видны только друзьям
         let hidden = !state.canSee(person)
-        let requested = state.sentRequests.contains(person.id)
+        let requested = friend == .requested
         let posts = blocked || hidden ? [] : state.postsOf(person.id)
         let hasInfo = !blocked && (!person.city.isEmpty || !person.birthday.isEmpty || !person.website.isEmpty || !person.interests.isEmpty)
 
@@ -58,15 +58,14 @@ struct PersonScreen: View {
                             Text(person.bio).textStyle(.body).multilineTextAlignment(.center)
                         }
                         FadeLine().padding(.top, 4)
-                        // Счётчики — кнопки: записи, подписчики и подписки человека
+                        // Счётчики — кнопки: записи и друзья человека
                         HStack {
                             StatButton(value: hidden ? state.postsOf(person.id).count : posts.count, label: t("записи")) {
                                 if !hidden { model.openPersonSection(.posts) }
                             }
-                            StatButton(value: person.followers + (following ? 1 : 0), label: t("подписчики")) {
-                                model.openPersonSection(.followers)
+                            StatButton(value: state.friendsOf(person).count, label: t("друзья")) {
+                                model.openPersonSection(.friends)
                             }
-                            StatButton(value: person.followingCount, label: t("подписки")) { model.openPersonSection(.following) }
                         }
                         .padding(.top, 6)
                         if blocked {
@@ -75,15 +74,19 @@ struct PersonScreen: View {
                                 .multilineTextAlignment(.center)
                             GhostButton(title: t("Разблокировать")) { model.unblock(person.id) }
                         } else {
+                            // Человек сам прислал заявку — принять или отклонить
+                            if friend == .incoming {
+                                Text(t("Хочет добавить вас в друзья"))
+                                    .textStyle(.bodySmall, Palette.lilac)
+                                    .padding(.top, 6)
+                                HStack(spacing: 10) {
+                                    GlowButton(title: t("Принять заявку")) { model.approveRequest(person.id) }
+                                    GhostButton(title: t("Отклонить")) { model.declineRequest(person.id) }
+                                }
+                            }
                             HStack(spacing: 10) {
-                                if following {
-                                    GhostButton(title: t("Вы подписаны")) { model.toggleFollow(person.id) }
-                                } else if requested {
-                                    GhostButton(title: t("Заявка отправлена")) { model.toggleFollow(person.id) }
-                                } else if person.closed {
-                                    GlowButton(title: t("Отправить заявку")) { model.toggleFollow(person.id) }
-                                } else {
-                                    GlowButton(title: t("Подписаться")) { model.toggleFollow(person.id) }
+                                if friend != .incoming {
+                                    FriendButton(state: friend, name: person.name) { model.toggleFriend(person.id) }
                                 }
                                 GhostButton(title: t("Написать")) { model.writeTo(person.id) }
                             }
@@ -113,7 +116,7 @@ struct PersonScreen: View {
                             Glyph(kind: .lock, color: Palette.lilac, size: 28)
                             Text(requested
                                  ? t("Заявка отправлена. Когда её примут, здесь появятся записи и чек-ины.")
-                                 : t("Это закрытый профиль. Записи и чек-ины видят только подписчики — отправьте заявку."))
+                                 : t("Это закрытый профиль. Записи и чек-ины видят только друзья — добавьте человека в друзья."))
                                 .textStyle(.bodySmall)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)

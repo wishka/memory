@@ -209,6 +209,8 @@ struct BackdropChooser: View {
     let selected: Backdrop
     let onPick: (Backdrop) -> Void
     var onReset: (() -> Void)? = nil
+    /// Подпись кнопки сброса: в переписке — «Как во всех переписках», в группе — «Как везде».
+    var resetLabel: String = t("Как во всех переписках")
     @State private var photoItem: PhotosPickerItem?
     @State private var showPicker = false
 
@@ -232,7 +234,7 @@ struct BackdropChooser: View {
                 .tint(Palette.lilac)
             }
             if let onReset {
-                GhostButton(title: t("Как во всех переписках"), action: onReset)
+                GhostButton(title: resetLabel, action: onReset)
             }
         }
         .photosPicker(isPresented: $showPicker, selection: $photoItem, matching: .images)

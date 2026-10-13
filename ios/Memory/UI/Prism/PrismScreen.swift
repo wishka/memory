@@ -14,7 +14,7 @@ struct PrismScreen: View {
     var body: some View {
         let state = model.state
         // Ролики тех, кто в чёрном списке, не показываются
-        let prisms = state.prisms.filter { !state.isBlocked($0.author.id) }
+        let prisms = state.prisms.filter { !state.isBlocked($0.author.id) && state.canSee($0.author) }
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
             if library {
@@ -27,11 +27,11 @@ struct PrismScreen: View {
                         PrismPage(
                             prism: prism,
                             active: (current ?? prisms.first?.id) == prism.id,
-                            following: prism.author.id == state.me.id ? nil : state.following.contains(prism.author.id),
+                            friend: prism.author.id == state.me.id ? nil : state.friendState(prism.author.id),
                             safeTop: geo.safeAreaInsets.top,
                             onLike: { model.togglePrismLike(prism.id) },
                             onAuthor: { model.openPerson(prism.author.id) },
-                            onFollow: { model.toggleFollow(prism.author.id) },
+                            onFriend: { model.toggleFriend(prism.author.id) },
                             onComments: { model.openPrismComments(prism.id) },
                             onSave: { model.togglePrismSave(prism.id) },
                             mine: prism.author.id == state.me.id && prism.video != nil,
@@ -114,11 +114,11 @@ func shareText(_ prism: Prism) -> String {
 private struct PrismPage: View {
     let prism: Prism
     let active: Bool
-    let following: Bool?
+    let friend: FriendState?
     let safeTop: CGFloat
     let onLike: () -> Void
     let onAuthor: () -> Void
-    let onFollow: () -> Void
+    let onFriend: () -> Void
     let onComments: () -> Void
     let onSave: () -> Void
     let mine: Bool
@@ -238,12 +238,8 @@ private struct PrismPage: View {
                     }
                 }
                 .buttonStyle(.plain)
-                if let following {
-                    if following {
-                        GhostButton(title: t("Вы подписаны"), action: onFollow)
-                    } else {
-                        GlowButton(title: t("Подписаться"), action: onFollow)
-                    }
+                if let friend {
+                    FriendButton(state: friend, name: prism.author.name, onToggle: onFriend)
                 }
             }
             Text(prism.caption).textStyle(.body).fixedSize(horizontal: false, vertical: true)

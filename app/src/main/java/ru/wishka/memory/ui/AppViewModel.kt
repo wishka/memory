@@ -13,6 +13,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import ru.wishka.memory.data.Chat
+import ru.wishka.memory.data.Backdrop
+import ru.wishka.memory.data.normalizeUrl
+import ru.wishka.memory.data.ProductRef
+import ru.wishka.memory.data.Product
+import ru.wishka.memory.data.GroupAccent
+import ru.wishka.memory.data.GroupInfo
 import ru.wishka.memory.data.LegalDoc
 import ru.wishka.memory.data.Report
 import ru.wishka.memory.data.ReportKind
@@ -70,18 +76,19 @@ import ru.wishka.memory.i18n.tf
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-/** Разделы профиля за счётчиками: записи, подписчики, подписки, группы, сохранённое. */
+/** Разделы профиля за счётчиками: записи, друзья, группы, сохранённое, заявки в друзья. */
 enum class ProfileSection(private val ru: String) {
     Posts("Записи"),
-    Followers("Подписчики"),
-    Following("Подписки"),
+    /** Друзья (взаимно): у себя — с «Написать» и удалением из друзей, у другого — его друзья. */
+    Friends("Друзья"),
     Groups("Группы"),
     Saved("Сохранённое"),
     Music("Моя музыка"),
     Stickers("Студия"),
     Recap("Итоги"),
     Shelf("Полка"),
-    Requests("Заявки на подписку"),
+    /** Входящие заявки в друзья и отправленные мной. */
+    Requests("Заявки в друзья"),
     ;
 
     /** Название на выбранном языке. */
@@ -158,9 +165,13 @@ data class UiState(
     val creatingPrism: Boolean = false,
     /** Настройки поверх вкладки «Профиль»; null — закрыты. */
     val settingsPage: SettingsPage? = null,
-    /** Раздел чужого профиля (записи, подписчики, подписки) поверх его страницы. */
+    /** Раздел чужого профиля (записи, друзья) поверх его страницы. */
     val personSection: ProfileSection? = null,
-    /** На кого подписан человек: их записи — во вкладке «Истории». */
+    /**
+     * Мои друзья — дружба взаимная. Имя поля прежнее (было «подписки»):
+     * так его хранят сохранения. Записи друзей — во вкладке «Истории»,
+     * закрытые профили друзей видны.
+     */
     val following: Set<Int> = Demo.following,
     val prisms: List<Prism> = Demo.prisms,
     /** Открытое обсуждение записи (в ленте, историях, группе); null — закрыто. */
@@ -184,11 +195,9 @@ data class UiState(
     val groupSettingsOpen: Boolean = false,
     /** Свои чек-ины: шаблоны, которые человек создал сам. */
     val checkInTemplates: List<CheckInTemplate> = emptyList(),
-    /** Заявки на подписку к вам (закрытый профиль) — новые первыми. */
+    /** Входящие заявки в друзья ко мне — новые первыми. Имя поля прежнее — для сохранений. */
     val followRequests: List<Int> = emptyList(),
-    /** Кого вы одобрили: подписчики сверх демо-списка. */
-    val approvedFollowers: Set<Int> = emptySet(),
-    /** Ваши заявки к закрытым профилям, пока их не приняли. */
+    /** Мои исходящие заявки в друзья, пока их не приняли. */
     val sentRequests: Set<Int> = emptySet(),
     /** За какой период уже напомнили об Итогах: «2026-09», «2026». */
     val recapNotified: Set<String> = emptySet(),
@@ -229,6 +238,8 @@ data class UiState(
     val reporting: ReportTarget? = null,
     /** Открытый документ: соглашение, политика, правила… */
     val legalDoc: LegalDoc? = null,
+    /** Открытый товар витрины: группа и товар; null — нет. */
+    val openProduct: Pair<Int, Long>? = null,
 ) {
     /** Полка — собирается сама из чек-инов и отметок. */
     val shelf: Shelf get() = Shelf.build(posts.datedCheckIns(me.id), shelfMarks)
@@ -255,32 +266,36 @@ data class UiState(
     val chatList: List<Chat> get() = chats.sortedByDescending { it.onTop }
     /**
      * Лента без записей тех, кто в чёрном списке, и без записей закрытых
-     * профилей, на которые вы не подписаны.
+     * профилей тех, кто вам не друг.
      */
     val feed: List<Post> get() = posts.filter { it.author.id !in blocked && canSee(it.author) }
-    /** Записи человека видны: профиль открыт, вы подписаны или это вы. */
+    /** Записи человека видны: профиль открыт, вы друзья или это вы. */
     fun canSee(user: User): Boolean = !user.closed || user.id in following || user.id == me.id
-    /** Люди, приславшие заявку на подписку. */
+    /** Люди, приславшие мне заявку в друзья. */
     val requestPeople: List<User> get() = followRequests.mapNotNull { Demo.person(it) }
+    /** Люди, которым я отправил заявку в друзья. */
+    val sentRequestPeople: List<User> get() = sentRequests.mapNotNull { Demo.person(it) }
+    /** Что между мной и человеком: друзья, заявка от меня, заявка ко мне или ничего. */
+    fun friendState(userId: Int): FriendState = when (userId) {
+        in following -> FriendState.Friends
+        in sentRequests -> FriendState.Requested
+        in followRequests -> FriendState.Incoming
+        else -> FriendState.None
+    }
     val blockedPeople: List<User> get() = Demo.people.filter { it.id in blocked }
     fun isBlocked(userId: Int): Boolean = userId in blocked
     /**
-     * Подписчики другого человека. Сервера нет, поэтому видны только
-     * знакомые по демо-данным — и вы, если подписаны.
+     * Друзья другого человека. Сервера нет, поэтому видны только знакомые
+     * по демо-данным — и вы, если вы друзья.
      */
-    fun followersOf(user: User): List<User> =
+    fun friendsOf(user: User): List<User> =
         (if (user.id in following) listOf(me) else emptyList()) +
-            Demo.people.filter { it.id != user.id && it.id !in blocked && (it.id + user.id) % 2 == 1 }
-    /** На кого подписан другой человек — тоже из знакомых; вы — если он подписан на вас. */
-    fun followingOf(user: User): List<User> =
-        (if (user.id in Demo.followers) listOf(me) else emptyList()) +
-            Demo.people.filter { it.id != user.id && it.id !in blocked && (it.id + user.id) % 2 == 0 }
+            Demo.people.filter { it.id != user.id && it.id !in blocked }
     val myPosts: List<Post> get() = posts.filter { it.author.id == me.id }
-    /** «Истории»: свои записи и записи тех, на кого подписан, — новые сверху, как и в ленте. */
+    /** «Истории»: свои записи и записи друзей — новые сверху, как и в ленте. */
     val stories: List<Post> get() = posts.filter { (it.author.id in following || it.author.id == me.id) && it.author.id !in blocked }
-    val followedPeople: List<User> get() = Demo.people.filter { it.id in following }
-    /** Кто подписан на вас: демо-люди и те, чьи заявки вы одобрили. */
-    val followers: List<User> get() = Demo.people.filter { it.id in Demo.followers || it.id in approvedFollowers }
+    /** Мои друзья — люди. */
+    val friends: List<User> get() = Demo.people.filter { it.id in following }
     /** «Сохранённое» в профиле: PRISM в закладках. */
     val savedPrisms: List<Prism> get() = prisms.filter { it.saved }
     fun track(id: String): MusicTrack? = tracks.firstOrNull { it.id == id }
@@ -319,6 +334,7 @@ class AppViewModel(
                 openChatId = if (tab == Tab.Chats) it.openChatId else null,
                 openGroupId = if (tab == Tab.Groups) it.openGroupId else null,
                 groupSettingsOpen = false,
+                openProduct = null,
                 openPersonId = null,
                 personSection = null,
                 returnToChatId = null,
@@ -329,7 +345,7 @@ class AppViewModel(
         }
     }
 
-    /** Раздел профиля: нажатие на «записи», «подписчики», «подписки», «группы» или «Сохранённое». */
+    /** Раздел профиля: нажатие на «записи», «друзья», «группы» или «Сохранённое». */
     fun openProfileSection(section: ProfileSection) {
         // Поверх может быть переписка, группа или настройки — уходят, иначе раздел не виден
         _state.update {
@@ -354,7 +370,7 @@ class AppViewModel(
         _state.update { it.copy(settingsPage = if (it.settingsPage == SettingsPage.Main) null else SettingsPage.Main) }
     }
 
-    /** Записи, подписчики или подписки другого человека — нажатием на счётчик на его странице. */
+    /** Записи или друзья другого человека — нажатием на счётчик на его странице. */
     fun openPersonSection(section: ProfileSection) {
         _state.update { it.copy(personSection = section) }
     }
@@ -390,6 +406,7 @@ class AppViewModel(
         val s = _state.value
         return when {
             s.creatingPrism -> { closePrismCreator(); true }
+            s.openProduct != null -> { closeProduct(); true }
             s.viewing != null -> { closeMedia(); true }
             s.commentsPostId != null || s.commentsPrismId != null -> { closeComments(); true }
             s.openChatId != null -> { closeChat(); true }
@@ -645,66 +662,80 @@ class AppViewModel(
     }
 
     /**
-     * Подписаться или отписаться: записи человека появятся в «Историях» или
-     * уйдут оттуда. На закрытый профиль уходит заявка; повторное нажатие —
-     * отозвать её. В демо заявку принимают через несколько секунд.
+     * Дружба взаимная. Уже друзья — удалить из друзей (интерфейс сначала
+     * спрашивает «Удалить из друзей?»); заявка ждёт ответа — отозвать её;
+     * человек сам прислал заявку — сразу друзья; иначе уходит заявка.
+     * В демо её принимает любой человек через несколько секунд.
      */
-    fun toggleFollow(userId: Int) {
+    fun toggleFriend(userId: Int) {
         val s0 = _state.value
-        if (userId == s0.me.id) return
-        val person = Demo.person(userId)
-        if (person != null && person.closed && userId !in s0.following) {
-            if (userId in s0.sentRequests) {
+        if (userId == s0.me.id || userId in s0.blocked) return
+        when (userId) {
+            in s0.following -> removeFriend(userId)
+            in s0.sentRequests -> {
                 acceptJobs.remove(userId)?.cancel()
                 _state.update { it.copy(sentRequests = it.sentRequests - userId) }
-                return
             }
-            _state.update { it.copy(sentRequests = it.sentRequests + userId) }
-            scheduleAcceptance(userId)
-            return
+            in s0.followRequests -> approveRequest(userId)
+            else -> {
+                _state.update { it.copy(sentRequests = it.sentRequests + userId) }
+                scheduleAcceptance(userId)
+            }
         }
-        _state.update { s ->
-            s.copy(following = if (userId in s.following) s.following - userId else s.following + userId)
-        }
+    }
+
+    /** Удалить из друзей: записи закрытого профиля и «Истории» человека уходят. */
+    fun removeFriend(userId: Int) {
+        declined += userId
+        _state.update { it.copy(following = it.following - userId) }
     }
 
     /** Таймеры демо-ответа на заявки: один на человека. */
     private val acceptJobs = mutableMapOf<Int, Job>()
 
-    /** В демо закрытый профиль принимает заявку через 12–30 секунд. */
+    /** В демо любой человек принимает заявку в друзья через 4–15 секунд. */
     private fun scheduleAcceptance(userId: Int) {
         if (!demoReplies) return
         acceptJobs.remove(userId)?.cancel()
         acceptJobs[userId] = viewModelScope.launch {
-            delay(Random.nextLong(12_000, 30_000))
+            delay(Random.nextLong(4_000, 15_000))
             acceptJobs.remove(userId)
             acceptSentRequest(userId)
         }
     }
 
-    /** Закрытый профиль принял вашу заявку: вы подписаны, записи видны. */
+    /** Человек принял вашу заявку: вы друзья, записи видны, приходит уведомление. */
     fun acceptSentRequest(userId: Int) {
         if (userId !in _state.value.sentRequests) return
-        _state.update { it.copy(sentRequests = it.sentRequests - userId, following = it.following + userId) }
+        _state.update {
+            it.copy(sentRequests = it.sentRequests - userId, followRequests = it.followRequests - userId, following = it.following + userId)
+        }
         Demo.person(userId)?.let { notify(Nudges.requestAccepted(it)) }
     }
 
-    /** Одобрить заявку: человек становится подписчиком. */
+    /** Принять заявку в друзья: человек становится другом. */
     fun approveRequest(userId: Int) {
-        _state.update { it.copy(followRequests = it.followRequests - userId, approvedFollowers = it.approvedFollowers + userId) }
+        acceptJobs.remove(userId)?.cancel()
+        _state.update {
+            it.copy(followRequests = it.followRequests - userId, sentRequests = it.sentRequests - userId, following = it.following + userId)
+        }
     }
 
-    /** Отклонить заявку: человек не узнает об этом, просто останется без доступа. */
+    /** Отклонить заявку: человек не узнает об этом, заявка просто исчезает. */
     fun declineRequest(userId: Int) {
+        declined += userId
         _state.update { it.copy(followRequests = it.followRequests - userId) }
     }
 
-    /** Новая заявка к вам — когда профиль закрыт. */
-    fun receiveFollowRequest(userId: Int) {
+    /** Кого отклонили или удалили из друзей: в демо они больше не присылают заявок сами. */
+    private val declined = mutableSetOf<Int>()
+
+    /** Новая заявка в друзья ко мне — от любого, кто не в чёрном списке и ещё не друг. */
+    fun receiveFriendRequest(userId: Int) {
         val s = _state.value
         val person = Demo.person(userId) ?: return
-        if (!s.privacy.closedProfile || userId in s.followRequests || userId in s.blocked ||
-            s.followers.any { it.id == userId }
+        if (userId == s.me.id || userId in s.followRequests || userId in s.blocked ||
+            userId in s.following || userId in s.sentRequests
         ) return
         _state.update { it.copy(followRequests = listOf(userId) + it.followRequests) }
         notify(Nudges.followRequest(person, person.interests.filter { it in s.me.interests }))
@@ -715,6 +746,7 @@ class AppViewModel(
     fun openChat(id: Int) {
         _state.update { s ->
             s.copy(
+                openProduct = null,
                 tab = Tab.Chats,
                 openChatId = id,
                 // Страница человека остаётся под перепиской: «назад» вернёт на неё
@@ -863,6 +895,7 @@ class AppViewModel(
                 // Пересланный опрос — новый, с чистыми голосами; место — как есть
                 poll = original.poll?.let { p -> p.copy(id = nextId++, options = p.options.map { it.copy(votes = 0) }, mine = emptySet(), closed = false) },
                 place = original.place,
+                product = original.product,
             ),
         )
         openChat(toChatId)
@@ -1072,13 +1105,14 @@ class AppViewModel(
                 tab = if (it.tab == Tab.Profile && it.profileSection != null) it.tab else Tab.Groups,
                 openGroupId = groupId,
                 groupSettingsOpen = false,
+                openProduct = it.openProduct?.takeIf { p -> p.first == groupId },
                 openPersonId = null,
             )
         }
     }
 
     fun closeGroup() {
-        _state.update { it.copy(openGroupId = null, groupSettingsOpen = false) }
+        _state.update { it.copy(openGroupId = null, groupSettingsOpen = false, openProduct = null) }
     }
 
     fun openGroupSettings() {
@@ -1133,6 +1167,126 @@ class AppViewModel(
 
     private fun updateOwnGroup(groupId: Int, change: (Group) -> Group) {
         _state.update { s -> s.copy(groups = s.groups.map { if (it.id == groupId && it.mine) change(it) else it }) }
+    }
+
+    // ---------- Витрина, сведения и оформление группы ----------
+
+    /** Подробное описание, сайт и контакты своей группы. Ссылка без схемы получает https://. */
+    fun updateGroupInfo(groupId: Int, info: GroupInfo) {
+        val clean = GroupInfo(
+            about = info.about.trim().take(2000),
+            website = normalizeUrl(info.website).take(200),
+            phone = info.phone.trim().take(40),
+            email = info.email.trim().take(80),
+            address = info.address.trim().take(160),
+            hours = info.hours.trim().take(80),
+        )
+        updateOwnGroup(groupId) { it.copy(info = clean) }
+    }
+
+    /** Фон страницы своей группы; null — как везде. */
+    fun setGroupBackdrop(groupId: Int, backdrop: Backdrop?) {
+        val old = _state.value.groups.firstOrNull { it.id == groupId }?.backdrop?.photo.orEmpty()
+        updateOwnGroup(groupId) { it.copy(backdrop = backdrop) }
+        // Своё фото фона, которое больше не стоит, — удалить копию
+        if (old.isNotEmpty() && old != backdrop?.photo && old !in backdropPhotos(_state.value)) runCatching { java.io.File(old).delete() }
+    }
+
+    fun setGroupAccent(groupId: Int, accent: GroupAccent) {
+        updateOwnGroup(groupId) { it.copy(accent = accent.id) }
+    }
+
+    /**
+     * Добавить или изменить товар своей группы. Ответ — текст ошибки или null.
+     * Новый товар — первым в витрине.
+     */
+    fun saveProduct(groupId: Int, product: Product): String? {
+        val title = product.title.trim()
+        if (title.isEmpty()) return t("Добавьте название товара")
+        if (product.price < 0) return t("Цена не может быть отрицательной")
+        val clean = product.copy(
+            id = if (product.id == 0L) nextId++ else product.id,
+            title = title.take(80),
+            description = product.description.trim().take(2000),
+            category = product.category.trim().take(40),
+            url = normalizeUrl(product.url).take(300),
+            photos = product.photos.take(MAX_PRODUCT_PHOTOS),
+            seed = if (product.seed == 0) (nextId % 97).toInt() + 1 else product.seed,
+        )
+        updateOwnGroup(groupId) { g ->
+            if (g.shop.any { it.id == clean.id }) g.copy(shop = g.shop.map { if (it.id == clean.id) clean else it })
+            else g.copy(shop = listOf(clean) + g.shop)
+        }
+        return null
+    }
+
+    fun deleteProduct(groupId: Int, productId: Long) {
+        updateOwnGroup(groupId) { g -> g.copy(shop = g.shop.filterNot { it.id == productId }) }
+    }
+
+    /** Переставить товар на одно место выше (-1) или ниже (+1). */
+    fun moveProduct(groupId: Int, productId: Long, delta: Int) {
+        updateOwnGroup(groupId) { g ->
+            val i = g.shop.indexOfFirst { it.id == productId }
+            val j = i + delta
+            if (i < 0 || j !in g.shop.indices) g
+            else g.copy(shop = g.shop.toMutableList().apply { add(j, removeAt(i)) })
+        }
+    }
+
+    fun findProduct(groupId: Int, productId: Long): Product? =
+        _state.value.groups.firstOrNull { it.id == groupId }?.shop?.firstOrNull { it.id == productId }
+
+    /**
+     * «Написать продавцу»: переписка с создателем группы и сообщение с
+     * товаром. Своя группа — некому писать (null). Ответ — номер переписки.
+     */
+    fun askSeller(groupId: Int, productId: Long, text: String = ""): Int? {
+        val s = _state.value
+        val group = s.groups.firstOrNull { it.id == groupId } ?: return null
+        if (group.mine) return null
+        val product = group.shop.firstOrNull { it.id == productId } ?: return null
+        val seller = Demo.person(group.ownerId) ?: return null
+        if (seller.id in s.blocked) return null
+        val chatId = s.chats.firstOrNull { it.peer.id == seller.id }?.id ?: run {
+            val id = (s.chats.maxOfOrNull { it.id } ?: 0) + 1
+            _state.update { st -> st.copy(chats = listOf(Chat(id, seller, emptyList())) + st.chats) }
+            id
+        }
+        val ref = ProductRef(groupId, product.id, product.title, product.price, product.photos.firstOrNull()?.path.orEmpty(), product.seed)
+        val question = text.trim().ifEmpty { tf("Здравствуйте! Интересует «%s». Он в наличии?", product.title) }
+        append(chatId, Message(nextId++, fromMe = true, text = question, time = now(), product = ref))
+        openChat(chatId)
+        if (demoReplies) later(2_500, 6_000) {
+            val reply = if (product.inStock) t("Здравствуйте! Да, в наличии. Могу отправить сегодня — напишите город и как удобнее получить.")
+            else t("Здравствуйте! Сейчас нет в наличии, сделаю под заказ за неделю. Подходит?")
+            append(chatId, Message(nextId++, fromMe = false, text = reply, time = now()))
+            _state.value.chats.firstOrNull { it.id == chatId }?.let { chat ->
+                if (!chat.muted && _state.value.openChatId != chatId) notify(Nudges.message(chat.peer, reply, chatId))
+            }
+        }
+        return chatId
+    }
+
+    /** Открыть товар из сообщения: группа с витриной и сам товар. */
+    fun openProduct(groupId: Int, productId: Long): Boolean {
+        // Товар убрали — открывать нечего (иначе «назад» съест нажатие впустую)
+        if (findProduct(groupId, productId) == null) return false
+        _state.update {
+            it.copy(
+                openChatId = null, openPersonId = null, personSection = null, returnToChatId = null,
+                tab = Tab.Groups, openGroupId = groupId, groupSettingsOpen = false, openProduct = groupId to productId,
+            )
+        }
+        return true
+    }
+
+    fun closeProduct() {
+        _state.update { it.copy(openProduct = null) }
+    }
+
+    fun showProduct(groupId: Int, productId: Long) {
+        _state.update { it.copy(openProduct = groupId to productId) }
     }
 
     /** Вступить или выйти. Из своей группы выйти нельзя — её можно только удалить. */
@@ -1454,22 +1608,25 @@ class AppViewModel(
         _state.update { it.copy(notifications = notifications) }
     }
 
-    /** Открыли профиль — ждущие заявки одобряются сами: теперь подписаться может любой. */
+    /** Приватность. Заявки в друзья от неё не зависят: открыли профиль — они всё так же ждут ответа. */
     fun setPrivacy(privacy: Privacy) {
-        _state.update {
-            if (!privacy.closedProfile && it.followRequests.isNotEmpty())
-                it.copy(privacy = privacy, approvedFollowers = it.approvedFollowers + it.followRequests, followRequests = emptyList())
-            else it.copy(privacy = privacy)
-        }
+        _state.update { it.copy(privacy = privacy) }
     }
 
     /**
      * В чёрный список: записи, комментарии и сообщения человека больше не
-     * видны, подписка на него снимается. Своя страница не блокируется.
+     * видны, он уходит из друзей, заявки с обеих сторон снимаются. Своя
+     * страница не блокируется.
      */
     fun block(userId: Int) {
         if (userId == _state.value.me.id) return
-        _state.update { s -> s.copy(blocked = s.blocked + userId, following = s.following - userId) }
+        acceptJobs.remove(userId)?.cancel()
+        _state.update { s ->
+            s.copy(
+                blocked = s.blocked + userId, following = s.following - userId,
+                followRequests = s.followRequests - userId, sentRequests = s.sentRequests - userId,
+            )
+        }
     }
 
     fun unblock(userId: Int) {
@@ -1574,8 +1731,8 @@ class AppViewModel(
 
     /**
      * Жизнь вокруг, пока нет сервера: друзья отмечают чек-ины, в группы
-     * приходят люди, вашим записям ставят «нравится», при закрытом
-     * профиле приходят заявки. Каждое событие — с персональным
+     * приходят люди, вашим записям ставят «нравится», приходят
+     * заявки в друзья. Каждое событие — с персональным
      * уведомлением. В тестах не запускается.
      */
     fun startDemoLife() {
@@ -1618,15 +1775,17 @@ class AppViewModel(
     /** Одно событие демо-жизни. Отдельно от цикла — чтобы проверять в тестах. */
     fun demoEvent(random: Random) {
         val s = _state.value
-        val friends = s.followedPeople.filter { it.id !in s.blocked }
+        val friends = s.friends.filter { it.id !in s.blocked }
         val joined = s.groups.filter { it.joined && !it.muted }
         val mine = s.myPosts
-        val requesters = Demo.people.filter { p -> p.id !in s.blocked && p.id !in s.followRequests && s.followers.none { it.id == p.id } }
+        val requesters = Demo.people.filter { p ->
+            p.id !in s.blocked && p.id !in s.followRequests && p.id !in s.following && p.id !in s.sentRequests && p.id !in declined
+        }
         val options = buildList {
             if (friends.isNotEmpty()) repeat(4) { add(0) }
             if (joined.isNotEmpty()) repeat(2) { add(1) }
             if (mine.isNotEmpty()) repeat(2) { add(2) }
-            if (s.privacy.closedProfile && requesters.isNotEmpty()) add(3)
+            if (requesters.isNotEmpty()) add(3)
         }
         if (options.isEmpty()) return
         when (options[random.nextInt(options.size)]) {
@@ -1645,7 +1804,7 @@ class AppViewModel(
                 _state.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) it.copy(likes = it.likes + 1) else it }) }
                 notify(Nudges.liked(fan, post))
             }
-            else -> receiveFollowRequest(requesters[random.nextInt(requesters.size)].id)
+            else -> receiveFriendRequest(requesters[random.nextInt(requesters.size)].id)
         }
     }
 
@@ -1964,7 +2123,7 @@ class AppViewModel(
         Snapshot(
             it.posts, it.chats, it.groups, it.prisms, it.following, it.notifications, nextId, it.privacy, it.blocked,
             it.tracks, it.playlists, it.reportedComments, it.stickers, it.profilePins,
-            it.checkInTemplates, it.followRequests, it.approvedFollowers, it.sentRequests, it.recapNotified,
+            it.checkInTemplates, it.followRequests, it.sentRequests, it.recapNotified,
             it.together, it.shelfMarks, it.dismissedRecs, it.growth, it.invitedBy, it.memorySeen,
             it.stickerPacks, it.backdrop, it.recentGifs, it.reports,
         )
@@ -1980,8 +2139,15 @@ class AppViewModel(
             s.copy(
                 posts = snapshot.posts,
                 chats = snapshot.chats,
-                groups = snapshot.groups,
+                // Демо-группы из старого сохранения получают витрину и сведения из новых демо-данных
+                groups = snapshot.groups.map { g ->
+                    val demo = Demo.groups.firstOrNull { it.id == g.id }
+                    if (demo != null && !g.mine && g.ownerId == 0 && demo.ownerId != 0)
+                        g.copy(ownerId = demo.ownerId, info = demo.info, shop = demo.shop, accent = demo.accent, backdrop = demo.backdrop)
+                    else g
+                },
                 prisms = snapshot.prisms,
+                // Старые «одобренные подписчики» StateStore уже слил в друзей
                 following = snapshot.following - s.me.id,
                 notifications = snapshot.notifications,
                 privacy = snapshot.privacy,
@@ -1992,9 +2158,8 @@ class AppViewModel(
                 stickers = snapshot.stickers,
                 profilePins = snapshot.profilePins,
                 checkInTemplates = snapshot.checkInTemplates,
-                followRequests = snapshot.followRequests,
-                approvedFollowers = snapshot.approvedFollowers,
-                sentRequests = snapshot.sentRequests,
+                followRequests = snapshot.followRequests.filter { it !in snapshot.following && it != s.me.id },
+                sentRequests = snapshot.sentRequests - snapshot.following - s.me.id,
                 recapNotified = snapshot.recapNotified,
                 together = snapshot.together?.withNewDemo(s.together) ?: s.together,
                 shelfMarks = snapshot.shelfMarks + s.shelfMarks.filter { m -> snapshot.shelfMarks.none { it.key == m.key } },
@@ -2017,6 +2182,9 @@ class AppViewModel(
         /** Сколько фото и видео можно приложить к одной записи или сообщению. */
         const val MAX_MEDIA = 10
 
+        /** Сколько фото у товара витрины. */
+        const val MAX_PRODUCT_PHOTOS = 5
+
         /** Сколько записей можно закрепить в витрине профиля. */
         const val MAX_PINS = 3
     }
@@ -2027,6 +2195,7 @@ fun messagePreview(message: Message): String {
     if (message.text.isNotEmpty()) return message.text
     message.poll?.let { return t("Опрос") + ": " + it.question }
     message.place?.let { return t("Геолокация") + (if (it.title.isNotEmpty()) ": " + it.title else "") }
+    message.product?.let { return t("Товар") + ": " + it.title }
     val a = message.attachments
     return when {
         a.isEmpty() -> ""
@@ -2047,6 +2216,7 @@ data class Snapshot(
     val chats: List<Chat>,
     val groups: List<Group>,
     val prisms: List<Prism>,
+    /** Мои друзья (взаимно); имя прежнее — так оно лежит в файле. */
     val following: Set<Int>,
     val notifications: Notifications,
     val nextId: Long,
@@ -2058,8 +2228,9 @@ data class Snapshot(
     val stickers: List<Sticker> = emptyList(),
     val profilePins: List<Long> = emptyList(),
     val checkInTemplates: List<CheckInTemplate> = emptyList(),
+    /** Входящие заявки в друзья — новые первыми. */
     val followRequests: List<Int> = emptyList(),
-    val approvedFollowers: Set<Int> = emptySet(),
+    /** Мои отправленные заявки в друзья. */
     val sentRequests: Set<Int> = emptySet(),
     val recapNotified: Set<String> = emptySet(),
     val together: TogetherState? = null,
@@ -2088,4 +2259,16 @@ private fun UiState.withMe(me: User): UiState {
         groups = groups.map { g -> g.copy(posts = g.posts.map { it.fix() }) },
         prisms = prisms.map { p -> p.copy(commentList = p.commentList.map { it.fix() }) },
     )
+}
+
+/** Что между мной и другим человеком. */
+enum class FriendState {
+    /** Не друзья, заявок нет. */
+    None,
+    /** Я отправил заявку, ждём ответа. */
+    Requested,
+    /** Человек прислал мне заявку. */
+    Incoming,
+    /** Друзья. */
+    Friends,
 }

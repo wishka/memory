@@ -1,8 +1,8 @@
 import Foundation
 
 /// Человек в Memory. hue — 0...1, оттенок его аватара-градиента.
-/// followers / followingCount — числа для карточки; у «себя» подписки
-/// считаются по настоящему списку.
+/// followers / followingCount — числа для карточки; followingCount —
+/// сколько у человека друзей (у «себя» друзья считаются по настоящему списку).
 struct User: Identifiable, Equatable, Codable {
     let id: Int
     var name: String
@@ -22,7 +22,7 @@ struct User: Identifiable, Equatable, Codable {
     /// Своё фото вместо букв: имя файла круглой обрезки в папке вложений;
     /// nil или "" — буквы. Необязательное: старые сохранения читаются без него.
     var avatar: String? = nil
-    /// Закрытый профиль: записи видят только одобренные подписчики.
+    /// Закрытый профиль: записи и чек-ины видят только друзья.
     /// Необязательное — для старых сохранений; снаружи — closed.
     var closedFlag: Bool? = nil
 
@@ -189,6 +189,36 @@ struct Message: Identifiable, Equatable, Codable {
     var poll: Poll? = nil
     /// Геолокация: место на карте; nil — нет.
     var place: SharedPlace? = nil
+    /// Товар с витрины группы — вопрос продавцу; nil — нет.
+    var product: ProductRef? = nil
+}
+
+/// Товар в сообщении: копия названия, цены и фото на момент вопроса — чтобы
+/// сообщение читалось, даже если товар потом изменят или уберут.
+/// photo — имя файла первого фото в папке вложений; "" — туманность по seed.
+struct ProductRef: Equatable, Codable {
+    var groupId: Int
+    var productId: Int64
+    var title: String
+    var price: Int64
+    var photo: String = ""
+    var seed: Int = 0
+}
+
+extension ProductRef {
+    private enum CodingKeys: String, CodingKey {
+        case groupId, productId, title, price, photo, seed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        groupId = try c.decodeIfPresent(Int.self, forKey: .groupId) ?? 0
+        productId = try c.decodeIfPresent(Int64.self, forKey: .productId) ?? 0
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        price = try c.decodeIfPresent(Int64.self, forKey: .price) ?? 0
+        photo = try c.decodeIfPresent(String.self, forKey: .photo) ?? ""
+        seed = try c.decodeIfPresent(Int.self, forKey: .seed) ?? 0
+    }
 }
 
 /// Место, которым поделились в переписке: точка и подпись («Я здесь», адрес).
@@ -276,6 +306,16 @@ struct MemoryGroup: Identifiable, Equatable, Codable {
     var pinnedPostId: Int64? = nil
     /// Писать в группу может только создатель; необязательное — для старых сохранений.
     var onlyOwnerPostsFlag: Bool? = nil
+    /// Кто создал (для чужих групп — кому писать о товарах); 0 — неизвестно.
+    var ownerId: Int = 0
+    /// Подробное описание, сайт и контакты.
+    var info: GroupInfo = GroupInfo()
+    /// Витрина: товары группы.
+    var shop: [Product] = []
+    /// Фон страницы группы; nil — как везде.
+    var backdrop: Backdrop? = nil
+    /// Цвет группы (GroupAccent.id); "" — сиреневый, как везде.
+    var accent: String = ""
 
     var muted: Bool {
         get { mutedFlag ?? false }
@@ -285,6 +325,37 @@ struct MemoryGroup: Identifiable, Equatable, Codable {
     var onlyOwnerPosts: Bool {
         get { onlyOwnerPostsFlag ?? false }
         set { onlyOwnerPostsFlag = newValue }
+    }
+}
+
+extension MemoryGroup {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, description, topic, members, seed, joined, mine, posts, mutedFlag, cover, pinnedPostId,
+             onlyOwnerPostsFlag, ownerId, info, shop, backdrop, accent
+    }
+
+    /// Чтение с запасом: витрина, сведения и оформление появились позже —
+    /// старые сохранения читаются без них.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        topic = try c.decodeIfPresent(String.self, forKey: .topic) ?? ""
+        members = try c.decodeIfPresent(Int.self, forKey: .members) ?? 0
+        seed = try c.decodeIfPresent(Int.self, forKey: .seed) ?? 0
+        joined = try c.decodeIfPresent(Bool.self, forKey: .joined) ?? false
+        mine = try c.decodeIfPresent(Bool.self, forKey: .mine) ?? false
+        posts = try c.decodeIfPresent([Post].self, forKey: .posts) ?? []
+        mutedFlag = try c.decodeIfPresent(Bool.self, forKey: .mutedFlag)
+        cover = try c.decodeIfPresent(Attachment.self, forKey: .cover)
+        pinnedPostId = try c.decodeIfPresent(Int64.self, forKey: .pinnedPostId)
+        onlyOwnerPostsFlag = try c.decodeIfPresent(Bool.self, forKey: .onlyOwnerPostsFlag)
+        ownerId = try c.decodeIfPresent(Int.self, forKey: .ownerId) ?? 0
+        info = try c.decodeIfPresent(GroupInfo.self, forKey: .info) ?? GroupInfo()
+        shop = try c.decodeIfPresent([Product].self, forKey: .shop) ?? []
+        backdrop = try c.decodeIfPresent(Backdrop.self, forKey: .backdrop)
+        accent = try c.decodeIfPresent(String.self, forKey: .accent) ?? ""
     }
 }
 
@@ -368,20 +439,27 @@ struct ProfileInfo: Equatable {
     var avatar: String = ""
 }
 
-/// Кому видно или кому можно: всем, тем, на кого вы подписаны, никому.
+/// Кому видно или кому можно: всем, друзьям, никому. following — друзья:
+/// имя и сохранённое значение прежние, чтобы читались старые настройки.
 enum Audience: String, Codable, CaseIterable {
     case everyone = "Все"
     case following = "Мои подписки"
     case nobody = "Никто"
 
-    var title: String { t(rawValue) }
+    var title: String {
+        switch self {
+        case .everyone: return t("Все")
+        case .following: return t("Друзья")
+        case .nobody: return t("Никто")
+        }
+    }
 }
 
 /// Настройки приватности. Пока сервера нет, хранятся на телефоне вместе с аккаунтом.
 struct Privacy: Equatable, Codable {
     /// Кто видит город, день рождения, сайт и интересы.
     var profileInfo: Audience = .everyone
-    /// Кто видит ваши подписки и подписчиков.
+    /// Кто видит ваших друзей.
     var followLists: Audience = .everyone
     /// Кто может написать вам.
     var messages: Audience = .everyone
@@ -391,8 +469,8 @@ struct Privacy: Equatable, Codable {
     var showOnline: Bool = true
     /// Показывать день рождения.
     var showBirthday: Bool = true
-    /// Закрытый профиль: записи и чек-ины видят только подписчики, а
-    /// подписаться можно лишь по заявке. Необязательное — для старых сохранений.
+    /// Закрытый профиль: записи и чек-ины видят только друзья. Заявки
+    /// в друзья от этого не зависят. Необязательное — для старых сохранений.
     var closedProfileFlag: Bool? = nil
     /// Персональные рекомендации на полке (по оценкам и вкусу похожих
     /// людей). Необязательное — для старых сохранений; снаружи — personalRecs.

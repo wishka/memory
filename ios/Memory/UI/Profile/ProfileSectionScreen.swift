@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Раздел профиля на отдельной странице: свои записи, подписчики,
-/// подписки, группы или сохранённые PRISM. Открывается нажатием на
+/// Раздел профиля на отдельной странице: свои записи, друзья, заявки
+/// в друзья, группы или сохранённые PRISM. Открывается нажатием на
 /// счётчик в профиле; «назад» возвращает в профиль.
 struct ProfileSectionScreen: View {
     let model: AppModel
@@ -29,8 +29,7 @@ struct ProfileSectionScreen: View {
     private func subtitle(_ state: UiState) -> String {
         switch section {
         case .posts: return plural(state.myPosts.count, "запись", "записи", "записей")
-        case .followers: return plural(state.followers.count, "подписчик", "подписчика", "подписчиков")
-        case .following: return plural(state.followedPeople.count, "подписка", "подписки", "подписок")
+        case .friends: return plural(state.friends.count, "друг", "друга", "друзей")
         case .groups: return plural(state.myGroups.count, "группа", "группы", "групп")
         case .saved: return plural(state.savedPrisms.count, "ролик", "ролика", "роликов")
         case .music: return plural(state.tracks.count, "трек", "трека", "треков")
@@ -56,27 +55,12 @@ struct ProfileSectionScreen: View {
                     onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil
                 )
             }
-        case .followers:
-            if state.followers.isEmpty { empty(t("Пока на вас никто не подписан.")) }
-            ForEach(state.followers) { person in
-                PersonRow(
-                    person: person,
-                    following: state.following.contains(person.id),
-                    followLabel: t("Подписаться в ответ"),
-                    onOpen: { model.openPerson(person.id) },
-                    onToggle: { model.toggleFollow(person.id) }
-                )
-            }
-        case .following:
-            if state.followedPeople.isEmpty { empty(t("Вы пока ни на кого не подписаны. Подписаться можно в ленте — кнопкой у имени автора.")) }
-            ForEach(state.followedPeople) { person in
-                PersonRow(
-                    person: person,
-                    following: true,
-                    followLabel: t("Подписаться"),
-                    onOpen: { model.openPerson(person.id) },
-                    onToggle: { model.toggleFollow(person.id) }
-                )
+        case .friends:
+            if state.friends.isEmpty { empty(t("У вас пока нет друзей. Добавить в друзья можно в ленте — кнопкой у имени автора.")) }
+            ForEach(state.friends) { person in
+                PersonRow(person: person, onOpen: { model.openPerson(person.id) }) {
+                    FriendActions(person: person, onWrite: { model.writeTo(person.id) }, onRemove: { model.removeFriend(person.id) })
+                }
             }
         case .groups:
             if state.myGroups.isEmpty { empty(t("Вы пока ни в одной группе. Найти группу можно во вкладке «Группы».")) }
@@ -94,8 +78,8 @@ struct ProfileSectionScreen: View {
             .padding(.horizontal, 16)
         case .requests:
             empty(state.privacy.closedProfile
-                  ? t("Профиль закрыт: подписаться на вас можно только по заявке. Одобренные увидят ваши записи и чек-ины.")
-                  : t("Профиль открыт — подписаться может любой. Закрыть его можно в настройках приватности."))
+                  ? t("Профиль закрыт: записи и чек-ины видят только друзья. Примите заявку — и человек станет вашим другом.")
+                  : t("Примите заявку — и человек станет вашим другом. Закрыть профиль от всех, кроме друзей, можно в настройках приватности."))
             if state.requestPeople.isEmpty { empty(t("Новых заявок нет.")) }
             ForEach(state.requestPeople) { person in
                 RequestRow(
@@ -104,6 +88,20 @@ struct ProfileSectionScreen: View {
                     onApprove: { model.approveRequest(person.id) },
                     onDecline: { model.declineRequest(person.id) }
                 )
+            }
+            // Мои заявки, которые ещё ждут ответа: их можно отозвать
+            let sent = state.sentRequestPeople
+            if !sent.isEmpty {
+                Text(t("ОТПРАВЛЕННЫЕ") + " · \(sent.count)")
+                    .textStyle(.label, Palette.mist)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                ForEach(sent) { person in
+                    PersonRow(person: person, onOpen: { model.openPerson(person.id) }) {
+                        GhostButton(title: t("Отменить")) { model.toggleFriend(person.id) }
+                    }
+                }
             }
         case .music, .stickers, .recap, .shelf:
             // «Моя музыка», «Студия», «Итоги» и «Полка» — свои экраны (MainScreen), сюда не попадают
@@ -121,14 +119,18 @@ struct ProfileSectionScreen: View {
     }
 }
 
-/// Человек в списке: аватар, имя, подписка. Нажатие — его страница.
-struct PersonRow: View {
+/// Человек в списке: аватар, имя и справа — кнопки (trailing: дружба,
+/// «Написать»…; пусто — без кнопок). Нажатие — его страница.
+struct PersonRow<Trailing: View>: View {
     let person: User
-    let following: Bool
-    let followLabel: String
     let onOpen: () -> Void
-    let onToggle: () -> Void
-    var showButton: Bool = true
+    let trailing: Trailing
+
+    init(person: User, onOpen: @escaping () -> Void, @ViewBuilder trailing: () -> Trailing) {
+        self.person = person
+        self.onOpen = onOpen
+        self.trailing = trailing()
+    }
 
     var body: some View {
         GlassCard {
@@ -147,13 +149,7 @@ struct PersonRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if showButton {
-                    if following {
-                        GhostButton(title: t("Вы подписаны"), action: onToggle)
-                    } else {
-                        GlowButton(title: followLabel, action: onToggle)
-                    }
-                }
+                trailing
             }
             .padding(12)
         }
@@ -218,7 +214,38 @@ private struct SavedTile: View {
     }
 }
 
-/// Заявка на подписку: принять или отклонить.
+extension PersonRow where Trailing == EmptyView {
+    init(person: User, onOpen: @escaping () -> Void) {
+        self.init(person: person, onOpen: onOpen) { EmptyView() }
+    }
+}
+
+/// Друг в моём списке: «Написать» и «⋯» → «Удалить из друзей» (с подтверждением).
+private struct FriendActions: View {
+    let person: User
+    let onWrite: () -> Void
+    let onRemove: () -> Void
+    @State private var menu = false
+    @State private var confirm = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            GhostButton(title: t("Написать"), action: onWrite)
+            Button { menu = true } label: {
+                Glyph(kind: .more, color: Palette.mist, size: 20)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassActions($menu, title: person.name, actions: [
+                GlassAction(icon: .trash, title: t("Удалить из друзей"), destructive: true) { confirm = true },
+            ])
+        }
+        .removeFriendConfirm($confirm, name: person.name, onConfirm: onRemove)
+    }
+}
+
+/// Заявка в друзья ко мне: принять или отклонить.
 private struct RequestRow: View {
     let person: User
     let onOpen: () -> Void

@@ -63,7 +63,6 @@ class StateStore(private val context: Context) {
             .put("prisms", JSONArray(s.prisms.map { prism(it) }))
             .put("checkInTemplates", JSONArray(s.checkInTemplates.map { template(it) }))
             .put("followRequests", JSONArray(s.followRequests))
-            .put("approvedFollowers", JSONArray(s.approvedFollowers.toList()))
             .put("sentRequests", JSONArray(s.sentRequests.toList()))
             .put("recapNotified", JSONArray(s.recapNotified.toList()))
             .put("together", s.together?.let { together(it) } ?: JSONObject.NULL)
@@ -86,7 +85,9 @@ class StateStore(private val context: Context) {
             chats = o.getJSONArray("chats").objects().map { chat(it) },
             groups = o.getJSONArray("groups").objects().map { group(it) },
             prisms = o.getJSONArray("prisms").objects().map { prism(it) },
-            following = o.getJSONArray("following").let { a -> (0 until a.length()).map { a.getInt(it) }.toSet() },
+            // «following» теперь — друзья. Старые «одобренные подписчики» (approvedFollowers) — тоже друзья
+            following = o.getJSONArray("following").let { a -> (0 until a.length()).map { a.getInt(it) }.toSet() } +
+                o.optJSONArray("approvedFollowers").ints(),
             // Старый файл: только общий выключатель «notifications»
             notifications = o.optJSONObject("notify")?.let { notify(it) }
                 ?: Notifications(all = o.optBoolean("notifications", true)),
@@ -100,7 +101,6 @@ class StateStore(private val context: Context) {
             reportedComments = o.optJSONArray("reportedComments")?.let { a -> (0 until a.length()).map { a.getLong(it) }.toSet() } ?: emptySet(),
             checkInTemplates = o.optJSONArray("checkInTemplates").objects().map { template(it) },
             followRequests = o.optJSONArray("followRequests").ints(),
-            approvedFollowers = o.optJSONArray("approvedFollowers").ints().toSet(),
             sentRequests = o.optJSONArray("sentRequests").ints().toSet(),
             recapNotified = o.optJSONArray("recapNotified")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
             together = o.optJSONObject("together")?.let { runCatching { together(it) }.getOrNull() },
@@ -441,6 +441,10 @@ class StateStore(private val context: Context) {
             .put("forwardedFrom", m.forwardedFrom ?: JSONObject.NULL)
             .put("poll", m.poll?.let { poll(it) } ?: JSONObject.NULL)
             .put("place", m.place?.let { JSONObject().put("lat", it.lat).put("lon", it.lon).put("title", it.title) } ?: JSONObject.NULL)
+            .put("product", m.product?.let {
+                JSONObject().put("groupId", it.groupId).put("productId", it.productId).put("title", it.title)
+                    .put("price", it.price).put("photo", it.photo).put("seed", it.seed)
+            } ?: JSONObject.NULL)
 
         private fun message(o: JSONObject) = Message(
             o.getLong("id"), o.getBoolean("fromMe"), o.getString("text"), o.getString("time"),
@@ -449,6 +453,9 @@ class StateStore(private val context: Context) {
             forwardedFrom = if (o.isNull("forwardedFrom")) null else o.optString("forwardedFrom"),
             poll = o.optJSONObject("poll")?.let { poll(it) },
             place = o.optJSONObject("place")?.let { SharedPlace(it.optDouble("lat", 0.0), it.optDouble("lon", 0.0), it.optString("title")) },
+            product = o.optJSONObject("product")?.let {
+                ProductRef(it.optInt("groupId"), it.optLong("productId"), it.optString("title"), it.optLong("price"), it.optString("photo"), it.optInt("seed"))
+            },
         )
 
         private fun poll(p: Poll) = JSONObject()
@@ -490,6 +497,12 @@ class StateStore(private val context: Context) {
             .put("cover", g.cover?.let { attachment(it) } ?: JSONObject.NULL)
             .put("pinnedPostId", g.pinnedPostId ?: JSONObject.NULL)
             .put("onlyOwnerPosts", g.onlyOwnerPosts)
+            .put("ownerId", g.ownerId)
+            .put("info", JSONObject().put("about", g.info.about).put("website", g.info.website).put("phone", g.info.phone)
+                .put("email", g.info.email).put("address", g.info.address).put("hours", g.info.hours))
+            .put("shop", JSONArray(g.shop.map { product(it) }))
+            .put("backdrop", g.backdrop?.let { backdrop(it) } ?: JSONObject.NULL)
+            .put("accent", g.accent)
             .put("posts", JSONArray(g.posts.map { post(it) }))
 
         private fun group(o: JSONObject) = Group(
@@ -500,6 +513,24 @@ class StateStore(private val context: Context) {
             cover = o.optJSONObject("cover")?.let { attachment(it) },
             pinnedPostId = if (o.isNull("pinnedPostId")) null else o.optLong("pinnedPostId"),
             onlyOwnerPosts = o.optBoolean("onlyOwnerPosts"),
+            ownerId = o.optInt("ownerId"),
+            info = o.optJSONObject("info")?.let {
+                GroupInfo(it.optString("about"), it.optString("website"), it.optString("phone"), it.optString("email"), it.optString("address"), it.optString("hours"))
+            } ?: GroupInfo(),
+            shop = o.optJSONArray("shop").objects().map { product(it) },
+            backdrop = o.optJSONObject("backdrop")?.let { backdrop(it) },
+            accent = o.optString("accent"),
+        )
+
+        private fun product(p: Product) = JSONObject()
+            .put("id", p.id).put("title", p.title).put("price", p.price).put("description", p.description)
+            .put("photos", JSONArray(p.photos.map { attachment(it) })).put("category", p.category)
+            .put("inStock", p.inStock).put("url", p.url).put("seed", p.seed)
+
+        private fun product(o: JSONObject) = Product(
+            o.optLong("id"), o.optString("title"), o.optLong("price"), o.optString("description"),
+            o.optJSONArray("photos").objects().map { attachment(it) }, o.optString("category"),
+            o.optBoolean("inStock", true), o.optString("url"), o.optInt("seed"),
         )
 
         private fun prism(p: Prism) = JSONObject()

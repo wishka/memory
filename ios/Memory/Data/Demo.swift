@@ -38,11 +38,8 @@ enum Demo {
 
     static let people = [vera, mark, alina, timur, sofia]
 
-    /// Изначальные подписки: Вера, Алина и София.
+    /// Изначальные друзья: Вера, Алина и София.
     static let following: Set<Int> = [2, 4, 6]
-
-    /// Кто подписан на вас: Вера, Марк, Алина и Тимур.
-    static let followers: Set<Int> = [2, 3, 4, 5]
 
     static func person(_ id: Int) -> User? {
         id == me.id ? me : people.first { $0.id == id }
@@ -115,7 +112,21 @@ enum Demo {
         ),
         MemoryGroup(
             id: 4, name: "Свет и стекло", description: "Искусство света: призмы, витражи, отражения.", topic: "Искусство", members: 870, seed: 64,
-            posts: [Post(id: 205, author: alina, text: "Задание недели: снимите радугу от призмы у себя дома.", minutesAgo: 1200, likes: 77, comments: 23)]
+            posts: [Post(id: 205, author: alina, text: "Задание недели: снимите радугу от призмы у себя дома.", minutesAgo: 1200, likes: 77, comments: 23)],
+            ownerId: 4,
+            info: GroupInfo(
+                about: "Мастерская Алины: делаю призмы, ловцы солнца и витражные подвесы вручную. Отправляю по всей России, в Москве — самовывоз.",
+                website: "behance.net/alina.prism",
+                address: "Москва, Хлебозавод №9",
+                hours: "Пн–Пт 11:00–20:00"
+            ),
+            shop: [
+                Product(id: 4001, title: "Призма «Радуга»", price: 1290, description: "Стеклянная призма 6 см. Ставьте на подоконник — комната наполнится радугами.", category: "Призмы", seed: 81),
+                Product(id: 4002, title: "Ловец солнца «Капля»", price: 2450, description: "Хрустальная капля на латунной цепочке, длина 30 см.", category: "Ловцы солнца", seed: 82),
+                Product(id: 4003, title: "Витражный подвес «Луна»", price: 3900, description: "Витраж Тиффани, 12 см, ручная пайка.", category: "Витражи", inStock: false, seed: 83),
+                Product(id: 4004, title: "Набор призм для съёмки", price: 1890, description: "Три призмы разной формы для портретов с бликами.", category: "Призмы", seed: 84),
+            ],
+            accent: "sky"
         ),
         MemoryGroup(id: 5, name: "Читаем медленно", description: "Книжный клуб: одна книга в месяц и встречи по воскресеньям.", topic: "Книги", members: 640, seed: 65),
         MemoryGroup(id: 6, name: "Тропы и вершины", description: "Походы выходного дня и большие маршруты.", topic: "Природа", members: 2150, seed: 66),

@@ -200,8 +200,11 @@ fun ProfileScreen(
                         // Счётчики — кнопки: каждый открывает свой раздел
                         Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
                             StatButton(state.myPosts.size, t("записи"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Posts) }
-                            StatButton(state.followers.size, t("подписчики"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Followers) }
-                            StatButton(state.following.size, t("подписки"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Following) }
+                            StatButton(state.friends.size, t("друзья"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Friends) }
+                            // Ждущие ответа заявки в друзья — отдельным счётчиком, пока они есть
+                            if (state.followRequests.isNotEmpty()) {
+                                StatButton(state.followRequests.size, t("заявки"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Requests) }
+                            }
                             StatButton(state.myGroups.size, t("группы"), Modifier.weight(1f)) { vm.openProfileSection(ProfileSection.Groups) }
                         }
                     }
@@ -236,14 +239,13 @@ fun ProfileScreen(
             item {
                 GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                     Column {
-                        if (state.privacy.closedProfile || state.followRequests.isNotEmpty()) {
-                            Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Requests) }) {
-                                SettingRow(LineIcon.Lock, t("Заявки на подписку")) {
-                                    Text("${state.followRequests.size}", style = MaterialTheme.typography.bodyMedium, color = if (state.followRequests.isEmpty()) Palette.Mist else Palette.Lilac)
-                                }
+                        // Заявки в друзья приходят при любом профиле — пункт есть всегда
+                        Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Requests) }) {
+                            SettingRow(LineIcon.Profile, t("Заявки в друзья")) {
+                                Text("${state.followRequests.size}", style = MaterialTheme.typography.bodyMedium, color = if (state.followRequests.isEmpty()) Palette.Mist else Palette.Lilac)
                             }
-                            FadeLine(Modifier.padding(horizontal = 16.dp))
                         }
+                        FadeLine(Modifier.padding(horizontal = 16.dp))
                         Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Saved) }) {
                             SettingRow(LineIcon.Bookmark, t("Сохранённое")) {
                                 Text("${state.savedPrisms.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)

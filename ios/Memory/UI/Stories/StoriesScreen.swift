@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Вкладка «Истории»: записи только тех, на кого человек подписан.
+/// Вкладка «Истории»: свои записи и записи друзей.
 ///
-/// Сверху ряд подписок в светящихся кольцах; нажатие оставляет записи
+/// Сверху ряд друзей в светящихся кольцах; нажатие оставляет записи
 /// одного человека, повторное — снова всех. Долгое нажатие — его страница.
 struct StoriesScreen: View {
     let model: AppModel
@@ -10,7 +10,7 @@ struct StoriesScreen: View {
 
     var body: some View {
         let state = model.state
-        // Отписались от выбранного — фильтр снимается сам
+        // Выбранный больше не друг — фильтр снимается сам
         let selected = only.flatMap { state.following.contains($0) ? $0 : nil }
         let posts = state.stories.filter { selected == nil || $0.author.id == selected }
 
@@ -18,16 +18,16 @@ struct StoriesScreen: View {
             LazyVStack(spacing: 14) {
                 ScreenTitle(
                     title: t("Истории"),
-                    subtitle: state.following.isEmpty ? t("Пока ни одной подписки") : tf("Подписки: %s", state.following.count)
+                    subtitle: state.friends.isEmpty ? t("Пока нет друзей") : plural(state.friends.count, "друг", "друга", "друзей")
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
-                if !state.followedPeople.isEmpty {
+                if !state.friends.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 14) {
-                            ForEach(state.followedPeople) { person in
+                            ForEach(state.friends) { person in
                                 StoryRing(
                                     person: person,
                                     active: selected == nil || selected == person.id,
@@ -47,8 +47,8 @@ struct StoriesScreen: View {
                     GlassCard {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(state.following.isEmpty
-                                 ? t("Здесь будут записи людей, на которых вы подписаны. Подписаться можно прямо в ленте — кнопкой у имени автора.")
-                                 : t("У ваших подписок пока нет записей."))
+                                 ? t("Здесь будут записи ваших друзей. ") + t("Добавить в друзья можно прямо в ленте — кнопкой у имени автора.")
+                                 : t("У ваших друзей пока нет записей."))
                                 .textStyle(.body)
                                 .fixedSize(horizontal: false, vertical: true)
                             GlowButton(title: t("Открыть ленту")) { model.selectTab(.feed) }
@@ -62,8 +62,8 @@ struct StoriesScreen: View {
                     PostCard(
                         post: post,
                         onLike: { model.toggleLike(post.id) },
-                        following: post.author.id == state.me.id ? nil : true,
-                        onFollow: { model.toggleFollow(post.author.id) },
+                        friend: post.author.id == state.me.id ? nil : state.friendState(post.author.id),
+                        onFriend: { model.toggleFriend(post.author.id) },
                         onAuthor: { model.openPerson(post.author.id) },
                         onComments: { model.openComments(post.id) },
                         onOpenMedia: model.openMedia,

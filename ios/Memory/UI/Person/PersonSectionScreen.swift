@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Записи, подписчики или подписки другого человека — по нажатию на
+/// Записи или друзья другого человека — по нажатию на
 /// счётчик на его странице. Пока сервера нет, в списках видны только
 /// знакомые люди; число на счётчике — настоящее.
 struct PersonSectionScreen: View {
@@ -12,8 +12,7 @@ struct PersonSectionScreen: View {
         let state = model.state
         let blocked = state.isBlocked(person.id)
         let posts = blocked || !state.canSee(person) ? [] : state.postsOf(person.id)
-        let people: [User] = section == .followers ? state.followersOf(person)
-            : section == .following ? state.followingOf(person) : []
+        let people: [User] = section == .friends ? state.friendsOf(person) : []
 
         ScrollView {
             LazyVStack(spacing: 12) {
@@ -42,14 +41,11 @@ struct PersonSectionScreen: View {
                     hint(t("Показаны люди, которых вы знаете в Memory."))
                     ForEach(people) { other in
                         let isMe = other.id == state.me.id
-                        PersonRow(
-                            person: other,
-                            following: isMe || state.following.contains(other.id),
-                            followLabel: t("Подписаться"),
-                            onOpen: { model.openPerson(other.id) },
-                            onToggle: { model.toggleFollow(other.id) },
-                            showButton: !isMe
-                        )
+                        PersonRow(person: other, onOpen: { model.openPerson(other.id) }) {
+                            if !isMe {
+                                FriendButton(state: state.friendState(other.id), name: other.name) { model.toggleFriend(other.id) }
+                            }
+                        }
                     }
                 }
             }
@@ -61,9 +57,7 @@ struct PersonSectionScreen: View {
     private func subtitle(_ state: UiState, posts: Int) -> String {
         switch section {
         case .posts: return plural(posts, "запись", "записи", "записей")
-        case .followers:
-            return plural(person.followers + (state.following.contains(person.id) ? 1 : 0), "подписчик", "подписчика", "подписчиков")
-        default: return plural(person.followingCount, "подписка", "подписки", "подписок")
+        default: return plural(state.friendsOf(person).count, "друг", "друга", "друзей")
         }
     }
 

@@ -6,8 +6,8 @@ import ru.wishka.memory.i18n.tf
 
 /**
  * Человек в Memory. hue — 0..1, оттенок его аватара-градиента.
- * followers / followingCount — числа для карточки; у «себя» подписки
- * считаются по настоящему списку.
+ * followers / followingCount — числа для карточки; followingCount —
+ * сколько у человека друзей (у «себя» друзья считаются по настоящему списку).
  */
 data class User(
     val id: Int,
@@ -27,7 +27,7 @@ data class User(
     val followingCount: Int = 0,
     /** Своё фото вместо букв: путь к круглой обрезке в памяти приложения; "" — буквы. */
     val avatar: String = "",
-    /** Закрытый профиль: записи видят только одобренные подписчики. */
+    /** Закрытый профиль: записи и чек-ины видят только друзья. */
     val closed: Boolean = false,
 ) {
     val initials: String
@@ -153,7 +153,15 @@ data class Message(
     val poll: Poll? = null,
     /** Геолокация: место на карте; null — нет. */
     val place: SharedPlace? = null,
+    /** Товар с витрины группы — вопрос продавцу; null — нет. */
+    val product: ProductRef? = null,
 )
+
+/**
+ * Товар в сообщении: копия названия, цены и фото на момент вопроса — чтобы
+ * сообщение читалось, даже если товар потом изменят или уберут.
+ */
+data class ProductRef(val groupId: Int, val productId: Long, val title: String, val price: Long, val photo: String = "", val seed: Int = 0)
 
 /** Место, которым поделились в переписке: точка и подпись («Я здесь», адрес). */
 data class SharedPlace(val lat: Double, val lon: Double, val title: String = "") {
@@ -225,7 +233,19 @@ data class Group(
     val pinnedPostId: Long? = null,
     /** Писать в группу могут только её создатели; false — все участники. */
     val onlyOwnerPosts: Boolean = false,
-)
+    /** Кто создал (для чужих групп — кому писать о товарах); 0 — неизвестно. */
+    val ownerId: Int = 0,
+    /** Подробное описание, сайт и контакты. */
+    val info: GroupInfo = GroupInfo(),
+    /** Витрина: товары группы. */
+    val shop: List<Product> = emptyList(),
+    /** Фон страницы группы; null — как везде. */
+    val backdrop: Backdrop? = null,
+    /** Цвет группы (GroupAccent.id); "" — сиреневый, как везде. */
+    val accent: String = "",
+) {
+    val accentColor: GroupAccent get() = GroupAccent.of(accent)
+}
 
 /** Интересы в профиле — те же темы, без «Другое». */
 val INTERESTS: List<String> get() = GROUP_TOPICS.filter { it != "Другое" }
@@ -308,10 +328,10 @@ data class ProfileInfo(
     val avatar: String = "",
 )
 
-/** Кому видно или кому можно: всем, тем, на кого вы подписаны, никому. */
+/** Кому видно или кому можно: всем, друзьям, никому. Following — друзья (имя прежнее — хранится). */
 enum class Audience(private val ru: String) {
     Everyone("Все"),
-    Following("Мои подписки"),
+    Following("Друзья"),
     Nobody("Никто"),
     ;
 
@@ -322,7 +342,7 @@ enum class Audience(private val ru: String) {
 data class Privacy(
     /** Кто видит город, день рождения, сайт и интересы. */
     val profileInfo: Audience = Audience.Everyone,
-    /** Кто видит ваши подписки и подписчиков. */
+    /** Кто видит ваших друзей. */
     val followLists: Audience = Audience.Everyone,
     /** Кто может написать вам. */
     val messages: Audience = Audience.Everyone,
@@ -333,8 +353,8 @@ data class Privacy(
     /** Показывать день рождения. */
     val showBirthday: Boolean = true,
     /**
-     * Закрытый профиль: записи и чек-ины видят только подписчики, а
-     * подписаться можно лишь по заявке, которую вы одобряете.
+     * Закрытый профиль: записи и чек-ины видят только друзья. Заявки
+     * в друзья от этого не зависят.
      */
     val closedProfile: Boolean = false,
     /**

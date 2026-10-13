@@ -196,7 +196,7 @@ private fun DrawScope.drawBackdrop(style: BackdropStyle, dots: List<Triple<Float
  * «Как везде» — сбросить свой фон к общему.
  */
 @Composable
-fun BackdropChooser(selected: Backdrop, onPick: (Backdrop) -> Unit, modifier: Modifier = Modifier, onReset: (() -> Unit)? = null) {
+fun BackdropChooser(selected: Backdrop, onPick: (Backdrop) -> Unit, modifier: Modifier = Modifier, onReset: (() -> Unit)? = null, resetLabel: String = t("Как во всех переписках")) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -262,6 +262,6 @@ fun BackdropChooser(selected: Backdrop, onPick: (Backdrop) -> Unit, modifier: Mo
                 colors = SliderDefaults.colors(thumbColor = Palette.Ink, activeTrackColor = Palette.Lilac, inactiveTrackColor = Palette.Plum),
             )
         }
-        if (onReset != null) GhostButton(t("Как во всех переписках"), onClick = onReset)
+        if (onReset != null) GhostButton(resetLabel, onClick = onReset)
     }
 }

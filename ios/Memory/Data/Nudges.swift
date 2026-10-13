@@ -1,6 +1,7 @@
 import Foundation
 
 /// Раздел уведомлений — по нему работают выключатели в настройках.
+/// follows — заявки в друзья (имя прежнее: так хранятся настройки и звуки).
 enum NudgeKind: String, CaseIterable { case friends, groups, reactions, follows, messages, recap, prism }
 
 /// Куда ведёт нажатие на уведомление.
@@ -110,17 +111,18 @@ enum Nudges {
         return Nudge(kind: .reactions, title: person.name, text: text, target: .post, targetId: post.id)
     }
 
-    /// Заявка на подписку; common — общие интересы, если есть.
+    /// Заявка в друзья ко мне; common — общие интересы, если есть.
     static func followRequest(_ person: User, common: [String]) -> Nudge {
         let text = common.isEmpty
-            ? tf("%s хочет подписаться на вас", person.name)
-            : tf("%s хочет подписаться на вас — у вас общие интересы: %s", person.name, common.prefix(2).map { t($0) }.joined(separator: ", "))
+            ? tf("%s хочет добавить вас в друзья", person.name)
+            : tf("%s хочет добавить вас в друзья — у вас общие интересы: %s", person.name, common.prefix(2).map { t($0) }.joined(separator: ", "))
         return Nudge(kind: .follows, title: person.name, text: text, target: .requests)
     }
 
+    /// Человек принял мою заявку в друзья.
     static func requestAccepted(_ person: User) -> Nudge {
         Nudge(kind: .follows, title: person.name,
-              text: tf(g(person, "%s принял вашу заявку — теперь вам видны его записи", "%s приняла вашу заявку — теперь вам видны её записи"), person.firstName),
+              text: tf(g(person, "%s принял вашу заявку в друзья", "%s приняла вашу заявку в друзья"), person.firstName),
               target: .person, targetId: Int64(person.id))
     }
 

@@ -10,7 +10,7 @@ final class Round13Tests: XCTestCase {
         L10n.shared.setLanguage(.ru)
     }
 
-    private func vm() -> AppModel {
+    private func makeModel() -> AppModel {
         AppModel(clock: { Date(timeIntervalSince1970: 1_790_000_000) }, demoReplies: false)
     }
 
@@ -57,7 +57,7 @@ final class Round13Tests: XCTestCase {
     }
 
     func testPublishedPollCanBeVotedAndClosedByAuthor() throws {
-        let vm = vm()
+        let vm = makeModel()
         vm.publish("", poll: PollDraft(question: "Кино или парк?", options: ["Кино", "Парк"]))
         let post = vm.state.posts[0]
         XCTAssertNotNil(post.poll)
@@ -72,14 +72,14 @@ final class Round13Tests: XCTestCase {
     }
 
     func testInvalidPollAloneIsNotPublished() {
-        let vm = vm()
+        let vm = makeModel()
         let before = vm.state.posts.count
         vm.publish("", poll: PollDraft(question: "?", options: ["один"]))
         XCTAssertEqual(before, vm.state.posts.count)
     }
 
     func testChatPollAndPlace() throws {
-        let vm = vm()
+        let vm = makeModel()
         let chat = vm.state.chats[0]
         vm.send(chat.id, "", poll: PollDraft(question: "Во сколько?", options: ["18:00", "19:00"]))
         let message = try XCTUnwrap(vm.state.chats.first { $0.id == chat.id }?.messages.last)
@@ -95,7 +95,7 @@ final class Round13Tests: XCTestCase {
     }
 
     func testForwardedPollStartsClean() throws {
-        let vm = vm()
+        let vm = makeModel()
         let chats = vm.state.chats
         let from = chats[0]
         let to = chats[1]
@@ -113,7 +113,7 @@ final class Round13Tests: XCTestCase {
     // MARK: - Гифки
 
     func testSentGifsGoToRecentWithoutDuplicates() {
-        let vm = vm()
+        let vm = makeModel()
         let chat = vm.state.chats[0]
         let gif = Attachment(id: "g1", kind: .photo, fileName: "hello.gif", name: "hello.gif", size: 10)
         XCTAssertTrue(gif.isGif)
@@ -128,7 +128,7 @@ final class Round13Tests: XCTestCase {
     // MARK: - Стикеры
 
     func testStickerPacks() throws {
-        let vm = vm()
+        let vm = makeModel()
         let pack = try XCTUnwrap(vm.createStickerPack(" Котики "))
         XCTAssertEqual("Котики", pack.name)
         XCTAssertNil(vm.createStickerPack("котики"))
@@ -158,7 +158,7 @@ final class Round13Tests: XCTestCase {
     // MARK: - Фоны и звуки
 
     func testBackdrops() throws {
-        let vm = vm()
+        let vm = makeModel()
         XCTAssertEqual(BackdropStyle.cosmos, Backdrop.default.kind)
         XCTAssertEqual(BackdropStyle.cosmos, Backdrop(style: BackdropStyle.photo.id).kind)
         XCTAssertFalse(BackdropStyle.collection.contains(.photo))
@@ -205,7 +205,7 @@ final class Round13Tests: XCTestCase {
     // MARK: - Демо-жизнь
 
     func testSocialEventsAddVotesPrismsOrPlaces() throws {
-        let vm = vm()
+        let vm = makeModel()
         vm.publish("", poll: PollDraft(question: "Куда?", options: ["a", "b"]))
         let prisms = vm.state.prisms.count
         let messages = vm.state.chats.reduce(0) { $0 + $1.messages.count }

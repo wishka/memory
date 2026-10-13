@@ -7,7 +7,7 @@ import SwiftUI
 struct PostComposer: View {
     let model: AppModel
     var placeholder: String = t("Чем хочется поделиться?")
-    var hintText: String = t("Видят ваши подписчики")
+    var hintText: String = t("Видно в ленте")
 
     @State private var text = ""
     @State private var media: [Attachment] = []

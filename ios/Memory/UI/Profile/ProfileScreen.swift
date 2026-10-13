@@ -62,8 +62,11 @@ struct ProfileScreen: View {
                             // Счётчики — кнопки: каждый открывает свой раздел
                             HStack {
                                 StatButton(value: state.myPosts.count, label: t("записи")) { model.openProfileSection(.posts) }
-                                StatButton(value: state.followers.count, label: t("подписчики")) { model.openProfileSection(.followers) }
-                                StatButton(value: state.following.count, label: t("подписки")) { model.openProfileSection(.following) }
+                                StatButton(value: state.friends.count, label: t("друзья")) { model.openProfileSection(.friends) }
+                                // Ждущие ответа заявки в друзья — отдельным счётчиком, пока они есть
+                                if !state.followRequests.isEmpty {
+                                    StatButton(value: state.followRequests.count, label: t("заявки")) { model.openProfileSection(.requests) }
+                                }
                                 StatButton(value: state.myGroups.count, label: t("группы")) { model.openProfileSection(.groups) }
                             }
                             .padding(.top, 6)
@@ -102,16 +105,15 @@ struct ProfileScreen: View {
 
                     GlassCard {
                         VStack(spacing: 0) {
-                            if state.privacy.closedProfile || !state.followRequests.isEmpty {
-                                Button { model.openProfileSection(.requests) } label: {
-                                    SettingRow(icon: .lock, title: t("Заявки на подписку")) {
-                                        Text("\(state.followRequests.count)").textStyle(.bodySmall, state.followRequests.isEmpty ? Palette.mist : Palette.lilac)
-                                    }
-                                    .contentShape(Rectangle())
+                            // Заявки в друзья приходят при любом профиле — пункт есть всегда
+                            Button { model.openProfileSection(.requests) } label: {
+                                SettingRow(icon: .profile, title: t("Заявки в друзья")) {
+                                    Text("\(state.followRequests.count)").textStyle(.bodySmall, state.followRequests.isEmpty ? Palette.mist : Palette.lilac)
                                 }
-                                .buttonStyle(.plain)
-                                FadeLine().padding(.horizontal, 16)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            FadeLine().padding(.horizontal, 16)
                             Button { model.openProfileSection(.saved) } label: {
                                 SettingRow(icon: .bookmark, title: t("Сохранённое")) {
                                     Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)

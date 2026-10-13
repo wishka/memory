@@ -4,9 +4,11 @@ import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 
 /** Раздел уведомлений — по нему работают выключатели в настройках. */
+/** Follows — заявки в друзья (имя прежнее: так хранятся настройки и звуки). */
 enum class NudgeKind { Friends, Groups, Reactions, Follows, Messages, Recap, Prism }
 
 /** Куда ведёт нажатие на уведомление. */
+/** Requests — раздел «Заявки в друзья» в профиле. */
 enum class NudgeTarget { Post, Group, Person, Chat, Recap, Requests, Together, Prism }
 
 /**
@@ -107,17 +109,18 @@ object Nudges {
         return Nudge(NudgeKind.Reactions, person.name, text, NudgeTarget.Post, post.id)
     }
 
-    /** Заявка на подписку; common — общие интересы, если есть. */
+    /** Заявка в друзья ко мне; common — общие интересы, если есть. */
     fun followRequest(person: User, common: List<String>) = Nudge(
         NudgeKind.Follows, person.name,
-        if (common.isEmpty()) tf("%s хочет подписаться на вас", person.name)
-        else tf("%s хочет подписаться на вас — у вас общие интересы: %s", person.name, common.take(2).joinToString(", ") { t(it) }),
+        if (common.isEmpty()) tf("%s хочет добавить вас в друзья", person.name)
+        else tf("%s хочет добавить вас в друзья — у вас общие интересы: %s", person.name, common.take(2).joinToString(", ") { t(it) }),
         NudgeTarget.Requests,
     )
 
+    /** Человек принял мою заявку в друзья. */
     fun requestAccepted(person: User) = Nudge(
         NudgeKind.Follows, person.name,
-        tf(g(person, "%s принял вашу заявку — теперь вам видны его записи", "%s приняла вашу заявку — теперь вам видны её записи"), firstName(person)),
+        tf(g(person, "%s принял вашу заявку в друзья", "%s приняла вашу заявку в друзья"), firstName(person)),
         NudgeTarget.Person, person.id.toLong(),
     )
 

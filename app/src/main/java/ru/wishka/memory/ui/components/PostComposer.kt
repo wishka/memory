@@ -57,7 +57,7 @@ fun PostComposer(
     onDeleteTemplate: (String) -> Unit,
     onOpenStudio: () -> Unit,
     placeholder: String = t("Чем хочется поделиться?"),
-    hint: String = t("Видят ваши подписчики"),
+    hint: String = t("Видно в ленте"),
     /** «Моя музыка» — для пункта «Музыка». */
     tracks: List<MusicTrack> = emptyList(),
     packs: List<StickerPack> = emptyList(),

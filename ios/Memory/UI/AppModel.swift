@@ -16,18 +16,19 @@ enum AppTab: String, CaseIterable, Identifiable {
     var title: String { t(rawValue) }
 }
 
-/// Разделы профиля за счётчиками: записи, подписчики, подписки, группы, сохранённое.
+/// Разделы профиля за счётчиками: записи, друзья, группы, сохранённое, заявки в друзья.
 enum ProfileSection: String, CaseIterable {
     case posts = "Записи"
-    case followers = "Подписчики"
-    case following = "Подписки"
+    /// Друзья (взаимно): у себя — с «Написать» и удалением из друзей, у другого — его друзья.
+    case friends = "Друзья"
     case groups = "Группы"
     case saved = "Сохранённое"
     case music = "Моя музыка"
     case stickers = "Студия"
     case recap = "Итоги"
     case shelf = "Полка"
-    case requests = "Заявки на подписку"
+    /// Входящие заявки в друзья и отправленные мной.
+    case requests = "Заявки в друзья"
 
     var title: String { t(rawValue) }
 }
@@ -74,6 +75,24 @@ enum ShelfTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// Что между мной и другим человеком.
+enum FriendState: Equatable {
+    /// Не друзья, заявок нет.
+    case notFriends
+    /// Я отправил заявку, ждём ответа.
+    case requested
+    /// Человек прислал мне заявку.
+    case incoming
+    /// Друзья.
+    case friends
+}
+
+/// Открытый товар витрины: группа и товар.
+struct ProductKey: Equatable {
+    let groupId: Int
+    let productId: Int64
+}
+
 // Внутри UiState одноимённые свойства заслоняют функции — зовём через эти.
 private func computeRunPlan(_ checkIns: [Dated]) -> RunPlan { runPlan(checkIns) }
 private func computeMovedKm(_ checkIns: [Dated]) -> Double { movedKm(checkIns) }
@@ -103,9 +122,11 @@ struct UiState: Equatable {
     var creatingPrism = false
     /// Настройки поверх вкладки «Профиль»; nil — закрыты.
     var settingsPage: SettingsPage? = nil
-    /// Раздел чужого профиля (записи, подписчики, подписки) поверх его страницы.
+    /// Раздел чужого профиля (записи, друзья) поверх его страницы.
     var personSection: ProfileSection? = nil
-    /// На кого подписан человек: их записи — во вкладке «Истории».
+    /// Мои друзья — дружба взаимная. Имя поля прежнее (было «подписки»):
+    /// так его хранят сохранения. Записи друзей — во вкладке «Истории»,
+    /// закрытые профили друзей видны.
     var following: Set<Int> = Demo.following
     var prisms: [Prism] = Demo.prisms
     /// PRISM, с которого открыть вкладку (из «Сохранённого»); nil — с первого.
@@ -129,11 +150,9 @@ struct UiState: Equatable {
     var groupSettingsOpen = false
     /// Свои чек-ины: шаблоны, которые человек создал сам.
     var checkInTemplates: [CheckInTemplate] = []
-    /// Заявки на подписку к вам (закрытый профиль) — новые первыми.
+    /// Входящие заявки в друзья ко мне — новые первыми. Имя поля прежнее — для сохранений.
     var followRequests: [Int] = []
-    /// Кого вы одобрили: подписчики сверх демо-списка.
-    var approvedFollowers: Set<Int> = []
-    /// Ваши заявки к закрытым профилям, пока их не приняли.
+    /// Мои исходящие заявки в друзья, пока их не приняли.
     var sentRequests: Set<Int> = []
     /// За какой период уже напомнили об Итогах: «2026-09», «2026».
     var recapNotified: Set<String> = []
@@ -175,6 +194,8 @@ struct UiState: Equatable {
     var reporting: ReportTarget? = nil
     /// Открытый документ: соглашение, политика, правила…
     var legalDoc: LegalDoc? = nil
+    /// Открытый товар витрины: группа и товар; nil — нет.
+    var openProduct: ProductKey? = nil
 
     /// Полка — собирается сама из чек-инов и отметок.
     var shelf: Shelf { Shelf.build(posts.datedCheckIns(me.id), shelfMarks) }
@@ -203,43 +224,40 @@ struct UiState: Equatable {
     /// Список чатов: закреплённые сверху, остальные — по последнему сообщению.
     var chatList: [Chat] { chats.filter(\.onTop) + chats.filter { !$0.onTop } }
     /// Лента без записей тех, кто в чёрном списке, и без записей закрытых
-    /// профилей, на которые вы не подписаны.
+    /// профилей тех, кто вам не друг.
     var feed: [Post] { posts.filter { !blocked.contains($0.author.id) && canSee($0.author) } }
-    /// Записи человека видны: профиль открыт, вы подписаны или это вы.
+    /// Записи человека видны: профиль открыт, вы друзья или это вы.
     /// Закрытость берётся из демо-данных: в сохранённых записях автор может быть старым.
     func canSee(_ user: User) -> Bool {
         let closed = Demo.person(user.id)?.closed ?? user.closed
         return !closed || following.contains(user.id) || user.id == me.id
     }
-    /// Люди, приславшие заявку на подписку.
+    /// Люди, приславшие мне заявку в друзья.
     var requestPeople: [User] { followRequests.compactMap { Demo.person($0) } }
+    /// Люди, которым я отправил заявку в друзья.
+    var sentRequestPeople: [User] { sentRequests.sorted().compactMap { Demo.person($0) } }
+    /// Что между мной и человеком: друзья, заявка от меня, заявка ко мне или ничего.
+    func friendState(_ userId: Int) -> FriendState {
+        if following.contains(userId) { return .friends }
+        if sentRequests.contains(userId) { return .requested }
+        if followRequests.contains(userId) { return .incoming }
+        return .notFriends
+    }
     var blockedPeople: [User] { Demo.people.filter { blocked.contains($0.id) } }
     func isBlocked(_ userId: Int) -> Bool { blocked.contains(userId) }
-    /// Подписчики другого человека. Сервера нет, поэтому видны только
-    /// знакомые по демо-данным — и вы, если подписаны.
-    func followersOf(_ user: User) -> [User] {
+    /// Друзья другого человека. Сервера нет, поэтому видны только знакомые
+    /// по демо-данным — и вы, если вы друзья.
+    func friendsOf(_ user: User) -> [User] {
         let you: [User] = following.contains(user.id) ? [me] : []
-        let known = Demo.people.filter { person in
-            person.id != user.id && !blocked.contains(person.id) && (person.id + user.id) % 2 == 1
-        }
-        return you + known
-    }
-    /// На кого подписан другой человек — тоже из знакомых; вы — если он подписан на вас.
-    func followingOf(_ user: User) -> [User] {
-        let you: [User] = Demo.followers.contains(user.id) ? [me] : []
-        let known = Demo.people.filter { person in
-            person.id != user.id && !blocked.contains(person.id) && (person.id + user.id) % 2 == 0
-        }
-        return you + known
+        return you + Demo.people.filter { $0.id != user.id && !blocked.contains($0.id) }
     }
     var myPosts: [Post] { posts.filter { $0.author.id == me.id } }
-    /// «Истории»: свои записи и записи тех, на кого подписан, — новые сверху.
+    /// «Истории»: свои записи и записи друзей — новые сверху, как и в ленте.
     var stories: [Post] {
         posts.filter { (following.contains($0.author.id) || $0.author.id == me.id) && !blocked.contains($0.author.id) }
     }
-    var followedPeople: [User] { Demo.people.filter { following.contains($0.id) } }
-    /// Кто подписан на вас: демо-люди и те, чьи заявки вы одобрили.
-    var followers: [User] { Demo.people.filter { Demo.followers.contains($0.id) || approvedFollowers.contains($0.id) } }
+    /// Мои друзья — люди.
+    var friends: [User] { Demo.people.filter { following.contains($0.id) } }
     /// «Сохранённое» в профиле: PRISM в закладках.
     var savedPrisms: [Prism] { prisms.filter { $0.saved } }
     func track(_ id: String) -> MusicTrack? { tracks.first { $0.id == id } }
@@ -253,6 +271,10 @@ struct UiState: Equatable {
         return nil
     }
     func findPrism(_ id: Int64) -> Prism? { prisms.first { $0.id == id } }
+    /// Товар витрины по группе и номеру.
+    func findProduct(_ groupId: Int, _ productId: Int64) -> Product? {
+        groups.first { $0.id == groupId }?.shop.first { $0.id == productId }
+    }
 
     /// Новое имя и сведения — во всех своих записях и комментариях.
     mutating func applyMe(_ me: User) {
@@ -304,8 +326,12 @@ struct Snapshot: Codable, Equatable {
     var stickers: [Sticker]? = nil
     var profilePins: [Int64]? = nil
     var checkInTemplates: [CheckInTemplate]? = nil
+    /// Входящие заявки в друзья — новые первыми.
     var followRequests: [Int]? = nil
+    /// Из старых файлов: «одобренные подписчики» — теперь друзья (сливаются
+    /// в following при восстановлении). Больше не записывается.
     var approvedFollowers: Set<Int>? = nil
+    /// Мои отправленные заявки в друзья.
     var sentRequests: Set<Int>? = nil
     var recapNotified: Set<String>? = nil
     var together: TogetherState? = nil
@@ -338,6 +364,8 @@ final class AppModel {
     static let maxMedia = 10
     /// Сколько записей можно закрепить в витрине профиля.
     static let maxPins = 3
+    /// Сколько фото у товара витрины.
+    static let maxProductPhotos = 5
 
     @ObservationIgnored private var nextId: Int64 = 10_000
     @ObservationIgnored private var replyIndex = 0
@@ -371,7 +399,7 @@ final class AppModel {
         state.tab = tab
     }
 
-    /// Раздел профиля: нажатие на «записи», «подписчики», «подписки», «группы» или «Сохранённое».
+    /// Раздел профиля: нажатие на «записи», «друзья», «группы» или «Сохранённое».
     func openProfileSection(_ section: ProfileSection) {
         // Поверх может быть переписка, группа или настройки — уходят, иначе раздел не виден
         state.tab = .profile
@@ -401,7 +429,7 @@ final class AppModel {
         state.settingsPage = state.settingsPage == .main ? nil : .main
     }
 
-    /// Записи, подписчики или подписки другого человека — нажатием на счётчик на его странице.
+    /// Записи или друзья другого человека — нажатием на счётчик на его странице.
     func openPersonSection(_ section: ProfileSection) {
         state.personSection = section
     }
@@ -439,6 +467,7 @@ final class AppModel {
     @discardableResult
     func back() -> Bool {
         if state.creatingPrism { closePrismCreator(); return true }
+        if state.openProduct != nil { closeProduct(); return true }
         if state.viewing != nil { closeMedia(); return true }
         if state.commentsPostId != nil || state.commentsPrismId != nil { closeComments(); return true }
         if state.openChatId != nil { closeChat(); return true }
@@ -709,67 +738,77 @@ final class AppModel {
         state.viewing = nil
     }
 
-    /// Подписаться или отписаться: записи человека появятся в «Историях» или
-    /// уйдут оттуда. На закрытый профиль уходит заявка; повторное нажатие —
-    /// отозвать её. В демо заявку принимают через несколько секунд.
-    func toggleFollow(_ userId: Int) {
-        if userId == state.me.id { return }
-        if let person = Demo.person(userId), person.closed, !state.following.contains(userId) {
-            if state.sentRequests.contains(userId) {
-                acceptTasks.removeValue(forKey: userId)?.cancel()
-                state.sentRequests.remove(userId)
-                return
-            }
+    /// Дружба взаимная. Уже друзья — удалить из друзей (интерфейс сначала
+    /// спрашивает «Удалить из друзей?»); заявка ждёт ответа — отозвать её;
+    /// человек сам прислал заявку — сразу друзья; иначе уходит заявка.
+    /// В демо её принимает любой человек через несколько секунд.
+    func toggleFriend(_ userId: Int) {
+        if userId == state.me.id || state.blocked.contains(userId) { return }
+        if state.following.contains(userId) {
+            removeFriend(userId)
+        } else if state.sentRequests.contains(userId) {
+            acceptTasks.removeValue(forKey: userId)?.cancel()
+            state.sentRequests.remove(userId)
+        } else if state.followRequests.contains(userId) {
+            approveRequest(userId)
+        } else {
             state.sentRequests.insert(userId)
             scheduleAcceptance(userId)
-            return
         }
-        if state.following.contains(userId) {
-            state.following.remove(userId)
-        } else {
-            state.following.insert(userId)
-        }
+    }
+
+    /// Удалить из друзей: записи закрытого профиля и «Истории» человека уходят.
+    func removeFriend(_ userId: Int) {
+        declined.insert(userId)
+        state.following.remove(userId)
     }
 
     /// Таймеры демо-ответа на заявки: один на человека.
     @ObservationIgnored private var acceptTasks: [Int: Task<Void, Never>] = [:]
 
-    /// В демо закрытый профиль принимает заявку через 12–30 секунд.
+    /// В демо любой человек принимает заявку в друзья через 4–15 секунд.
     private func scheduleAcceptance(_ userId: Int) {
         guard demoReplies else { return }
         acceptTasks.removeValue(forKey: userId)?.cancel()
         acceptTasks[userId] = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64.random(in: 12_000_000_000...30_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64.random(in: 4_000_000_000...15_000_000_000))
             guard !Task.isCancelled, let self else { return }
             self.acceptTasks[userId] = nil
             self.acceptSentRequest(userId)
         }
     }
 
-    /// Закрытый профиль принял вашу заявку: вы подписаны, записи видны.
+    /// Человек принял вашу заявку: вы друзья, записи видны, приходит уведомление.
     func acceptSentRequest(_ userId: Int) {
         guard state.sentRequests.contains(userId) else { return }
         state.sentRequests.remove(userId)
+        state.followRequests.removeAll { $0 == userId }
         state.following.insert(userId)
         if let person = Demo.person(userId) { notify(Nudges.requestAccepted(person)) }
     }
 
-    /// Одобрить заявку: человек становится подписчиком.
+    /// Принять заявку в друзья: человек становится другом.
     func approveRequest(_ userId: Int) {
+        acceptTasks.removeValue(forKey: userId)?.cancel()
         state.followRequests.removeAll { $0 == userId }
-        state.approvedFollowers.insert(userId)
+        state.sentRequests.remove(userId)
+        state.following.insert(userId)
     }
 
-    /// Отклонить заявку: человек просто останется без доступа.
+    /// Отклонить заявку: человек не узнает об этом, заявка просто исчезает.
     func declineRequest(_ userId: Int) {
+        declined.insert(userId)
         state.followRequests.removeAll { $0 == userId }
     }
 
-    /// Новая заявка к вам — когда профиль закрыт.
-    func receiveFollowRequest(_ userId: Int) {
-        guard let person = Demo.person(userId), state.privacy.closedProfile,
+    /// Кого отклонили или удалили из друзей: в демо они больше не присылают заявок сами.
+    @ObservationIgnored private var declined: Set<Int> = []
+
+    /// Новая заявка в друзья ко мне — от любого, кто не в чёрном списке и ещё не друг.
+    func receiveFriendRequest(_ userId: Int) {
+        guard let person = Demo.person(userId), userId != state.me.id,
               !state.followRequests.contains(userId), !state.blocked.contains(userId),
-              !state.followers.contains(where: { $0.id == userId }) else { return }
+              !state.following.contains(userId), !state.sentRequests.contains(userId) else { return }
         state.followRequests.insert(userId, at: 0)
         notify(Nudges.followRequest(person, common: person.interests.filter { state.me.interests.contains($0) }))
     }
@@ -932,7 +971,7 @@ final class AppModel {
         append(toChatId, Message(
             id: newId(), fromMe: true, text: original.text, time: Self.now(),
             attachments: original.attachments, forwardedFrom: author,
-            poll: poll, place: original.place
+            poll: poll, place: original.place, product: original.product
         ))
         openChat(toChatId)
     }
@@ -1219,6 +1258,138 @@ final class AppModel {
         }
     }
 
+    // MARK: Витрина, сведения и оформление группы
+
+    /// Подробное описание, сайт и контакты своей группы. Ссылка без схемы получает https://.
+    func updateGroupInfo(_ groupId: Int, _ info: GroupInfo) {
+        func clip(_ s: String, _ n: Int) -> String { String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(n)) }
+        let clean = GroupInfo(
+            about: clip(info.about, 2000),
+            website: String(normalizeUrl(info.website).prefix(200)),
+            phone: clip(info.phone, 40),
+            email: clip(info.email, 80),
+            address: clip(info.address, 160),
+            hours: clip(info.hours, 80)
+        )
+        updateOwnGroup(groupId) { $0.info = clean }
+    }
+
+    /// Фон страницы своей группы; nil — как везде.
+    func setGroupBackdrop(_ groupId: Int, _ backdrop: Backdrop?) {
+        let before = backdropPhotos()
+        updateOwnGroup(groupId) { $0.backdrop = backdrop }
+        // Своё фото фона, которое больше нигде не стоит, — удалить копию
+        dropBackdropPhotos(before)
+    }
+
+    func setGroupAccent(_ groupId: Int, _ accent: GroupAccent) {
+        updateOwnGroup(groupId) { $0.accent = accent.id }
+    }
+
+    /// Добавить или изменить товар своей группы. Ответ — текст ошибки или nil.
+    /// Новый товар — первым в витрине.
+    @discardableResult
+    func saveProduct(_ groupId: Int, _ product: Product) -> String? {
+        let title = product.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty { return t("Добавьте название товара") }
+        if product.price < 0 { return t("Цена не может быть отрицательной") }
+        var clean = product
+        if clean.id == 0 { clean.id = newId() }
+        clean.title = String(title.prefix(80))
+        clean.description = String(product.description.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000))
+        clean.category = String(product.category.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        clean.url = String(normalizeUrl(product.url).prefix(300))
+        clean.photos = Array(product.photos.prefix(Self.maxProductPhotos))
+        if clean.seed == 0 { clean.seed = Int(nextId % 97) + 1 }
+        let saved = clean
+        updateOwnGroup(groupId) { g in
+            if let i = g.shop.firstIndex(where: { $0.id == saved.id }) {
+                g.shop[i] = saved
+            } else {
+                g.shop.insert(saved, at: 0)
+            }
+        }
+        return nil
+    }
+
+    func deleteProduct(_ groupId: Int, _ productId: Int64) {
+        updateOwnGroup(groupId) { $0.shop.removeAll { $0.id == productId } }
+    }
+
+    /// Переставить товар на одно место выше (-1) или ниже (+1).
+    func moveProduct(_ groupId: Int, _ productId: Int64, _ delta: Int) {
+        updateOwnGroup(groupId) { g in
+            guard let i = g.shop.firstIndex(where: { $0.id == productId }) else { return }
+            let j = i + delta
+            guard g.shop.indices.contains(j) else { return }
+            let item = g.shop.remove(at: i)
+            g.shop.insert(item, at: j)
+        }
+    }
+
+    func findProduct(_ groupId: Int, _ productId: Int64) -> Product? {
+        state.findProduct(groupId, productId)
+    }
+
+    /// «Написать продавцу»: переписка с создателем группы и сообщение с
+    /// товаром. Своя группа — некому писать (nil). Ответ — номер переписки.
+    @discardableResult
+    func askSeller(_ groupId: Int, _ productId: Int64, text: String = "") -> Int? {
+        guard let group = state.groups.first(where: { $0.id == groupId }), !group.mine,
+              let product = group.shop.first(where: { $0.id == productId }),
+              let seller = Demo.person(group.ownerId), !state.blocked.contains(seller.id) else { return nil }
+        let chatId: Int
+        if let existing = state.chats.first(where: { $0.peer.id == seller.id }) {
+            chatId = existing.id
+        } else {
+            chatId = (state.chats.map(\.id).max() ?? 0) + 1
+            state.chats.insert(Chat(id: chatId, peer: seller, messages: []), at: 0)
+        }
+        let ref = ProductRef(groupId: groupId, productId: product.id, title: product.title, price: product.price,
+                             photo: product.photos.first?.fileName ?? "", seed: product.seed)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let question = trimmed.isEmpty ? tf("Здравствуйте! Интересует «%s». Он в наличии?", product.title) : trimmed
+        append(chatId, Message(id: newId(), fromMe: true, text: question, time: Self.now(), product: ref))
+        openChat(chatId)
+        if demoReplies {
+            let inStock = product.inStock
+            later(2.5, 6) { model in
+                let reply = inStock
+                    ? t("Здравствуйте! Да, в наличии. Могу отправить сегодня — напишите город и как удобнее получить.")
+                    : t("Здравствуйте! Сейчас нет в наличии, сделаю под заказ за неделю. Подходит?")
+                model.append(chatId, Message(id: model.newId(), fromMe: false, text: reply, time: Self.now()))
+                if let chat = model.state.chats.first(where: { $0.id == chatId }), !chat.muted, model.state.openChatId != chatId {
+                    model.notify(Nudges.message(chat.peer, reply, chatId: chatId))
+                }
+            }
+        }
+        return chatId
+    }
+
+    /// Открыть товар из сообщения: группа с витриной и сам товар.
+    /// Товар убрали — открывать нечего (false; иначе «назад» съест нажатие впустую).
+    @discardableResult
+    func openProduct(_ groupId: Int, _ productId: Int64) -> Bool {
+        guard findProduct(groupId, productId) != nil else { return false }
+        state.openChatId = nil
+        state.openPersonId = nil
+        state.personSection = nil
+        state.returnToChatId = nil
+        state.tab = .groups
+        state.openGroupId = groupId
+        state.groupSettingsOpen = false
+        state.openProduct = ProductKey(groupId: groupId, productId: productId)
+        return true
+    }
+
+    func closeProduct() {
+        state.openProduct = nil
+    }
+
+    func showProduct(_ groupId: Int, _ productId: Int64) {
+        state.openProduct = ProductKey(groupId: groupId, productId: productId)
+    }
+
     /// Вступить или выйти. Из своей группы выйти нельзя — её можно только удалить.
     func toggleGroup(_ groupId: Int) {
         state.groups = state.groups.map { group in
@@ -1382,9 +1553,10 @@ final class AppModel {
         dropBackdropPhotos(before)
     }
 
-    /// Свои фото фонов, которые сейчас где-то стоят: общий фон и фоны переписок.
+    /// Свои фото фонов, которые сейчас где-то стоят: общий фон, фоны переписок и страниц групп.
     private func backdropPhotos() -> Set<String> {
-        Set(([state.backdrop] + state.chats.compactMap(\.backdrop)).map(\.photo).filter { !$0.isEmpty })
+        Set(([state.backdrop] + state.chats.compactMap(\.backdrop) + state.groups.compactMap(\.backdrop))
+            .map(\.photo).filter { !$0.isEmpty })
     }
 
     /// Своё фото фона, которое больше нигде не стоит, — удалить копию.
@@ -1465,21 +1637,21 @@ final class AppModel {
         state.notifications = notifications
     }
 
-    /// Открыли профиль — ждущие заявки одобряются сами: подписаться может любой.
+    /// Заявки в друзья от закрытости профиля не зависят — ждут ответа как есть.
     func setPrivacy(_ privacy: Privacy) {
-        if !privacy.closedProfile && !state.followRequests.isEmpty {
-            state.approvedFollowers.formUnion(state.followRequests)
-            state.followRequests = []
-        }
         state.privacy = privacy
     }
 
     /// В чёрный список: записи, комментарии и сообщения человека больше не
-    /// видны, подписка на него снимается. Себя заблокировать нельзя.
+    /// видны, он уходит из друзей, заявки с обеих сторон снимаются. Себя
+    /// заблокировать нельзя.
     func block(_ userId: Int) {
         if userId == state.me.id { return }
+        acceptTasks.removeValue(forKey: userId)?.cancel()
         state.blocked.insert(userId)
         state.following.remove(userId)
+        state.followRequests.removeAll { $0 == userId }
+        state.sentRequests.remove(userId)
     }
 
     func unblock(_ userId: Int) {
@@ -1675,8 +1847,8 @@ final class AppModel {
     @ObservationIgnored private var lifeTask: Task<Void, Never>?
 
     /// Жизнь вокруг, пока нет сервера: друзья отмечают чек-ины, в группы
-    /// приходят люди, вашим записям ставят «нравится», при закрытом
-    /// профиле приходят заявки. Каждое событие — с персональным уведомлением.
+    /// приходят люди, вашим записям ставят «нравится», приходят заявки в
+    /// друзья. Каждое событие — с персональным уведомлением.
     func startDemoLife() {
         guard lifeTask == nil else { return }
         // Заявки, отправленные до перезапуска, тоже дождутся ответа
@@ -1729,17 +1901,18 @@ final class AppModel {
 
     /// Одно событие демо-жизни. Отдельно от цикла — чтобы проверять в тестах.
     func demoEvent<G: RandomNumberGenerator>(using rng: inout G) {
-        let friends = state.followedPeople.filter { !state.blocked.contains($0.id) }
+        let friends = state.friends.filter { !state.blocked.contains($0.id) }
         let joined = state.groups.filter { $0.joined && !$0.muted }
         let mine = state.myPosts
         let requesters = Demo.people.filter { p in
-            !state.blocked.contains(p.id) && !state.followRequests.contains(p.id) && !state.followers.contains { $0.id == p.id }
+            !state.blocked.contains(p.id) && !state.followRequests.contains(p.id) && !state.following.contains(p.id) && !state.sentRequests.contains(p.id)
+                && !declined.contains(p.id)
         }
         var options: [Int] = []
         if !friends.isEmpty { options += [0, 0, 0, 0] }
         if !joined.isEmpty { options += [1, 1] }
         if !mine.isEmpty { options += [2, 2] }
-        if state.privacy.closedProfile && !requesters.isEmpty { options.append(3) }
+        if !requesters.isEmpty { options.append(3) }
         guard let pick = options.randomElement(using: &rng) else { return }
         switch pick {
         case 0:
@@ -1766,7 +1939,7 @@ final class AppModel {
             }
             notify(Nudges.liked(fan, post))
         default:
-            receiveFollowRequest(requesters.randomElement(using: &rng)!.id)
+            receiveFriendRequest(requesters.randomElement(using: &rng)!.id)
         }
     }
 
@@ -2209,7 +2382,7 @@ final class AppModel {
             tracks: state.tracks, playlists: state.playlists, reportedComments: state.reportedComments,
             stickers: state.stickers, profilePins: state.profilePins,
             checkInTemplates: state.checkInTemplates, followRequests: state.followRequests,
-            approvedFollowers: state.approvedFollowers, sentRequests: state.sentRequests,
+            sentRequests: state.sentRequests,
             recapNotified: state.recapNotified, together: state.together,
             shelfMarks: state.shelfMarks, dismissedRecs: state.dismissedRecs, growth: state.growth,
             invitedBy: state.invitedBy, memorySeen: state.memorySeen,
@@ -2229,9 +2402,21 @@ final class AppModel {
             c.typing = false
             return c
         }
-        s.groups = snapshot.groups
+        // Демо-группы из старого сохранения получают витрину и сведения из новых демо-данных
+        s.groups = snapshot.groups.map { saved in
+            guard let demo = Demo.groups.first(where: { $0.id == saved.id }), !saved.mine, saved.ownerId == 0, demo.ownerId != 0 else { return saved }
+            var g = saved
+            g.ownerId = demo.ownerId
+            g.info = demo.info
+            g.shop = demo.shop
+            g.accent = demo.accent
+            g.backdrop = demo.backdrop
+            return g
+        }
         s.prisms = snapshot.prisms
-        s.following = snapshot.following.subtracting([s.me.id])
+        // following — друзья; старые «одобренные подписчики» — тоже друзья
+        let friends = snapshot.following.union(snapshot.approvedFollowers ?? [])
+        s.following = friends.subtracting([s.me.id])
         // Старый файл: только общий выключатель уведомлений
         s.notifications = snapshot.notify ?? Notifications(all: snapshot.notifications)
         s.privacy = snapshot.privacy ?? Privacy()
@@ -2242,9 +2427,9 @@ final class AppModel {
         s.stickers = snapshot.stickers ?? []
         s.profilePins = snapshot.profilePins ?? []
         s.checkInTemplates = snapshot.checkInTemplates ?? []
-        s.followRequests = snapshot.followRequests ?? []
-        s.approvedFollowers = snapshot.approvedFollowers ?? []
-        s.sentRequests = snapshot.sentRequests ?? []
+        let meId = s.me.id
+        s.followRequests = (snapshot.followRequests ?? []).filter { !friends.contains($0) && $0 != meId }
+        s.sentRequests = (snapshot.sentRequests ?? []).subtracting(friends).subtracting([meId])
         s.recapNotified = snapshot.recapNotified ?? []
         let demo = s.together
         s.together = snapshot.together.map { $0.withNewDemo(demo) } ?? demo

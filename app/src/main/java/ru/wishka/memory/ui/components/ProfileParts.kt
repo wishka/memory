@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.em
 import ru.wishka.memory.data.User
 import ru.wishka.memory.ui.theme.Palette
 
-/** Число и подпись под ним: «128 ПОДПИСЧИКОВ». */
+/** Число и подпись под ним: «128 ДРУЗЕЙ». */
 @Composable
 fun Stat(value: Int, label: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
