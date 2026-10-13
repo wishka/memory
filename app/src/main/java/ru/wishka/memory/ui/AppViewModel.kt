@@ -12,6 +12,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import ru.wishka.memory.data.GuideTopic
+import ru.wishka.memory.data.GuideChapter
+import ru.wishka.memory.data.GuideAction
+import ru.wishka.memory.data.Guide
 import ru.wishka.memory.data.Chat
 import ru.wishka.memory.data.Backdrop
 import ru.wishka.memory.data.normalizeUrl
@@ -109,6 +113,8 @@ enum class SettingsPage(private val ru: String) {
     Sounds("Звуки"),
     Wallpaper("Фон переписок"),
     Legal("Документы"),
+    /** Гид по Memory: главы → темы с шагами. */
+    Guide("Гид по Memory"),
     ;
 
     val title: String get() = t(ru)
@@ -224,6 +230,14 @@ data class UiState(
     val openedInvite: Invite? = null,
     /** День, когда закрыли «В этот день»: «2026-10-12». */
     val memorySeen: String = "",
+    /** Открытая глава гида; null — список глав. */
+    val guideChapter: String? = null,
+    /** Прочитанные темы гида: «глава/тема». */
+    val guideRead: Set<String> = emptySet(),
+    /** Карточку «Гид по Memory» в ленте закрыли. */
+    val guideHidden: Boolean = false,
+    /** Гид открыли не из настроек — «назад» из списка глав вернёт на эту вкладку. */
+    val guideReturn: Tab? = null,
     /** Полка: открытый раздел. */
     val shelfTab: ShelfTab = ShelfTab.Films,
     /** Коллекции стикеров, как наборы в iOS. */
@@ -341,6 +355,8 @@ class AppViewModel(
                 // Нажатие на «Профиль» внизу всегда ведёт на сам профиль
                 profileSection = null,
                 settingsPage = null,
+                guideChapter = null,
+                guideReturn = null,
             )
         }
     }
@@ -362,12 +378,89 @@ class AppViewModel(
 
     /** Настройки: шестерёнка в профиле открывает список, пункт списка — свою страницу. */
     fun openSettings(page: SettingsPage = SettingsPage.Main) {
-        _state.update { it.copy(tab = Tab.Profile, settingsPage = page, profileSection = null, openPersonId = null) }
+        _state.update {
+            it.copy(
+                tab = Tab.Profile, settingsPage = page, profileSection = null, openPersonId = null,
+                openChatId = null, openGroupId = null, groupSettingsOpen = false, openProduct = null,
+                guideChapter = null, guideReturn = null,
+            )
+        }
     }
 
-    /** «Назад» в настройках: со страницы — в список, из списка — в профиль. */
+    /**
+     * «Назад» в настройках: со страницы — в список, из списка — в профиль.
+     * В гиде: из главы — к списку глав; гид, открытый из ленты, — обратно в ленту.
+     */
     fun settingsBack() {
-        _state.update { it.copy(settingsPage = if (it.settingsPage == SettingsPage.Main) null else SettingsPage.Main) }
+        _state.update {
+            when {
+                it.settingsPage == SettingsPage.Guide && it.guideChapter != null -> it.copy(guideChapter = null)
+                it.settingsPage == SettingsPage.Guide && it.guideReturn != null ->
+                    it.copy(settingsPage = null, tab = it.guideReturn, guideReturn = null)
+                else -> it.copy(settingsPage = if (it.settingsPage == SettingsPage.Main) null else SettingsPage.Main)
+            }
+        }
+    }
+
+    // ==================== ГИД ====================
+
+    /** Гид: список глав или сразу глава. Открытый не из настроек помнит, куда вернуться. */
+    fun openGuide(chapterId: String? = null) {
+        val from = _state.value.let { if (it.settingsPage == null) it.tab else null }
+        openSettings(SettingsPage.Guide)
+        _state.update { it.copy(guideChapter = Guide.chapter(chapterId)?.id, guideReturn = from) }
+    }
+
+    fun openGuideChapter(chapterId: String) {
+        if (Guide.chapter(chapterId) == null) return
+        _state.update { it.copy(guideChapter = chapterId) }
+    }
+
+    fun closeGuideChapter() {
+        _state.update { it.copy(guideChapter = null) }
+    }
+
+    /** Тему раскрыли — она прочитана. */
+    fun markGuideRead(chapter: GuideChapter, topic: GuideTopic) {
+        val key = chapter.key(topic)
+        if (key in _state.value.guideRead) return
+        _state.update { it.copy(guideRead = it.guideRead + key) }
+    }
+
+    /** Убрать карточку гида из ленты; сам гид остаётся в настройках. */
+    fun hideGuideCard() {
+        _state.update { it.copy(guideHidden = true) }
+    }
+
+    /** Кнопка темы «Открыть …»: туда, о чём тема. */
+    fun guideGo(action: GuideAction) {
+        when (action) {
+            GuideAction.Feed -> selectTab(Tab.Feed)
+            GuideAction.Stories -> selectTab(Tab.Stories)
+            GuideAction.Prism -> selectTab(Tab.Prism)
+            GuideAction.NewPrism -> { selectTab(Tab.Prism); openPrismCreator() }
+            GuideAction.Chats -> { selectTab(Tab.Chats); _state.update { it.copy(openChatId = null) } }
+            GuideAction.Groups -> { selectTab(Tab.Groups); _state.update { it.copy(openGroupId = null) } }
+            GuideAction.Together -> selectTab(Tab.Together)
+            GuideAction.Profile -> selectTab(Tab.Profile)
+            GuideAction.Friends -> openProfileSection(ProfileSection.Friends)
+            GuideAction.Requests -> openProfileSection(ProfileSection.Requests)
+            GuideAction.Saved -> openProfileSection(ProfileSection.Saved)
+            GuideAction.Music -> openProfileSection(ProfileSection.Music)
+            GuideAction.Studio -> openProfileSection(ProfileSection.Stickers)
+            GuideAction.Shelf -> openProfileSection(ProfileSection.Shelf)
+            GuideAction.Recap -> openProfileSection(ProfileSection.Recap)
+            GuideAction.Settings -> openSettings(SettingsPage.Main)
+            GuideAction.Privacy -> openSettings(SettingsPage.Privacy)
+            GuideAction.Security -> openSettings(SettingsPage.Security)
+            GuideAction.Blacklist -> openSettings(SettingsPage.Blacklist)
+            GuideAction.Notifications -> openSettings(SettingsPage.Notifications)
+            GuideAction.Sounds -> openSettings(SettingsPage.Sounds)
+            GuideAction.Wallpaper -> openSettings(SettingsPage.Wallpaper)
+            GuideAction.Language -> openSettings(SettingsPage.Language)
+            GuideAction.Legal -> openSettings(SettingsPage.Legal)
+            GuideAction.Growth -> openSettings(SettingsPage.Growth)
+        }
     }
 
     /** Записи или друзья другого человека — нажатием на счётчик на его странице. */
@@ -2126,6 +2219,7 @@ class AppViewModel(
             it.checkInTemplates, it.followRequests, it.sentRequests, it.recapNotified,
             it.together, it.shelfMarks, it.dismissedRecs, it.growth, it.invitedBy, it.memorySeen,
             it.stickerPacks, it.backdrop, it.recentGifs, it.reports,
+            it.guideRead, it.guideHidden,
         )
     }
 
@@ -2172,6 +2266,8 @@ class AppViewModel(
                 backdrop = snapshot.backdrop,
                 recentGifs = snapshot.recentGifs,
                 reports = snapshot.reports,
+                guideRead = snapshot.guideRead intersect Guide.keys,
+                guideHidden = snapshot.guideHidden,
             ).withMe(s.me)
         }
     }
@@ -2243,6 +2339,8 @@ data class Snapshot(
     val backdrop: Backdrop = Backdrop.DEFAULT,
     val recentGifs: List<Attachment> = emptyList(),
     val reports: List<Report> = emptyList(),
+    val guideRead: Set<String> = emptySet(),
+    val guideHidden: Boolean = false,
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

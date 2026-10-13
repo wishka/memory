@@ -47,6 +47,8 @@ enum SettingsPage: String, CaseIterable {
     case sounds = "Звуки"
     case wallpaper = "Фон переписок"
     case legal = "Документы"
+    /// Гид по Memory: главы → темы с шагами.
+    case guide = "Гид по Memory"
 
     var title: String { t(rawValue) }
 }
@@ -196,6 +198,14 @@ struct UiState: Equatable {
     var legalDoc: LegalDoc? = nil
     /// Открытый товар витрины: группа и товар; nil — нет.
     var openProduct: ProductKey? = nil
+    /// Гид: открытая глава; nil — список глав.
+    var guideChapter: String? = nil
+    /// Прочитанные темы гида: «глава/тема».
+    var guideRead: Set<String> = []
+    /// Карточку гида в ленте скрыли.
+    var guideHidden = false
+    /// Вкладка, из которой открыли гид (не из настроек): «назад» вернёт в неё.
+    var guideReturn: AppTab? = nil
 
     /// Полка — собирается сама из чек-инов и отметок.
     var shelf: Shelf { Shelf.build(posts.datedCheckIns(me.id), shelfMarks) }
@@ -344,6 +354,9 @@ struct Snapshot: Codable, Equatable {
     var backdrop: Backdrop? = nil
     var recentGifs: [Attachment]? = nil
     var reports: [Report]? = nil
+    /// Прочитанные темы гида и скрытая карточка гида в ленте.
+    var guideRead: [String]? = nil
+    var guideHidden: Bool? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -396,6 +409,9 @@ final class AppModel {
         // Нажатие на «Профиль» внизу всегда ведёт на сам профиль
         state.profileSection = nil
         state.settingsPage = nil
+        state.openProduct = nil
+        state.guideChapter = nil
+        state.guideReturn = nil
         state.tab = tab
     }
 
@@ -421,12 +437,95 @@ final class AppModel {
         state.tab = .profile
         state.profileSection = nil
         state.openPersonId = nil
+        state.openChatId = nil
+        state.openGroupId = nil
+        state.groupSettingsOpen = false
+        state.openProduct = nil
+        state.guideChapter = nil
+        state.guideReturn = nil
         state.settingsPage = page
     }
 
     /// «Назад» в настройках: со страницы — в список, из списка — в профиль.
+    /// В гиде: из главы — к списку глав; гид, открытый из ленты, — обратно в ленту.
     func settingsBack() {
-        state.settingsPage = state.settingsPage == .main ? nil : .main
+        if state.settingsPage == .guide && state.guideChapter != nil {
+            state.guideChapter = nil
+        } else if state.settingsPage == .guide, let from = state.guideReturn {
+            state.settingsPage = nil
+            state.tab = from
+            state.guideReturn = nil
+        } else {
+            state.settingsPage = state.settingsPage == .main ? nil : .main
+        }
+    }
+
+    // MARK: - Гид
+
+    /// Гид: список глав или сразу глава. Открытый не из настроек помнит, куда вернуться.
+    func openGuide(_ chapterId: String? = nil) {
+        let from: AppTab? = state.settingsPage == nil ? state.tab : nil
+        openSettings(.guide)
+        state.guideChapter = Guide.chapter(chapterId)?.id
+        state.guideReturn = from
+    }
+
+    func openGuideChapter(_ chapterId: String) {
+        guard Guide.chapter(chapterId) != nil else { return }
+        state.guideChapter = chapterId
+    }
+
+    func closeGuideChapter() {
+        state.guideChapter = nil
+    }
+
+    /// Тему раскрыли — она прочитана.
+    func markGuideRead(_ chapter: GuideChapter, _ topic: GuideTopic) {
+        let key = chapter.key(topic)
+        if state.guideRead.contains(key) { return }
+        state.guideRead.insert(key)
+    }
+
+    /// Убрать карточку гида из ленты; сам гид остаётся в настройках.
+    func hideGuideCard() {
+        state.guideHidden = true
+    }
+
+    /// Кнопка темы «Открыть …»: туда, о чём тема.
+    func guideGo(_ action: GuideAction) {
+        switch action {
+        case .feed: selectTab(.feed)
+        case .stories: selectTab(.stories)
+        case .prism: selectTab(.prism)
+        case .newPrism:
+            selectTab(.prism)
+            openPrismCreator()
+        case .chats:
+            selectTab(.chats)
+            state.openChatId = nil
+        case .groups:
+            selectTab(.groups)
+            state.openGroupId = nil
+        case .together: selectTab(.together)
+        case .profile: selectTab(.profile)
+        case .friends: openProfileSection(.friends)
+        case .requests: openProfileSection(.requests)
+        case .saved: openProfileSection(.saved)
+        case .music: openProfileSection(.music)
+        case .studio: openProfileSection(.stickers)
+        case .shelf: openProfileSection(.shelf)
+        case .recap: openProfileSection(.recap)
+        case .settings: openSettings(.main)
+        case .privacy: openSettings(.privacy)
+        case .security: openSettings(.security)
+        case .blacklist: openSettings(.blacklist)
+        case .notifications: openSettings(.notifications)
+        case .sounds: openSettings(.sounds)
+        case .wallpaper: openSettings(.wallpaper)
+        case .language: openSettings(.language)
+        case .legal: openSettings(.legal)
+        case .growth: openSettings(.growth)
+        }
     }
 
     /// Записи или друзья другого человека — нажатием на счётчик на его странице.
@@ -2387,7 +2486,8 @@ final class AppModel {
             shelfMarks: state.shelfMarks, dismissedRecs: state.dismissedRecs, growth: state.growth,
             invitedBy: state.invitedBy, memorySeen: state.memorySeen,
             stickerPacks: state.stickerPacks, backdrop: state.backdrop, recentGifs: state.recentGifs,
-            reports: state.reports
+            reports: state.reports,
+            guideRead: state.guideRead.sorted(), guideHidden: state.guideHidden
         )
     }
 
@@ -2446,6 +2546,9 @@ final class AppModel {
         s.backdrop = snapshot.backdrop ?? Backdrop.default
         s.recentGifs = snapshot.recentGifs ?? []
         s.reports = snapshot.reports ?? []
+        // Отметки убранных тем не считаются
+        s.guideRead = Set(snapshot.guideRead ?? []).intersection(Guide.keys)
+        s.guideHidden = snapshot.guideHidden ?? false
         s.applyMe(s.me)
         state = s
     }

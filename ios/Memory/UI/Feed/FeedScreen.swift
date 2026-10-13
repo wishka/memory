@@ -41,6 +41,11 @@ struct FeedScreen: View {
 
                 PostComposer(model: model)
 
+                // Новичку — гид по приложению, пока карточку не скрыли
+                if !state.guideHidden {
+                    GuideFeedCard(model: model)
+                }
+
                 // «Год назад вы…»: своя запись из этого же дня — пока не закрыли сегодня
                 let memories = memoriesOfDay(state.posts, meId: state.me.id)
                 if let first = memories.first, state.memorySeen != dayKey() {

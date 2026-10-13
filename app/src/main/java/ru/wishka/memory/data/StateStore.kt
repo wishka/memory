@@ -79,6 +79,8 @@ class StateStore(private val context: Context) {
             .put("backdrop", backdrop(s.backdrop))
             .put("recentGifs", JSONArray(s.recentGifs.map { attachment(it) }))
             .put("reports", JSONArray(s.reports.map { report(it) }))
+            .put("guideRead", JSONArray(s.guideRead.toList()))
+            .put("guideHidden", s.guideHidden)
 
         fun snapshot(o: JSONObject) = Snapshot(
             posts = o.getJSONArray("posts").objects().map { post(it) },
@@ -119,6 +121,8 @@ class StateStore(private val context: Context) {
             backdrop = o.optJSONObject("backdrop")?.let { backdrop(it) } ?: Backdrop.DEFAULT,
             recentGifs = o.optJSONArray("recentGifs").objects().map { attachment(it) },
             reports = o.optJSONArray("reports").objects().map { report(it) },
+            guideRead = o.optJSONArray("guideRead")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
+            guideHidden = o.optBoolean("guideHidden", false),
         )
 
         private fun report(r: Report) = JSONObject()

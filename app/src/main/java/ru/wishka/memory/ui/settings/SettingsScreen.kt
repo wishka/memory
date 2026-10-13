@@ -1,5 +1,10 @@
 package ru.wishka.memory.ui.settings
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
+import ru.wishka.memory.data.Guide
+import ru.wishka.memory.ui.guide.guidePage
+import ru.wishka.memory.ui.guide.GuideUi
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.clickable
@@ -105,8 +110,21 @@ fun SettingsScreen(
     prefs: DevicePrefs,
     account: AccountActions,
 ) {
+    // Гид: поиск и раскрытые темы переживают переход между главами
+    var guideQuery by rememberSaveable { mutableStateOf("") }
+    var guideOpen by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val guide = GuideUi(
+        query = guideQuery,
+        onQuery = { guideQuery = it.take(60) },
+        expanded = guideOpen.toSet(),
+        onToggle = { key -> guideOpen = if (key in guideOpen) guideOpen - key else guideOpen + key },
+    )
+    // Новая страница или глава гида — с самого верха
+    val list = rememberLazyListState()
+    LaunchedEffect(page, state.guideChapter) { list.scrollToItem(0) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = list,
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -133,6 +151,7 @@ fun SettingsScreen(
             SettingsPage.Security -> item { SecurityPage(account) }
             SettingsPage.Privacy -> item { PrivacyPage(state.privacy, vm::setPrivacy) { vm.openLegal(LegalDoc.Recommendations) } }
             SettingsPage.Legal -> item { LegalPage(vm) }
+            SettingsPage.Guide -> guidePage(vm, state, guide)
             SettingsPage.Blacklist -> blacklistPage(vm, state.blockedPeople)
             SettingsPage.Notifications -> item { NotificationsPage(vm, state) }
             SettingsPage.TextSize -> item { TextSizePage(prefs) }
@@ -158,6 +177,14 @@ fun SettingsScreen(
 // ==================== СПИСОК РАЗДЕЛОВ ====================
 
 private fun LazyListScope.mainPage(vm: AppViewModel, state: UiState, version: String, account: AccountActions) {
+    item {
+        Card {
+            NavRow(
+                LineIcon.Info, t("Гид по Memory"),
+                tf("%s из %s", state.guideRead.size.coerceAtMost(Guide.topicCount), Guide.topicCount),
+            ) { vm.openGuide() }
+        }
+    }
     item {
         Card {
             NavRow(LineIcon.Shield, t("Безопасность"), "") { vm.openSettings(SettingsPage.Security) }
