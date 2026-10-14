@@ -36,6 +36,8 @@ import ru.wishka.memory.data.MediaFiles
 import ru.wishka.memory.data.Sticker
 import ru.wishka.memory.data.MusicTrack
 import ru.wishka.memory.data.PollDraft
+import ru.wishka.memory.data.SharedPlace
+import ru.wishka.memory.data.User
 import ru.wishka.memory.data.StickerPack
 import ru.wishka.memory.data.plural
 import ru.wishka.memory.i18n.t
@@ -52,7 +54,7 @@ import ru.wishka.memory.ui.theme.Palette
 fun PostComposer(
     stickers: List<Sticker>,
     templates: List<CheckInTemplate>,
-    onPublish: (String, List<Attachment>, CheckIn?, PollDraft?) -> Unit,
+    onPublish: (String, List<Attachment>, CheckIn?, PollDraft?, SharedPlace?) -> Unit,
     onCreateTemplate: (String, String, String, String) -> String?,
     onDeleteTemplate: (String) -> Unit,
     onOpenStudio: () -> Unit,
@@ -62,6 +64,8 @@ fun PostComposer(
     tracks: List<MusicTrack> = emptyList(),
     packs: List<StickerPack> = emptyList(),
     recentGifs: List<Attachment> = emptyList(),
+    /** Кого можно отметить на фото — друзья. */
+    friends: List<User> = emptyList(),
 ) {
     var text by rememberSaveable { mutableStateOf("") }
     var media by remember { mutableStateOf<List<Attachment>>(emptyList()) }
@@ -73,6 +77,9 @@ fun PostComposer(
     var editingPoll by remember { mutableStateOf(false) }
     var poll by remember { mutableStateOf<PollDraft?>(null) }
     var scenario by remember { mutableStateOf<String?>(null) }
+    var place by remember { mutableStateOf<SharedPlace?>(null) }
+    var choosingPlace by remember { mutableStateOf(false) }
+    var tagging by remember { mutableStateOf<Attachment?>(null) }
     val picker = rememberMediaPicker { picked ->
         media = (media + picked).take(AppViewModel.MAX_MEDIA)
     }
@@ -107,6 +114,20 @@ fun PostComposer(
             GlassField(text, { text = it.take(2000) }, if (checkIn != null) t("Пара слов к чек-ину") else if (media.isEmpty()) t("…или просто напишите") else placeholder)
             MentionSuggestions(text, { text = it.take(2000) }, Modifier.padding(horizontal = 12.dp))
             poll?.let { p -> PendingPoll(p, onRemove = { poll = null }, modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()) }
+            place?.let { p ->
+                Row(
+                    Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp).clip(RoundedCornerShape(50)).glass(RoundedCornerShape(50)).padding(start = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Glyph(LineIcon.Globe, Palette.Lilac, size = 16.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(p.title.ifEmpty { t("Место на карте") }, style = MaterialTheme.typography.labelLarge, color = Palette.Ink, maxLines = 1)
+                    Box(
+                        Modifier.size(32.dp).clip(CircleShape).clickable(onClickLabel = t("Убрать место")) { place = null },
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(LineIcon.Close, Palette.Mist, size = 14.dp, description = t("Убрать место")) }
+                }
+            }
             PendingAttachments(
                 media,
                 onRemove = { item ->
@@ -114,7 +135,16 @@ fun PostComposer(
                     MediaFiles.delete(item)
                 },
                 modifier = Modifier.padding(bottom = 10.dp),
+                onTag = { tagging = it },
             )
+            if (media.any { it.kind == ru.wishka.memory.data.MediaKind.Photo && !it.sticker && !it.isGif } && media.none { it.tags.isNotEmpty() }) {
+                Text(
+                    t("Нажмите на фото, чтобы отметить друзей"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.Mist,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -139,6 +169,16 @@ fun PostComposer(
                         .clickable { choosingCheckIn = true },
                     contentAlignment = Alignment.Center,
                 ) { Glyph(LineIcon.Pin, Palette.Lilac, size = 20.dp, description = LineIcon.Pin.label) }
+                Spacer(Modifier.width(8.dp))
+                // Место — подпись «📍 …» под шапкой записи и точка на карте
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .glass(CircleShape, strong = place != null)
+                        .clickable(onClickLabel = t("Добавить место")) { choosingPlace = true },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(LineIcon.Globe, Palette.Lilac, size = 20.dp, description = t("Добавить место")) }
                 Spacer(Modifier.width(10.dp))
                 Text(
                     when {
@@ -151,11 +191,12 @@ fun PostComposer(
                     modifier = Modifier.weight(1f),
                 )
                 GlowButton(t("Поделиться"), enabled = text.isNotBlank() || media.isNotEmpty() || checkIn != null || poll != null, onClick = {
-                    onPublish(text, media, checkIn, poll)
+                    onPublish(text, media, checkIn, poll, place)
                     text = ""
                     media = emptyList()
                     checkIn = null
                     poll = null
+                    place = null
                 })
             }
         }
@@ -178,6 +219,13 @@ fun PostComposer(
             onPicked = { picked -> media = (media + picked).take(AppViewModel.MAX_MEDIA) },
             onDismiss = { choosingMusic = false },
         )
+    }
+    if (choosingPlace) PlacePickerDialog(place, onDone = { place = it; choosingPlace = false }, onDismiss = { choosingPlace = false })
+    tagging?.let { item ->
+        PhotoTagEditor(item, friends, onDone = { tags ->
+            media = media.map { if (it.id == item.id) it.copy(tags = tags) else it }
+            tagging = null
+        }, onDismiss = { tagging = null })
     }
     if (editingPoll) PollEditorDialog(onDismiss = { editingPoll = false }, onCreate = { poll = it })
     if (choosingCheckIn) {
@@ -214,4 +262,56 @@ private fun ScenarioChip(emoji: String, title: String, onClick: () -> Unit) {
         Spacer(Modifier.width(6.dp))
         Text(title, style = MaterialTheme.typography.labelLarge, color = Palette.Ink)
     }
+}
+
+/**
+ * Место для записи: название и, по желанию, точка «где я сейчас».
+ * Без точки место — просто подпись; с точкой — открывается на карте.
+ */
+@Composable
+fun PlacePickerDialog(current: SharedPlace?, onDone: (SharedPlace?) -> Unit, onDismiss: () -> Unit) {
+    var title by remember { mutableStateOf(current?.title.orEmpty()) }
+    var at by remember { mutableStateOf(current?.takeIf { it.lat != 0.0 || it.lon != 0.0 }?.at) }
+    val locate = rememberLocate()
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Palette.Night,
+        title = { Text(t("Где это было?"), color = Palette.Ink) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GlassField(
+                    title, { title = it.take(80) }, t("Название: кафе, парк, город"), singleLine = true,
+                    modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(50)),
+                )
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).glass(RoundedCornerShape(14.dp), strong = at != null)
+                        .clickable(enabled = !locate.busy) { locate.locate { found -> if (found != null) at = found } }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Glyph(LineIcon.Pin, Palette.Lilac, size = 18.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        when {
+                            locate.busy -> t("Ищем, где вы…")
+                            at != null -> t("Точка на карте добавлена")
+                            else -> t("Отметить, где я сейчас")
+                        },
+                        style = MaterialTheme.typography.bodyMedium, color = Palette.Ink,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                enabled = title.isNotBlank() || at != null,
+                onClick = { onDone(SharedPlace(at?.lat ?: 0.0, at?.lon ?: 0.0, title.trim())) },
+            ) { Text(t("Готово"), color = Palette.Lilac) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { if (current != null) onDone(null) else onDismiss() }) {
+                Text(if (current != null) t("Убрать") else t("Отмена"), color = Palette.Mist)
+            }
+        },
+    )
 }

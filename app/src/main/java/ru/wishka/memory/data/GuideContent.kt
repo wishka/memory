@@ -149,11 +149,31 @@ internal object GuideContent {
                 action = GuideAction.Feed,
             ),
             GuideTopic(
+                "repost", GuideText("Репост и «Отправить в чат»", "Repost and “Send to chat”", "Վերահրապարակում և «Ուղարկել զրույցին»"),
+                listOf(
+                    GuideText("Под записью — значок репоста: запись появится у вас в ленте карточкой, можно добавить свои слова.", "Under a post is the repost icon: it appears in your feed as a card, and you can add your own words.", "Գրառման տակ վերահրապարակման պատկերակն է․ այն կհայտնվի ձեր լրահոսում քարտով, կարող եք ավելացնել ձեր խոսքերը։"),
+                    GuideText("Самолётик справа — отправить запись кому-то в переписку.", "The paper plane on the right sends the post to someone’s chat.", "Աջ կողմի ինքնաթիռիկը՝ գրառումն ուղարկել որևէ մեկի զրույցին։"),
+                    GuideText("Нажатие на карточку внутри репоста открывает оригинал.", "Tapping the card inside a repost opens the original.", "Վերահրապարակման ներսի քարտին սեղմելով՝ կբացվի բնօրինակը։"),
+                ),
+                tip = GuideText("Записями закрытого профиля поделиться нельзя.", "Posts from a private profile can’t be shared.", "Փակ պրոֆիլի գրառումներով հնարավոր չէ կիսվել։"),
+                action = GuideAction.Feed,
+            ),
+            GuideTopic(
                 "photos", GuideText("Фото и видео на весь экран", "Full-screen photos and videos", "Լուսանկարներ և տեսանյութեր ամբողջ էկրանով"),
                 listOf(
                     GuideText("Нажмите на фото или видео — откроется на весь экран.", "Tap a photo or video to open it full screen.", "Սեղմեք լուսանկարին կամ տեսանյութին, և այն կբացվի ամբողջ էկրանով։"),
                     GuideText("Двумя пальцами — увеличить, двойное касание — увеличить в этой точке.", "Pinch to zoom; double-tap to zoom in at that spot.", "Երկու մատով՝ մեծացնել, կրկնակի հպումով՝ մեծացնել այդ կետում։"),
                 ),
+            ),
+            GuideTopic(
+                "place-tags", GuideText("Место и отметки на фото", "Place and photo tags", "Վայր և նշումներ լուսանկարներում"),
+                listOf(
+                    GuideText("Значок глобуса в новой записи — добавить место: название и, по желанию, точку «где я сейчас».", "The globe icon in a new post adds a place: a name and, optionally, a “where I am now” pin.", "Նոր գրառման գլոբուսի պատկերակը՝ ավելացնել վայր․ անվանում և, ցանկության դեպքում, «որտեղ եմ հիմա» կետ։"),
+                    GuideText("Нажмите на добавленное фото, коснитесь человека и выберите друга — так он будет отмечен.", "Tap an added photo, touch a person and choose a friend to tag them.", "Սեղմեք ավելացված լուսանկարին, հպեք մարդուն և ընտրեք ընկեր՝ նրան նշելու համար։"),
+                    GuideText("Записи, где отметили вас, — в профиле, «Отметки на фото».", "Posts where you’re tagged are in your profile under “Photo tags”.", "Գրառումները, որտեղ ձեզ նշել են, պրոֆիլում են՝ «Նշումներ լուսանկարներում»։"),
+                ),
+                tip = GuideText("Отмечать можно только друзей.", "You can only tag friends.", "Կարելի է նշել միայն ընկերներին։"),
+                action = GuideAction.Feed,
             ),
             GuideTopic(
                 "pins", GuideText("Закладки и витрина профиля", "Saved posts and profile showcase", "Էջանիշներ և պրոֆիլի ցուցափեղկ"),
@@ -175,21 +195,51 @@ internal object GuideContent {
     private fun chapter2() = GuideChapter(
         "stories", "🌙",
         GuideText("Истории", "Stories", "Պատմություններ"),
-        GuideText("Записи друзей — отдельно от общей ленты", "Friends’ posts, apart from the main feed", "Ընկերների գրառումները՝ ընդհանուր լրահոսից առանձին"),
+        GuideText("Истории на сутки, «Актуальное», близкие друзья и эфиры", "Stories for a day, highlights, close friends and live streams", "Պատմություններ մեկ օրով, ընտրված, մտերիմ ընկերներ և եթերներ"),
         listOf(
             GuideTopic(
-                "view", GuideText("Что здесь", "What’s here", "Ինչ կա այստեղ"),
+                "view", GuideText("Смотреть истории", "Watching stories", "Դիտել պատմությունները"),
                 listOf(
-                    GuideText("Ваши записи и записи друзей — без чужих людей.", "Your posts and your friends’ — no strangers.", "Ձեր և ընկերների գրառումները՝ առանց անծանոթների։"),
-                    GuideText("Сверху — друзья в кольцах: нажатие показывает записи одного человека, долгое нажатие — его страницу.", "Friends in rings at the top: tap to see one person’s posts, long-press for their page.", "Վերևում՝ ընկերները օղակներում․ սեղմելով՝ կտեսնեք մեկ մարդու գրառումները, երկար սեղմելով՝ նրա էջը։"),
+                    GuideText("Вверху «Историй» — кружки друзей. Цветное кольцо — есть новые, серое — всё просмотрено, зелёное — история «для близких».", "At the top of Stories are friends’ circles. A colored ring means new stories, grey — all seen, green — a close-friends story.", "«Պատմություններ»-ի վերևում ընկերների շրջանակներն են։ Գունավոր օղակ՝ նորեր կան, մոխրագույն՝ բոլորը դիտված են, կանաչ՝ «մտերիմների համար» պատմություն։"),
+                    GuideText("Касание справа — дальше, слева — назад, удержание — пауза. Истории идут по кругу от друга к другу.", "Tap the right side to go forward, the left to go back, hold to pause. Stories run from one friend to the next.", "Հպեք աջ կողմին՝ առաջ, ձախին՝ հետ, պահեք՝ դադար։ Պատմությունները հերթով անցնում են ընկերից ընկեր։"),
+                    GuideText("Внизу — ответ: он придёт автору в переписку вместе с самой историей. Сердечко — тоже ответ.", "Reply at the bottom: it goes to the author’s chat together with the story. The heart is a reply too.", "Ներքևում՝ պատասխան․ այն կգնա հեղինակի զրույցին՝ պատմության հետ միասին։ Սրտիկը նույնպես պատասխան է։"),
                 ),
                 action = GuideAction.Stories,
             ),
             GuideTopic(
                 "new", GuideText("Новая история", "A new story", "Նոր պատմություն"),
                 listOf(
-                    GuideText("Поле вверху — то же, что в Ленте: фото, стикеры, чек-ины.", "The field at the top works like the Feed’s: photos, stickers, check-ins.", "Վերևի դաշտը նույնն է, ինչ Լրահոսում՝ լուսանկարներ, ստիկերներ, չեք-իններ։"),
+                    GuideText("Нажмите на свой кружок с «+»: фото или видео, или просто текст на цветном фоне.", "Tap your own circle with “+”: a photo or video, or just text on a colored background.", "Սեղմեք ձեր «+»-ով շրջանակին՝ լուսանկար կամ տեսանյութ, կամ պարզապես տեքստ գունավոր ֆոնի վրա։"),
+                    GuideText("Выберите, кому: «Все друзья» или «Близкие друзья».", "Choose who sees it: “All friends” or “Close friends”.", "Ընտրեք՝ ում համար․ «Բոլոր ընկերները» կամ «Մտերիմ ընկերներ»։"),
+                    GuideText("История видна сутки, потом остаётся только у вас — в архиве.", "A story is visible for a day, then stays only with you, in the archive.", "Պատմությունը տեսանելի է մեկ օր, հետո մնում է միայն ձեզ մոտ՝ արխիվում։"),
                 ),
+                action = GuideAction.Stories,
+            ),
+            GuideTopic(
+                "viewers", GuideText("Кто посмотрел", "Who viewed", "Ով է դիտել"),
+                listOf(
+                    GuideText("Откройте свою историю и нажмите «Просмотры» внизу — там все, кто её видел, и кто поставил сердечко.", "Open your story and tap “Views” at the bottom — everyone who saw it, and who sent a heart.", "Բացեք ձեր պատմությունը և սեղմեք ներքևի «Դիտումներ»-ին՝ բոլորը, ով տեսել է, և ով սրտիկ է ուղարկել։"),
+                    GuideText("В меню «⋯» своей истории — «Удалить историю» и «В «Актуальное»».", "Your story’s “⋯” menu has “Delete story” and “Add to highlights”.", "Ձեր պատմության «⋯» ընտրացանկում՝ «Ջնջել պատմությունը» և «Ավելացնել ընտրվածին»։"),
+                ),
+                action = GuideAction.Stories,
+            ),
+            GuideTopic(
+                "highlights", GuideText("«Актуальное»", "Highlights", "Ընտրված"),
+                listOf(
+                    GuideText("Подборки историй в профиле — они не исчезают через сутки.", "Story collections on your profile — they don’t disappear after a day.", "Պատմությունների հավաքածուներ պրոֆիլում՝ մեկ օր անց չեն անհետանում։"),
+                    GuideText("Профиль → «Новая подборка»: дайте название и выберите истории из архива. Долгое нажатие на подборку — изменить или удалить.", "Profile → “New collection”: give it a name and pick stories from the archive. Long-press a collection to edit or delete it.", "Պրոֆիլ → «Նոր հավաքածու»՝ անվանեք և ընտրեք պատմություններ արխիվից։ Երկար սեղմեք հավաքածուին՝ խմբագրելու կամ ջնջելու համար։"),
+                ),
+                tip = GuideText("«Актуальное» видят те же, кто видит ваши истории, — друзья.", "Highlights are seen by the same people who see your stories — your friends.", "Ընտրվածը տեսնում են նույն մարդիկ, ովքեր տեսնում են ձեր պատմությունները՝ ընկերները։"),
+                action = GuideAction.Profile,
+            ),
+            GuideTopic(
+                "close-friends", GuideText("Близкие друзья", "Close friends", "Մտերիմ ընկերներ"),
+                listOf(
+                    GuideText("В новой истории выберите «Близкие друзья» → «Изменить список» и отметьте людей.", "In a new story choose “Close friends” → “Edit list” and pick people.", "Նոր պատմության մեջ ընտրեք «Մտերիմ ընկերներ» → «Խմբագրել ցանկը» և նշեք մարդկանց։"),
+                    GuideText("Истории «для близких» видят только они; у них кольцо зелёное.", "Close-friends stories are seen only by them; they get a green ring.", "«Մտերիմների համար» պատմությունները տեսնում են միայն նրանք․ օղակը կանաչ է։"),
+                ),
+                tip = GuideText("Никто не узнает, в списке он или нет.", "Nobody is told whether they’re on the list.", "Ոչ ոք չի իմանա՝ ցանկում է, թե ոչ։"),
+                action = GuideAction.Stories,
             ),
             GuideTopic(
                 "live", GuideText("Прямой эфир", "Live stream", "Ուղիղ եթեր"),
@@ -199,6 +249,13 @@ internal object GuideContent {
                     GuideText("Эфиры друзей — кружками с меткой «В ЭФИРЕ» над историями.", "Friends’ streams appear as circles marked LIVE above the stories.", "Ընկերների եթերները՝ «ԵԹԵՐ» նշումով շրջանակներ պատմությունների վերևում։"),
                 ),
                 tip = GuideText("Эфир не сохраняется: он есть, пока идёт. Пока сервера нет, видео видит только ведущий — это демо.", "Streams aren’t saved — they exist only while live. Until the server is ready, only the host sees the video — it’s a demo.", "Եթերը չի պահպանվում՝ այն կա, քանի դեռ ընթանում է։ Քանի դեռ սերվեր չկա, տեսանյութը տեսնում է միայն վարողը — սա դեմո է։"),
+                action = GuideAction.Stories,
+            ),
+            GuideTopic(
+                "friends-posts", GuideText("Записи друзей", "Friends’ posts", "Ընկերների գրառումները"),
+                listOf(
+                    GuideText("Ниже историй — записи только друзей, без чужих людей. Кнопки с именами оставляют одного человека.", "Below the stories are posts from friends only. Name chips filter to one person.", "Պատմություններից ներքև՝ միայն ընկերների գրառումները։ Անուններով կոճակները թողնում են մեկ մարդու։"),
+                ),
                 action = GuideAction.Stories,
             ),
         ),
@@ -312,6 +369,16 @@ internal object GuideContent {
                     GuideText("Выбирайте из коллекции — космос, туманность, сияние, кристаллы — или своё фото.", "Pick from the collection — space, nebula, aurora, crystals — or your own photo.", "Ընտրեք հավաքածուից՝ տիեզերք, միգամածություն, բևեռափայլ, բյուրեղներ, կամ ձեր լուսանկարը։"),
                 ),
                 action = GuideAction.Wallpaper,
+            ),
+            GuideTopic(
+                "calls", GuideText("Звонки", "Calls", "Զանգեր"),
+                listOf(
+                    GuideText("В переписке вверху — трубка (голосовой звонок) и камера (видеозвонок).", "In a chat, the phone (voice call) and camera (video call) icons are at the top.", "Զրույցում վերևում՝ հեռախոս (ձայնային զանգ) և տեսախցիկ (տեսազանգ)։"),
+                    GuideText("Во время звонка: микрофон, камера, смена камеры, громкая связь и красная кнопка — завершить.", "During a call: microphone, camera, switch camera, speaker and the red button to hang up.", "Զանգի ժամանակ՝ խոսափող, տեսախցիկ, տեսախցիկի փոխում, բարձրախոս և կարմիր կոճակը՝ ավարտել։"),
+                    GuideText("«Чаты» → «Звонки» — история звонков; нажатие — перезвонить.", "Chats → “Calls” is the call history; tap to call back.", "«Զրույցներ» → «Զանգեր»՝ զանգերի պատմությունը․ սեղմեք՝ հետ զանգելու համար։"),
+                ),
+                tip = GuideText("Пока сервера нет, звонки — демо: экран и история работают, голос и видео пойдут позже. Кто может звонить — в «Приватности».", "Until the server is ready, calls are a demo: the screen and history work, voice and video come later. Who can call you is in Privacy.", "Քանի դեռ սերվեր չկա, զանգերը դեմո են․ էկրանը և պատմությունն աշխատում են, ձայնն ու տեսանյութը՝ ավելի ուշ։ Ով կարող է զանգել՝ «Գաղտնիություն»-ում։"),
+                action = GuideAction.Chats,
             ),
         ),
     )
@@ -649,6 +716,14 @@ internal object GuideContent {
                 ),
                 tip = GuideText("Язык и размер текста хранятся на телефоне, остальное — в аккаунте.", "Language and text size are stored on the phone; everything else belongs to the account.", "Լեզուն և տեքստի չափը պահվում են հեռախոսում, մնացածը՝ հաշվում։"),
                 action = GuideAction.Language,
+            ),
+            GuideTopic(
+                "theme", GuideText("Светлая и тёмная тема", "Light and dark theme", "Բաց և մուգ թեմա"),
+                listOf(
+                    GuideText("Настройки → «Оформление»: «Как в системе», «Тёмное» или «Светлое».", "Settings → “Look”: “System default”, “Dark” or “Light”.", "Կարգավորումներ → «Տեսք»՝ «Ինչպես համակարգում», «Մուգ» կամ «Բաց»։"),
+                ),
+                tip = GuideText("PRISM, эфиры, звонки, истории и фото на весь экран всегда тёмные — так лучше видно.", "PRISM, live streams, calls, stories and full-screen photos are always dark — they look better that way.", "PRISM-ը, եթերները, զանգերը, պատմությունները և լիաէկրան լուսանկարները միշտ մուգ են՝ այդպես ավելի լավ է երևում։"),
+                action = GuideAction.Settings,
             ),
             GuideTopic(
                 "screen-reader", GuideText("Экранный диктор", "Screen reader", "Էկրանի ընթերցիչ"),

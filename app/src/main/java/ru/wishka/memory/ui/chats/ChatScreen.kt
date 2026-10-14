@@ -227,6 +227,17 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     )
                 }
             }
+            // Звонок: голосом или видео
+            if (!blocked) {
+                Box(
+                    modifier = Modifier.size(40.dp).clip(CircleShape).clickable { vm.startCall(chat.peer.id, video = false)?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(LineIcon.Phone, Palette.Ink, size = 22.dp, description = t("Позвонить")) }
+                Box(
+                    modifier = Modifier.size(40.dp).clip(CircleShape).clickable { vm.startCall(chat.peer.id, video = true)?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(LineIcon.Video, Palette.Ink, size = 22.dp, description = t("Видеозвонок")) }
+            }
             Box {
                 Box(
                     modifier = Modifier.size(44.dp).clip(CircleShape).clickable { headerMenu = true },
@@ -300,6 +311,10 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     onProduct = { ref ->
                         if (!vm.openProduct(ref.groupId, ref.productId)) Toast.makeText(context, t("Этого товара уже нет в витрине"), Toast.LENGTH_SHORT).show()
                     },
+                    onPost = { ref ->
+                        if (!vm.openPostRef(ref)) Toast.makeText(context, t("Этой записи нет на этом телефоне — возможно, её удалили."), Toast.LENGTH_SHORT).show()
+                    },
+                    onCallBack = { rec -> vm.callBack(rec)?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } },
                 )
             }
         }
@@ -551,9 +566,20 @@ private fun Bubble(
     onPlace: (SharedPlace) -> Unit,
     onReport: () -> Unit,
     onProduct: (ProductRef) -> Unit,
+    /** Нажали на запись в сообщении — открыть её. */
+    onPost: (ru.wishka.memory.data.PostRef) -> Unit = {},
+    /** Перезвонить по строке звонка. */
+    onCallBack: (ru.wishka.memory.data.CallRecord) -> Unit = {},
 ) {
     val mine = message.fromMe
     var menu by remember { mutableStateOf(false) }
+    // Звонок — строкой по центру, без пузыря
+    message.call?.let { call ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            ru.wishka.memory.ui.components.CallRow(call, onCallBack = { onCallBack(call) })
+        }
+        return
+    }
     // Только стикер — без пузыря, картинкой
     val stickerOnly = message.text.isEmpty() && message.attachments.isNotEmpty() && message.attachments.all { it.sticker } &&
         message.replyTo == null && message.forwardedFrom == null
@@ -596,6 +622,10 @@ private fun Bubble(
                         Text(tf("Переслано от %s", from), style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, maxLines = 1)
                     }
                 }
+                // Ответ на историю — сама история маленькой картинкой
+                message.story?.let { ref -> ru.wishka.memory.ui.components.StoryRefRow(ref, mine) }
+                // Запись, которой поделились
+                message.post?.let { ref -> ru.wishka.memory.ui.components.PostRefCard(ref, onOpen = { onPost(ref) }, modifier = Modifier.width(270.dp)) }
                 message.replyTo?.let { ref ->
                     Row(
                         modifier = Modifier

@@ -19,6 +19,16 @@ struct LinkActions {
     var onCopyLink: (Post) -> Void = { _ in }
     /// «Изменить» свою запись.
     var onEdit: (Post) -> Void = { _ in }
+    /// «Репост» — своя лента, можно со своими словами.
+    var onRepost: (Post) -> Void = { _ in }
+    /// «Отправить в чат».
+    var onSendToChat: (Post) -> Void = { _ in }
+    /// Нажали на оригинал внутри репоста.
+    var onOpenRef: (PostRef) -> Void = { _ in }
+    /// Страница человека — из отметок на фото.
+    var onPerson: (Int) -> Void = { _ in }
+    /// Убрать отметку с собой на фото записи.
+    var onUntagMe: (Post) -> Void = { _ in }
 }
 
 private struct LinkActionsKey: EnvironmentKey {

@@ -98,19 +98,19 @@ class AppViewModelTest {
     fun storiesShowOnlyFollowed() {
         val vm = AppViewModel(demoReplies = false)
         val s = vm.state.value
-        assertTrue(s.stories.isNotEmpty())
-        assertTrue(s.stories.all { it.author.id in s.following })
+        assertTrue(s.friendPosts.isNotEmpty())
+        assertTrue(s.friendPosts.all { it.author.id in s.following })
         // Заявка Тимуру (5): пока не принята — его записей нет; принял — есть;
         // удалили из друзей — снова нет
-        assertFalse(s.stories.any { it.author.id == 5 })
+        assertFalse(s.friendPosts.any { it.author.id == 5 })
         vm.toggleFriend(5)
         assertTrue(5 in vm.state.value.sentRequests)
-        assertFalse(vm.state.value.stories.any { it.author.id == 5 })
+        assertFalse(vm.state.value.friendPosts.any { it.author.id == 5 })
         vm.acceptSentRequest(5)
-        assertTrue(vm.state.value.stories.any { it.author.id == 5 })
+        assertTrue(vm.state.value.friendPosts.any { it.author.id == 5 })
         vm.toggleFriend(5)
         assertFalse(5 in vm.state.value.following)
-        assertFalse(vm.state.value.stories.any { it.author.id == 5 })
+        assertFalse(vm.state.value.friendPosts.any { it.author.id == 5 })
         // Себя в друзья не добавить
         vm.toggleFriend(vm.state.value.me.id)
         assertFalse(vm.state.value.me.id in vm.state.value.following)
@@ -445,13 +445,13 @@ class AppViewModelTest {
     @Test
     fun blockHidesPostsAndUnfollows() {
         val vm = AppViewModel()
-        val author = vm.state.value.stories.first().author
+        val author = vm.state.value.friendPosts.first().author
         vm.block(author.id)
         val s = vm.state.value
         assertTrue(s.isBlocked(author.id))
         assertFalse(author.id in s.following)
         assertTrue(s.feed.none { it.author.id == author.id })
-        assertTrue(s.stories.none { it.author.id == author.id })
+        assertTrue(s.friendPosts.none { it.author.id == author.id })
         assertEquals(listOf(author.id), s.blockedPeople.map { it.id })
         vm.unblock(author.id)
         assertTrue(vm.state.value.feed.any { it.author.id == author.id })
@@ -491,7 +491,7 @@ class AppViewModelTest {
         vm.toggleGroupMute(group.id)
         vm.setPrivacy(Privacy(messages = Audience.Following, showOnline = false))
         vm.setNotifications(Notifications(all = false))
-        vm.block(vm.state.value.stories.first().author.id)
+        vm.block(vm.state.value.friendPosts.first().author.id)
         vm.setAvatar("/tmp/a.jpg")
         val snapshot = vm.snapshot()
         val other = AppViewModel()

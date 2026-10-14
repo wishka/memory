@@ -31,6 +31,8 @@ enum ProfileSection: String, CaseIterable {
     case requests = "Заявки в друзья"
     /// Memory+: тарифы, пробный период, смена тарифа.
     case premium = "Memory+"
+    /// Записи, где меня отметили на фото.
+    case tagged = "Отметки"
 
     var title: String { t(rawValue) }
 }
@@ -51,6 +53,8 @@ enum SettingsPage: String, CaseIterable {
     case legal = "Документы"
     /// Гид по Memory: главы → темы с шагами.
     case guide = "Гид по Memory"
+    /// Оформление: как в системе, тёмное или светлое.
+    case theme = "Оформление"
 
     var title: String { t(rawValue) }
 }
@@ -241,6 +245,53 @@ struct UiState: Equatable {
     var liveSummary: LiveStream? = nil
     /// Ведущий нажал «назад» — спросить, закончить ли эфир.
     var confirmEndLive = false
+    /// Истории: свои (и в архиве) и друзей — за сутки и из «Актуального».
+    var stories: [Story] = []
+    /// Какие истории я уже смотрел.
+    var seenStories: Set<Int64> = []
+    /// «Близкие друзья»: им видны истории «для близких».
+    var closeFriends: Set<Int> = []
+    /// «Актуальное»: свои подборки и подборки друзей.
+    var highlights: [Highlight] = []
+    /// Открыт просмотр историй.
+    var storyViewer: StoryViewer? = nil
+    /// Открыта новая история.
+    var storyComposer = false
+    /// Кто посмотрел мою историю — открыт список.
+    var storyViewersOf: Int64? = nil
+    /// История звонков.
+    var callLog: [CallRecord] = []
+    /// Звонок, который идёт сейчас.
+    var call: ActiveCall? = nil
+    /// Репост: какую запись репостят (открыта шторка).
+    var repostingPostId: Int64? = nil
+    /// «Отправить в чат»: какую запись отправляют (открыт выбор переписки).
+    var sharingPostId: Int64? = nil
+
+    /// Кружки историй друзей (свой — отдельно).
+    func storyCircles(_ now: Date) -> [StoryCircle] {
+        Stories.rings(
+            stories.filter { st in
+                following.contains(st.authorId) && !blocked.contains(st.authorId)
+                    && Stories.visible(st, viewerId: me.id, isFriend: true, inAuthorsClose: true)
+            },
+            Demo.people, meId: me.id, seen: seenStories, now: now
+        )
+    }
+
+    /// Свои истории за сутки — по порядку.
+    func myActiveStories(_ now: Date) -> [Story] {
+        stories.filter { $0.authorId == me.id && $0.active(now) }.stableSorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Архив своих историй — новые сверху.
+    var storyArchive: [Story] {
+        stories.filter { $0.authorId == me.id }.stableSorted { $0.createdAt > $1.createdAt }
+    }
+
+    func highlightsOf(_ userId: Int) -> [Highlight] { highlights.filter { $0.ownerId == userId && !$0.storyIds.isEmpty } }
+
+    func story(_ id: Int64) -> Story? { stories.first { $0.id == id } }
 
     /// Эфир на экране.
     var watchingLive: LiveStream? {
@@ -322,12 +373,21 @@ struct UiState: Equatable {
         return you + Demo.people.filter { $0.id != user.id && !blocked.contains($0.id) }
     }
     var myPosts: [Post] { posts.filter { $0.author.id == me.id } }
-    /// «Истории»: свои записи и записи друзей — новые сверху, как и в ленте.
-    var stories: [Post] {
+    /// Вкладка «Истории» под кружками: свои записи и записи друзей — новые сверху, как и в ленте.
+    var friendPosts: [Post] {
         posts.filter { (following.contains($0.author.id) || $0.author.id == me.id) && !blocked.contains($0.author.id) }
     }
     /// Мои друзья — люди.
     var friends: [User] { Demo.people.filter { following.contains($0.id) } }
+    /// Записи, где меня отметили на фото, — «Отметки» в профиле.
+    var taggedPosts: [Post] {
+        var seen = Set<Int64>()
+        let epoch = Date(timeIntervalSince1970: 0)
+        return (posts + groups.flatMap(\.posts))
+            .filter { p in !blocked.contains(p.author.id) && p.media.contains { a in a.tags.contains { $0.userId == me.id } } }
+            .filter { seen.insert($0.id).inserted }
+            .stableSorted { ($0.createdAt ?? epoch) > ($1.createdAt ?? epoch) }
+    }
     /// «Сохранённое» в профиле: PRISM в закладках.
     var savedPrisms: [Prism] { prisms.filter { $0.saved } }
     func track(_ id: String) -> MusicTrack? { tracks.first { $0.id == id } }
@@ -423,6 +483,12 @@ struct Snapshot: Codable, Equatable {
     var activity: LossyList<ActivityItem>? = nil
     var activitySeen: Date? = nil
     var searchHistory: [String]? = nil
+    /// Истории, просмотренные, «Близкие друзья», «Актуальное», история звонков.
+    var stories: [Story]? = nil
+    var seenStories: Set<Int64>? = nil
+    var closeFriends: Set<Int>? = nil
+    var highlights: [Highlight]? = nil
+    var callLog: [CallRecord]? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -727,6 +793,12 @@ final class AppModel {
     @discardableResult
     func back() -> Bool {
         if state.creatingPrism { closePrismCreator(); return true }
+        // Во время звонка «назад» не сбрасывает звонок — для этого красная кнопка
+        if state.call != nil { return true }
+        if state.storyViewersOf != nil { closeStoryViewers(); return true }
+        if state.storyViewer != nil { closeStories(); return true }
+        if state.storyComposer { closeStoryComposer(); return true }
+        if state.repostingPostId != nil || state.sharingPostId != nil { closeRepost(); return true }
         // «Назад» у ведущего эфира — вопрос «Закончить эфир?», а не выход
         if let watching = state.watchingLiveId, state.myLive?.id == watching { state.confirmEndLive = true; return true }
         if state.watchingLiveId != nil { leaveLive(); return true }
@@ -813,6 +885,20 @@ final class AppModel {
                 watchLive(g.targetId)
             } else if let actor = g.actors.first {
                 openPerson(actor.id)
+            }
+        case .repost, .tagged:
+            if s.findPost(g.targetId) != nil {
+                state.openPostId = g.targetId
+            } else if let actor = g.actors.first {
+                openPerson(actor.id)
+            }
+        case .storyReply, .missedCall:
+            if let actor = g.actors.first {
+                if let chat = s.chats.first(where: { $0.peer.id == actor.id }) {
+                    openChat(chat.id)
+                } else {
+                    openPerson(actor.id)
+                }
             }
         }
     }
@@ -993,6 +1079,591 @@ final class AppModel {
 
     func closePost() {
         state.openPostId = nil
+    }
+
+    // MARK: - Истории
+
+    func openStoryComposer() {
+        state.storyComposer = true
+    }
+
+    func closeStoryComposer() {
+        state.storyComposer = false
+    }
+
+    /// Новая история: фото или видео либо текст на градиенте. closeFriends —
+    /// только для «Близких друзей». Ответ — текст ошибки или nil.
+    @discardableResult
+    func publishStory(_ media: Attachment?, _ text: String, bg: Int, closeFriends: Bool) -> String? {
+        let clean = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Stories.maxText))
+        if media == nil && clean.isEmpty { return t("Добавьте фото, видео или текст") }
+        Telemetry.track(.storyPublished)
+        let story = Story(id: newId(), authorId: state.me.id, createdAt: clock(), media: media, text: clean,
+                          bg: min(max(bg, 0), Stories.backgrounds.count - 1), closeFriends: closeFriends)
+        var s = state
+        s.stories.append(story)
+        s.storyComposer = false
+        state = s
+        return nil
+    }
+
+    /// Открыть истории человека; дальше — по кругу остальных с историями.
+    func openStories(_ authorId: Int) {
+        let s = state
+        let now = clock()
+        let circles = s.storyCircles(now)
+        let order = (s.myActiveStories(now).isEmpty ? [] : [s.me.id]) + circles.map(\.user.id)
+        guard order.contains(authorId) else { return }
+        let list = storiesOf(authorId)
+        state.storyViewer = StoryViewer(authorIds: order, author: authorId, index: Stories.startIndex(list, state.seenStories))
+        if let story = currentStory() { seeStory(story.id) }
+    }
+
+    /// Открыть подборку «Актуального».
+    func openHighlight(_ highlightId: Int64) {
+        guard let h = state.highlights.first(where: { $0.id == highlightId }) else { return }
+        if !h.storyIds.contains(where: { state.story($0) != nil }) { return }
+        state.storyViewer = StoryViewer(authorIds: [h.ownerId], author: h.ownerId, index: 0, highlightId: highlightId)
+    }
+
+    func closeStories() {
+        var s = state
+        s.storyViewer = nil
+        s.storyViewersOf = nil
+        state = s
+    }
+
+    /// Истории, которые сейчас листаются у этого автора.
+    func storiesOf(_ authorId: Int) -> [Story] {
+        let s = state
+        if let highlightId = s.storyViewer?.highlightId {
+            guard let h = s.highlights.first(where: { $0.id == highlightId }) else { return [] }
+            return h.storyIds.compactMap { s.story($0) }
+        }
+        let now = clock()
+        if authorId == s.me.id { return s.myActiveStories(now) }
+        return s.storyCircles(now).first { $0.user.id == authorId }?.stories ?? []
+    }
+
+    func currentStory() -> Story? {
+        guard let v = state.storyViewer else { return nil }
+        let list = storiesOf(v.author)
+        return list.indices.contains(v.index) ? list[v.index] : nil
+    }
+
+    /// Следующая история; кончились у автора — к следующему автору; у всех — закрыть.
+    func nextStory() {
+        guard let v = state.storyViewer else { return }
+        let list = storiesOf(v.author)
+        if v.index + 1 < list.count {
+            var next = v
+            next.index = v.index + 1
+            state.storyViewer = next
+        } else {
+            let i = (v.authorIds.firstIndex(of: v.author) ?? -1) + 1
+            guard v.authorIds.indices.contains(i), v.highlightId == nil else {
+                closeStories()
+                return
+            }
+            let author = v.authorIds[i]
+            let nextList = storiesOf(author)
+            var next = v
+            next.author = author
+            next.index = Stories.startIndex(nextList, state.seenStories)
+            state.storyViewer = next
+        }
+        if let story = currentStory() { seeStory(story.id) }
+    }
+
+    func previousStory() {
+        guard let v = state.storyViewer else { return }
+        if v.index > 0 {
+            var prev = v
+            prev.index = v.index - 1
+            state.storyViewer = prev
+        } else {
+            let i = (v.authorIds.firstIndex(of: v.author) ?? -1) - 1
+            if v.authorIds.indices.contains(i) && v.highlightId == nil {
+                var prev = v
+                prev.author = v.authorIds[i]
+                prev.index = 0
+                state.storyViewer = prev
+            }
+        }
+    }
+
+    /// История показана: отметить просмотренной (и, если чужая, — что я её видел).
+    func seeStory(_ storyId: Int64) {
+        let me = state.me.id
+        let now = clock()
+        var s = state
+        s.seenStories.insert(storyId)
+        s.stories = s.stories.map { $0.id == storyId && $0.authorId != me ? Stories.view($0, me, now) : $0 }
+        state = s
+    }
+
+    /// Сердечко на чужую историю: автору — «❤️» в переписку с цитатой истории.
+    func likeStory(_ storyId: Int64) {
+        guard let story = state.story(storyId) else { return }
+        let me = state.me.id
+        if story.authorId == me || story.views.contains(where: { $0.userId == me && $0.liked }) { return }
+        let now = clock()
+        state.stories = state.stories.map { $0.id == storyId ? Stories.view($0, me, now, liked: true) : $0 }
+        replyToStory(storyId, "❤️")
+    }
+
+    /// Ответ на историю — сообщением автору, с цитатой истории над ним.
+    func replyToStory(_ storyId: Int64, _ text: String) {
+        guard let story = state.story(storyId) else { return }
+        let clean = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
+        if clean.isEmpty || story.authorId == state.me.id { return }
+        guard let chatId = chatWith(story.authorId) else { return }
+        append(chatId, Message(id: newId(), fromMe: true, text: clean, time: Self.now(), story: Stories.ref(story)))
+    }
+
+    /// Переписка с человеком: есть — её номер, нет — создать (не открывая).
+    private func chatWith(_ userId: Int) -> Int? {
+        guard let person = Demo.person(userId) else { return nil }
+        if let existing = state.chats.first(where: { $0.peer.id == userId }) { return existing.id }
+        let id = (state.chats.map(\.id).max() ?? 0) + 1
+        state.chats.insert(Chat(id: id, peer: person, messages: []), at: 0)
+        return id
+    }
+
+    /// Удалить свою историю — и из «Актуального». Файл удаляет экран.
+    func deleteStory(_ storyId: Int64) {
+        let me = state.me.id
+        var s = state
+        s.stories.removeAll { $0.id == storyId && $0.authorId == me }
+        s.highlights = s.highlights.map { h -> Highlight in
+            guard h.ownerId == me else { return h }
+            var x = h
+            x.storyIds.removeAll { $0 == storyId }
+            if x.coverId == storyId { x.coverId = x.storyIds.first ?? 0 }
+            return x
+        }.filter { $0.ownerId != me || !$0.storyIds.isEmpty }
+        state = s
+        guard let v = state.storyViewer else { return }
+        let list = storiesOf(v.author)
+        if list.isEmpty {
+            closeStories()
+        } else if v.index >= list.count {
+            var next = v
+            next.index = list.count - 1
+            state.storyViewer = next
+        }
+    }
+
+    func openStoryViewers(_ storyId: Int64) {
+        state.storyViewersOf = storyId
+    }
+
+    func closeStoryViewers() {
+        state.storyViewersOf = nil
+    }
+
+    /// Добавить друга в «Близкие друзья» или убрать.
+    func toggleCloseFriend(_ userId: Int) {
+        guard state.following.contains(userId) else { return }
+        if state.closeFriends.contains(userId) {
+            state.closeFriends.remove(userId)
+        } else {
+            state.closeFriends.insert(userId)
+        }
+    }
+
+    /// Новая подборка «Актуального» из своих историй. Ответ — её номер или nil.
+    @discardableResult
+    func createHighlight(_ title: String, _ storyIds: [Int64]) -> Int64? {
+        let s = state
+        var seen = Set<Int64>()
+        let mine = storyIds.filter { id in
+            s.stories.contains { $0.id == id && $0.authorId == s.me.id } && seen.insert(id).inserted
+        }
+        if mine.isEmpty { return nil }
+        let clean = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Stories.maxTitle))
+        let h = Highlight(id: newId(), ownerId: s.me.id, title: clean.isEmpty ? t("Актуальное") : clean, storyIds: mine)
+        state.highlights.append(h)
+        return h.id
+    }
+
+    func renameHighlight(_ id: Int64, _ title: String) {
+        let clean = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Stories.maxTitle))
+        updateHighlight(id) { h in
+            if !clean.isEmpty { h.title = clean }
+        }
+    }
+
+    func addToHighlight(_ id: Int64, _ storyId: Int64) {
+        updateHighlight(id) { h in
+            if !h.storyIds.contains(storyId) { h.storyIds.append(storyId) }
+        }
+    }
+
+    func removeFromHighlight(_ id: Int64, _ storyId: Int64) {
+        updateHighlight(id) { h in
+            h.storyIds.removeAll { $0 == storyId }
+            if h.coverId == storyId { h.coverId = h.storyIds.first ?? 0 }
+        }
+    }
+
+    func setHighlightCover(_ id: Int64, _ storyId: Int64) {
+        updateHighlight(id) { h in
+            if h.storyIds.contains(storyId) { h.coverId = storyId }
+        }
+    }
+
+    func deleteHighlight(_ id: Int64) {
+        let me = state.me.id
+        state.highlights.removeAll { $0.id == id && $0.ownerId == me }
+    }
+
+    /// Изменить свою подборку; опустевшая — убирается.
+    private func updateHighlight(_ id: Int64, _ change: (inout Highlight) -> Void) {
+        let me = state.me.id
+        state.highlights = state.highlights.map { h -> Highlight in
+            var x = h
+            if x.id == id && x.ownerId == me { change(&x) }
+            return x
+        }.filter { $0.ownerId != me || !$0.storyIds.isEmpty }
+    }
+
+    /// Демо-истории друзей: у кого нет свежей — появляется; у друзей без
+    /// «Актуального» — пара подборок из старых историй. Вызывается после входа.
+    func ensureDemoStories() {
+        var rng = SystemRandomNumberGenerator()
+        ensureDemoStories(using: &rng)
+    }
+
+    func ensureDemoStories<G: RandomNumberGenerator>(using rng: inout G) {
+        let s = state
+        let now = clock()
+        var added: [Story] = []
+        var hs: [Highlight] = []
+        for f in Demo.people {
+            if !s.stories.contains(where: { $0.authorId == f.id && $0.active(now) }) && Int.random(in: 0..<3, using: &rng) != 0 {
+                let count = 1 + Int.random(in: 0..<3, using: &rng)
+                for i in 0..<count {
+                    let ago = Int64.random(in: 10 * 60_000..<20 * 60 * 60_000, using: &rng) - Int64(i)
+                    let close = Int.random(in: 0..<5, using: &rng) == 0
+                    added.append(demoStory(f.id, at: now.addingTimeInterval(-Double(ago) / 1000), close: close, using: &rng))
+                }
+            }
+            if !s.highlights.contains(where: { $0.ownerId == f.id }) {
+                let titles = [t("Путешествия"), t("Друзья"), t("Еда")].shuffled(using: &rng)
+                let take = 1 + Int.random(in: 0..<2, using: &rng)
+                for title in titles.prefix(take) {
+                    let size = 2 + Int.random(in: 0..<3, using: &rng)
+                    var old: [Story] = []
+                    for _ in 0..<size {
+                        let days = Int64.random(in: 3..<60, using: &rng)
+                        old.append(demoStory(f.id, at: now.addingTimeInterval(-Double(days * Stories.ttlMs) / 1000), using: &rng))
+                    }
+                    added += old
+                    hs.append(Highlight(id: newId(), ownerId: f.id, title: title, storyIds: old.map(\.id)))
+                }
+            }
+        }
+        if added.isEmpty && hs.isEmpty { return }
+        var next = state
+        next.stories += added
+        next.highlights += hs
+        state = next
+    }
+
+    private func demoStory<G: RandomNumberGenerator>(_ authorId: Int, at: Date, close: Bool = false, using rng: inout G) -> Story {
+        let withText = Int.random(in: 0..<3, using: &rng) == 0
+        let text = withText ? t(Stories.demoTexts[Int.random(in: 0..<Stories.demoTexts.count, using: &rng)]) : ""
+        let bg = Int.random(in: 0..<Stories.backgrounds.count, using: &rng)
+        let seed = Int.random(in: 0..<1000, using: &rng)
+        return Story(id: newId(), authorId: authorId, createdAt: at, text: text, bg: bg, seed: seed, closeFriends: close)
+    }
+
+    /// Демо-жизнь историй: друг выкладывает новую, мою историю смотрят
+    /// (близкие — «для близких»), иногда отвечают на неё в личку.
+    func storyEvent<G: RandomNumberGenerator>(_ friend: User, using rng: inout G) {
+        let s = state
+        let now = clock()
+        let mine = s.myActiveStories(now)
+        if !mine.isEmpty && Int.random(in: 0..<3, using: &rng) != 0 {
+            let story = mine[Int.random(in: 0..<mine.count, using: &rng)]
+            if story.closeFriends && !s.closeFriends.contains(friend.id) { return }
+            let liked = Int.random(in: 0..<4, using: &rng) == 0
+            state.stories = state.stories.map { $0.id == story.id ? Stories.view($0, friend.id, now, liked: liked) : $0 }
+            if Int.random(in: 0..<5, using: &rng) == 0 {
+                let lines = ["Красота!", "Где это?", "Хочу туда же", "😍"]
+                let text = t(lines[Int.random(in: 0..<lines.count, using: &rng)])
+                guard let chatId = chatWith(friend.id) else { return }
+                append(chatId, Message(id: newId(), fromMe: false, text: text, time: Self.now(), story: Stories.ref(story)))
+                record(.storyReply, friend, targetId: story.id, preview: text)
+                if state.openChatId != chatId { notify(Nudges.message(friend, text, chatId: chatId)) }
+            }
+        } else if !s.stories.contains(where: { $0.authorId == friend.id && $0.active(now) }) {
+            let close = Int.random(in: 0..<5, using: &rng) == 0
+            let story = demoStory(friend.id, at: now, close: close, using: &rng)
+            state.stories.append(story)
+        }
+        // Чужие истории старше суток, не попавшие в «Актуальное», больше не нужны
+        pruneStories(now)
+    }
+
+    /// Убрать чужие истории, которые истекли и не лежат в «Актуальном».
+    func pruneStories(_ now: Date? = nil) {
+        let moment = now ?? clock()
+        let me = state.me.id
+        let kept = Set(state.highlights.flatMap(\.storyIds))
+        let stories = state.stories.filter { $0.authorId == me || $0.active(moment) || kept.contains($0.id) }
+        if stories.count == state.stories.count { return }
+        var s = state
+        s.stories = stories
+        s.seenStories = s.seenStories.intersection(stories.map(\.id))
+        state = s
+    }
+
+    // MARK: - Репосты
+
+    /// Копия записи для репоста или сообщения; у репоста без слов — сам оригинал.
+    func postRef(_ post: Post) -> PostRef {
+        if let root = post.repostOf, post.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, post.media.isEmpty {
+            return root
+        }
+        return PostRef(
+            postId: post.id, authorId: post.author.id, authorName: post.author.name, text: String(post.text.prefix(500)),
+            photo: post.media.first(where: { $0.kind == .photo && !$0.sticker })?.fileName ?? "",
+            seed: post.artSeed ?? 0, createdAt: post.createdAt
+        )
+    }
+
+    func openRepost(_ postId: Int64) {
+        var s = state
+        s.repostingPostId = postId
+        s.sharingPostId = nil
+        state = s
+    }
+
+    func openSendToChat(_ postId: Int64) {
+        var s = state
+        s.sharingPostId = postId
+        s.repostingPostId = nil
+        state = s
+    }
+
+    func closeRepost() {
+        var s = state
+        s.repostingPostId = nil
+        s.sharingPostId = nil
+        state = s
+    }
+
+    /// Репост в свою ленту: оригинал карточкой, comment — свои слова (может
+    /// быть пустым). Закрытые профили и свои записи без слов не репостятся.
+    /// Ответ — текст ошибки или nil.
+    @discardableResult
+    func repost(_ postId: Int64, _ comment: String = "") -> String? {
+        let s = state
+        guard let post = s.findPost(postId) else { return t("Запись не найдена") }
+        if post.author.closed && post.author.id != s.me.id { return t("Записями закрытого профиля нельзя поделиться") }
+        let ref = postRef(post)
+        let clean = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ref.authorId == s.me.id && clean.isEmpty { return t("Добавьте пару слов к своей записи") }
+        Telemetry.track(.reposted)
+        let mine = Post(id: newId(), author: s.me, text: String(clean.prefix(2000)), minutesAgo: 0, createdAt: clock(), repostOf: ref)
+        func bump(_ p: Post) -> Post {
+            guard p.id == ref.postId else { return p }
+            var x = p
+            x.reposts += 1
+            return x
+        }
+        var next = state
+        next.posts = [mine] + next.posts.map(bump)
+        next.groups = next.groups.map { g in
+            var x = g
+            x.posts = g.posts.map(bump)
+            return x
+        }
+        next.repostingPostId = nil
+        state = next
+        return nil
+    }
+
+    /// Отправить запись в переписку — карточкой, со своими словами.
+    func sendPostToChat(_ postId: Int64, _ chatId: Int, _ text: String = "") {
+        guard let post = state.findPost(postId) else { return }
+        Telemetry.track(.linkShared)
+        let clean = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
+        append(chatId, Message(id: newId(), fromMe: true, text: clean, time: Self.now(), post: postRef(post)))
+        state.sharingPostId = nil
+    }
+
+    /// Нажали на запись внутри репоста или сообщения. false — её нет на этом телефоне.
+    @discardableResult
+    func openPostRef(_ ref: PostRef) -> Bool { openLink(.postLink(ref.postId)) }
+
+    // MARK: - Отметки на фото
+
+    /// Записи, где меня отметили на фото (у себя на телефоне — в своих и друзей).
+    var taggedPosts: [Post] { state.taggedPosts }
+
+    /// Убрать отметку с собой на чужом фото (с сервером — запрос автору записи не нужен).
+    func untagMe(_ postId: Int64) {
+        let me = state.me.id
+        updatePosts(postId) { p in
+            p.media = p.media.map { a in
+                var x = a
+                x.tags.removeAll { $0.userId == me }
+                return x
+            }
+        }
+    }
+
+    // MARK: - Звонки
+
+    /// Связь звонков: демо, пока нет сервера.
+    @ObservationIgnored var callTransport: CallTransport = DemoCallTransport.shared
+    @ObservationIgnored private var callTask: Task<Void, Never>?
+    /// Приложение на экране: тогда входящий звонок и так во весь экран, а
+    /// свёрнутому — уведомлением. Задаёт MemoryApp; без него — «свёрнуто».
+    @ObservationIgnored var isForeground: () -> Bool = { false }
+
+    /// Позвонить. Ответ — текст ошибки или nil.
+    @discardableResult
+    func startCall(_ peerId: Int, video: Bool) -> String? {
+        let s = state
+        if s.call != nil { return t("Звонок уже идёт") }
+        if s.blocked.contains(peerId) { return t("Вы заблокировали этого человека") }
+        guard Demo.person(peerId) != nil else { return t("Не удалось позвонить") }
+        Telemetry.track(video ? .videoCall : .voiceCall)
+        let call = ActiveCall(id: newId(), peerId: peerId, video: video, outgoing: true, phase: .calling,
+                              startedAt: clock(), cameraOn: video)
+        callTransport.connect(room: call.room, token: "", video: video)
+        state.call = call
+        if demoReplies {
+            callTask?.cancel()
+            // Демо: чаще всего друг отвечает через пару секунд, иногда — нет
+            let noAnswer = Int.random(in: 0..<8) == 0
+            let delay: UInt64 = noAnswer ? 12_000_000_000 : UInt64.random(in: 2_000_000_000..<5_000_000_000)
+            callTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled, let self else { return }
+                if noAnswer { self.callTimeout() } else { self.callAnswered() }
+            }
+        }
+        return nil
+    }
+
+    /// Собеседник ответил — разговор пошёл.
+    func callAnswered() {
+        guard var c = state.call, c.phase == .calling else { return }
+        c.phase = .active
+        c.connectedAt = clock()
+        state.call = c
+    }
+
+    /// Звонят мне (демо — друг; с сервером — пуш). Ничего не делает, если звонки от него запрещены.
+    func incomingCall(_ peerId: Int, video: Bool) {
+        let s = state
+        if s.call != nil || !Calls.allowed(peerId, friends: s.following, blocked: s.blocked, who: s.privacy.calls) { return }
+        guard let person = Demo.person(peerId) else { return }
+        let call = ActiveCall(id: newId(), peerId: peerId, video: video, outgoing: false, phase: .incoming,
+                              startedAt: clock(), cameraOn: video)
+        state.call = call
+        if demoReplies {
+            callTask?.cancel()
+            callTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(Calls.ringMs) * 1_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.callTimeout()
+            }
+        }
+        // Приложение открыто — звонок и так на весь экран; свёрнуто — уведомлением
+        if !isForeground() { notify(Nudges.incomingCall(person, video: video)) }
+    }
+
+    /// Принять входящий.
+    func acceptCall() {
+        guard var c = state.call, c.phase == .incoming else { return }
+        callTask?.cancel()
+        callTask = nil
+        callTransport.connect(room: c.room, token: "", video: c.video)
+        c.phase = .active
+        c.connectedAt = clock()
+        state.call = c
+    }
+
+    /// Отклонить входящий.
+    func declineCall() {
+        guard let c = state.call, c.phase == .incoming else { return }
+        finishCall(Calls.record(c, clock(), declined: true))
+    }
+
+    /// Положить трубку / отменить исходящий.
+    func endCall() {
+        guard let c = state.call else { return }
+        finishCall(Calls.record(c, clock()))
+    }
+
+    /// Никто не ответил: исходящий — «нет ответа», входящий — пропущенный.
+    func callTimeout() {
+        guard let c = state.call, c.phase != .active else { return }
+        finishCall(Calls.record(c, clock()))
+        if !c.outgoing, let person = Demo.person(c.peerId) {
+            record(.missedCall, person, targetId: c.id)
+            notify(Nudges.missedCall(person, video: c.video, chatId: chatWith(c.peerId) ?? 0))
+        }
+    }
+
+    private func finishCall(_ entry: CallRecord) {
+        callTask?.cancel()
+        callTask = nil
+        callTransport.hangUp()
+        let chatId = chatWith(entry.peerId)
+        var s = state
+        s.call = nil
+        s.callLog = Calls.add(s.callLog, entry)
+        state = s
+        // Строка звонка — в переписке с человеком
+        if let chatId {
+            append(chatId, Message(id: newId(), fromMe: entry.outgoing, text: "", time: Self.now(), call: entry))
+        }
+    }
+
+    func toggleMute() {
+        updateCall { c in
+            c.muted.toggle()
+            callTransport.setMuted(c.muted)
+        }
+    }
+
+    func toggleCamera() {
+        updateCall { c in
+            c.cameraOn.toggle()
+            callTransport.setCamera(on: c.cameraOn, front: c.frontCamera)
+        }
+    }
+
+    func flipCamera() {
+        updateCall { c in
+            c.frontCamera.toggle()
+            callTransport.setCamera(on: c.cameraOn, front: c.frontCamera)
+        }
+    }
+
+    func toggleSpeaker() {
+        updateCall { $0.speaker.toggle() }
+    }
+
+    private func updateCall(_ change: (inout ActiveCall) -> Void) {
+        guard var c = state.call else { return }
+        change(&c)
+        state.call = c
+    }
+
+    /// Перезвонить из истории звонков или переписки. Ответ — текст ошибки или nil.
+    @discardableResult
+    func callBack(_ entry: CallRecord) -> String? { startCall(entry.peerId, video: entry.video) }
+
+    func clearCallLog() {
+        state.callLog = []
     }
 
     // MARK: - Эфиры
@@ -1286,16 +1957,25 @@ final class AppModel {
         state.posts = state.posts.map { Self.toggled($0, postId) }
     }
 
-    /// Новая запись: текст, фото и видео, чек-ин, опрос. Пустую (без текста и вложений) не публикуем.
-    func publish(_ text: String, media: [Attachment] = [], checkIn: CheckIn? = nil, poll: PollDraft? = nil) {
+    /// Новая запись: текст, фото и видео, чек-ин, опрос, место. Пустую (без текста и вложений) не публикуем.
+    func publish(_ text: String, media: [Attachment] = [], checkIn: CheckIn? = nil, poll: PollDraft? = nil, place: SharedPlace? = nil) {
         Telemetry.track(.postPublished)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let built = poll.flatMap { $0.build(newId()) }
         if trimmed.isEmpty && media.isEmpty && checkIn == nil && built == nil { return }
+        // Отмечать на фото можно только друзей — остальные отметки отбрасываются
+        let friendIds = state.following
+        let cleanMedia: [Attachment] = media.map { a in
+            if a.tags.isEmpty { return a }
+            var x = a
+            var seen = Set<Int>()
+            x.tags = a.tags.filter { friendIds.contains($0.userId) && seen.insert($0.userId).inserted }
+            return x
+        }
         media.filter(\.isGif).forEach(rememberGif)
         let post = Post(
             id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
-            media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn, poll: built
+            media: Array(cleanMedia.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn, poll: built, place: place
         )
         let before = state
         var next = state
@@ -2463,6 +3143,10 @@ final class AppModel {
         if state.myLive != nil || state.watchingLiveId != nil { liveTransport.leave() }
         acceptTasks.values.forEach { $0.cancel() }
         acceptTasks = [:]
+        // Вышли из аккаунта посреди звонка — звонок кладётся
+        callTask?.cancel()
+        callTask = nil
+        if state.call != nil { callTransport.hangUp() }
         state = UiState()
     }
 
@@ -2784,6 +3468,9 @@ final class AppModel {
         if !mine.isEmpty { options += [2, 2] }
         if !requesters.isEmpty { options.append(3) }
         if !friends.isEmpty { options.append(4) }
+        if !friends.isEmpty { options += [5, 5] }
+        if !mine.isEmpty && !friends.isEmpty { options.append(6) }
+        if !friends.isEmpty && state.call == nil { options.append(7) }
         guard let pick = options.randomElement(using: &rng) else { return }
         switch pick {
         case 0:
@@ -2819,8 +3506,23 @@ final class AppModel {
             }
         case 3:
             receiveFriendRequest(requesters.randomElement(using: &rng)!.id)
-        default:
+        case 4:
             friendGoesLive(friends.randomElement(using: &rng)!, using: &rng)
+        case 5:
+            storyEvent(friends.randomElement(using: &rng)!, using: &rng)
+        case 6:
+            // Друг репостнул вашу запись
+            let post = mine.randomElement(using: &rng)!
+            let fan = friends.randomElement(using: &rng)!
+            state.posts = state.posts.map { p in
+                var p = p
+                if p.id == post.id { p.reposts += 1 }
+                return p
+            }
+            record(.repost, fan, targetId: post.id, preview: post.text)
+        default:
+            let friend = friends.randomElement(using: &rng)!
+            incomingCall(friend.id, video: Bool.random(using: &rng))
         }
     }
 
@@ -3273,7 +3975,9 @@ final class AppModel {
             guideRead: state.guideRead.sorted(), guideHidden: state.guideHidden,
             subscription: state.subscription,
             activity: LossyList(state.activity), activitySeen: state.activitySeen,
-            searchHistory: state.searchHistory
+            searchHistory: state.searchHistory,
+            stories: state.stories, seenStories: state.seenStories, closeFriends: state.closeFriends,
+            highlights: state.highlights, callLog: state.callLog
         )
     }
 
@@ -3339,6 +4043,11 @@ final class AppModel {
         s.activity = snapshot.activity?.items ?? []
         s.activitySeen = snapshot.activitySeen ?? Date(timeIntervalSince1970: 0)
         s.searchHistory = snapshot.searchHistory ?? []
+        s.stories = snapshot.stories ?? []
+        s.seenStories = snapshot.seenStories ?? []
+        s.closeFriends = snapshot.closeFriends ?? []
+        s.highlights = snapshot.highlights ?? []
+        s.callLog = snapshot.callLog ?? []
         s.applyMe(s.me)
         state = s
         refreshPlan()

@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Вкладка «Истории»: свои записи и записи друзей.
+/// Вкладка «Истории»: истории друзей на сутки, эфиры и записи друзей.
 ///
-/// Сверху ряд друзей в светящихся кольцах; нажатие оставляет записи
-/// одного человека, повторное — снова всех. Долгое нажатие — его страница.
+/// Сверху ряд кружков: своя история (с «+»), эфир, эфиры друзей и
+/// истории друзей. Ниже — «Записи друзей» с фильтром по человеку.
 struct StoriesScreen: View {
     let model: AppModel
     @State private var only: Int?
@@ -12,7 +12,7 @@ struct StoriesScreen: View {
         let state = model.state
         // Выбранный больше не друг — фильтр снимается сам
         let selected = only.flatMap { state.following.contains($0) ? $0 : nil }
-        let posts = state.stories.filter { selected == nil || $0.author.id == selected }
+        let posts = state.friendPosts.filter { selected == nil || $0.author.id == selected }
 
         ScrollView {
             LazyVStack(spacing: 14) {
@@ -24,27 +24,24 @@ struct StoriesScreen: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
-                // Прямые эфиры: начать свой и смотреть друзей
-                LiveRow(model: model)
+                // Истории (сутки), свой эфир и эфиры друзей — одним рядом кружков
+                StoriesRow(model: model)
 
+                // Под историями — записи друзей; фильтр по человеку
                 if !state.friends.isEmpty {
+                    SectionTitle(text: t("Записи друзей"))
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 14) {
+                        HStack(spacing: 8) {
+                            Chip(text: t("Все"), active: selected == nil) { only = nil }
                             ForEach(state.friends) { person in
-                                StoryRing(
-                                    person: person,
-                                    active: selected == nil || selected == person.id,
-                                    onTap: { only = selected == person.id ? nil : person.id },
-                                    onLongPress: { model.openPerson(person.id) }
-                                )
+                                Chip(text: person.firstName, active: selected == person.id) {
+                                    only = selected == person.id ? nil : person.id
+                                }
                             }
                         }
                         .padding(.horizontal, 16)
                     }
                 }
-
-                // Своя история: те же чек-ины, стикеры и фото, что и в ленте
-                PostComposer(model: model, placeholder: t("Что у вас сейчас?"), hintText: t("Видно в Историях и в Ленте"))
 
                 if posts.isEmpty {
                     GlassCard {
@@ -79,37 +76,5 @@ struct StoriesScreen: View {
             .padding(.top, 12)
             .padding(.bottom, tabBarSpace)
         }
-    }
-}
-
-/// Аватар в кольце-градиенте, как у историй; неактивные приглушены.
-private struct StoryRing: View {
-    let person: User
-    let active: Bool
-    let onTap: () -> Void
-    let onLongPress: () -> Void
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Avatar(user: person, size: 58, showOnline: true)
-                .padding(4)
-                .overlay(
-                    Circle().strokeBorder(
-                        AngularGradient(colors: [Palette.lilac, Palette.orchid, Palette.sky, Palette.lilac], center: .center),
-                        lineWidth: 2
-                    )
-                )
-            Text(person.firstName)
-                .textStyle(.labelLarge)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .frame(width: 72)
-        .opacity(active ? 1 : 0.45)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
-        .onLongPressGesture(perform: onLongPress)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(t("Долгое нажатие — страница человека"))
     }
 }

@@ -12,8 +12,10 @@ This policy applies to the Memory app on Android and iPhone and to the website [
 
 - **Account**: username, name, password (only its hash is stored, using PBKDF2), and, once the server is connected, a phone number for sign-in. Email, if you added it in Security; recovery codes are stored only as hashes. Why: to create your account, protect sign-in and restore access if you forget your password.
 - **Profile**: photo, bio, city, birthday, website, interests, whatever you fill in yourself. Why: to show your profile to others according to your privacy settings.
-- **Content**: posts, photos, videos, voice messages, PRISM, stickers, comments, polls, messages, check-ins, shelf entries, showcase products, #tags and @mentions. Why: to show them to the people you addressed them to.
+- **Content**: posts, photos, videos, voice messages, PRISM, stickers, comments, polls, messages, check-ins, shelf entries, showcase products, #tags and @mentions, stories, highlights, reposts, a post's place and people tagged in photos (you can only tag friends; a tagged person sees the post under “Tags”). Why: to show them to the people you addressed them to.
 - **Live streams**: video, audio and the stream chat are delivered to viewers while the stream is on and are not stored after it ends.
+- **Stories** are visible to friends for 24 hours (or only to “Close friends” — only you see that list), then stay in your archive. The author sees who viewed the story and who sent a heart.
+- **Calls**: voice and video go to the other person during the call and are not recorded. The call history keeps who, when, voice or video, and duration. Who can call you is set in Settings → Privacy.
 - **Geolocation**: only when you send a location yourself, or mark a treasure, a find or an outing in Together. There is no background geolocation.
 - **Technical data**: device model and OS version, language, push notification token. Why: to deliver notifications.
 - **Crash reports and usage statistics**: only if you separately turn them on in Settings → Privacy → Crashes and statistics (off by default). A crash report contains the error type and the place in the code, without your posts or chats; emails, usernames and long numbers are removed from it. Statistics are daily event counters ("posts published: 3") without any texts. Why: to fix crashes and understand which features are used.
@@ -35,7 +37,7 @@ Currently (before the server launches), your account, posts and conversations ar
   - Jamendo (Luxembourg) and Openverse (USA): search queries in the media library;
   - OpenStreetMap (United Kingdom): map tile requests on Android;
   - Sentry (Functional Software, Inc., USA): crash reports and usage statistics, **only with your separate consent** in Settings → Privacy;
-  - [LiveKit live streaming server: country]: video and audio of live streams, once the server is connected.
+  - [LiveKit live streaming server: country]: video and audio of live streams and calls, once the server is connected.
 - **Government authorities**: only in the cases and in the manner expressly established by the law of the Republic of Armenia.
 
 ## 5. How long we keep data

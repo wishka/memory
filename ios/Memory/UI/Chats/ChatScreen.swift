@@ -84,7 +84,15 @@ struct ChatScreen: View {
                                         notice = t("Этого товара уже нет в витрине")
                                     }
                                 },
-                                onReport: { model.reportMessage(chat.id, message) }
+                                onReport: { model.reportMessage(chat.id, message) },
+                                onPost: { ref in
+                                    if !model.openPostRef(ref) {
+                                        notice = t("Этой записи нет на этом телефоне — возможно, её удалили.")
+                                    }
+                                },
+                                onCallBack: { record in
+                                    if let error = model.callBack(record) { notice = error }
+                                }
                             )
                             .id(message.id)
                         }
@@ -256,6 +264,19 @@ struct ChatScreen: View {
             }
             .buttonStyle(.plain)
             Spacer()
+            // Звонок: голосом или видео
+            if !blocked {
+                Button { call(video: false) } label: {
+                    Glyph(kind: .phone, color: Palette.ink, size: 22).frame(width: 40, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(t("Позвонить"))
+                Button { call(video: true) } label: {
+                    Glyph(kind: .video, color: Palette.ink, size: 22).frame(width: 40, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(t("Видеозвонок"))
+            }
             Button { headerMenu = true } label: {
                 Glyph(kind: .more, color: Palette.ink).frame(width: 44, height: 44).contentShape(Rectangle())
             }
@@ -264,6 +285,10 @@ struct ChatScreen: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
+    }
+
+    private func call(video: Bool) {
+        if let error = model.startCall(chat.peer.id, video: video) { notice = error }
     }
 
     /// Под именем: печатает, шифрование и исчезающие, «в сети» или логин.
@@ -367,6 +392,10 @@ private struct Bubble: View {
     var onProduct: (ProductRef) -> Void = { _ in }
     /// Пожаловаться на сообщение собеседника (на свои — нет).
     var onReport: () -> Void = {}
+    /// Нажали на запись в сообщении — открыть её.
+    var onPost: (PostRef) -> Void = { _ in }
+    /// Перезвонить по строке звонка.
+    var onCallBack: (CallRecord) -> Void = { _ in }
     @State private var menu = false
 
     var body: some View {
@@ -384,6 +413,15 @@ private struct Bubble: View {
         // Только стикер — без пузыря, картинкой
         let stickerOnly = message.text.isEmpty && !message.attachments.isEmpty && stickers.count == message.attachments.count
             && message.replyTo == nil && message.forwardedFrom == nil && message.poll == nil && message.place == nil && message.product == nil
+            && message.story == nil && message.post == nil
+        if let call = message.call {
+            // Звонок — строкой по центру, без пузыря
+            HStack {
+                Spacer(minLength: 0)
+                CallRow(record: call) { onCallBack(call) }
+                Spacer(minLength: 0)
+            }
+        } else {
         HStack(spacing: 0) {
             if mine { Spacer(minLength: 0) }
             if stickerOnly {
@@ -404,6 +442,16 @@ private struct Bubble: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
                     .padding(.top, 2)
+                }
+                // Ответ на историю — сама история маленькой картинкой
+                if let ref = message.story {
+                    StoryRefRow(ref: ref, mine: mine)
+                        .frame(maxWidth: 270, alignment: .leading)
+                }
+                // Запись, которой поделились
+                if let ref = message.post {
+                    PostRefCard(ref: ref) { onPost(ref) }
+                        .frame(width: 270)
                 }
                 if let ref = message.replyTo {
                     Button { onQuote(ref.messageId) } label: {
@@ -474,6 +522,7 @@ private struct Bubble: View {
             .frame(maxWidth: 290, alignment: mine ? .trailing : .leading)
             }
             if !mine { Spacer(minLength: 0) }
+        }
         }
     }
 

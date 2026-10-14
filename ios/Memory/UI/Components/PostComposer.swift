@@ -20,6 +20,11 @@ struct PostComposer: View {
     @State private var choosingCheckIn = false
     /// Сценарий быстрого чек-ина: сразу к заполнению; nil — выбор занятия.
     @State private var scenario: String?
+    /// Где это было: подпись «📍 …» под шапкой записи и точка на карте.
+    @State private var place: SharedPlace?
+    @State private var choosingPlace = false
+    /// Фото, на котором сейчас отмечают друзей.
+    @State private var tagging: Attachment?
 
     private var canPublish: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty || checkIn != nil || poll != nil
@@ -74,11 +79,38 @@ struct PostComposer: View {
                         .padding(.horizontal, 12)
                         .padding(.bottom, 10)
                 }
-                PendingAttachments(items: media) { item in
+                if let place {
+                    HStack(spacing: 6) {
+                        Glyph(kind: .globe, color: Palette.lilac, size: 16)
+                        Text(place.title.isEmpty ? t("Место на карте") : place.title)
+                            .textStyle(.labelLarge)
+                            .lineLimit(1)
+                        Button { self.place = nil } label: {
+                            Glyph(kind: .close, color: Palette.mist, size: 14)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(t("Убрать место"))
+                    }
+                    .padding(.leading, 12)
+                    .glass(Capsule())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                }
+                PendingAttachments(items: media, onRemove: { item in
                     media.removeAll { $0.id == item.id }
                     deleteAttachmentFiles(item)
-                }
+                }, onTag: { tagging = $0 })
                 .padding(.bottom, media.isEmpty ? 0 : 10)
+                if media.contains(where: { $0.kind == .photo && !$0.sticker && !$0.isGif }) && media.allSatisfy({ $0.tags.isEmpty }) {
+                    Text(t("Нажмите на фото, чтобы отметить друзей"))
+                        .textStyle(.label, Palette.mist)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
                 HStack(spacing: 8) {
                     AttachButton(
                         documents: false, size: 40,
@@ -97,14 +129,23 @@ struct PostComposer: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(t("Чек-ин"))
+                    // Место — подпись «📍 …» под шапкой записи и точка на карте
+                    Button { choosingPlace = true } label: {
+                        Glyph(kind: .globe, color: Palette.lilac, size: 20)
+                            .frame(width: 40, height: 40)
+                            .glass(Circle(), strong: place != nil)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(t("Добавить место"))
                     Text(hint).textStyle(.bodySmall, Palette.mist).lineLimit(1)
                     Spacer()
                     GlowButton(title: t("Поделиться"), enabled: canPublish) {
-                        model.publish(text, media: media, checkIn: checkIn, poll: poll)
+                        model.publish(text, media: media, checkIn: checkIn, poll: poll, place: place)
                         text = ""
                         media = []
                         checkIn = nil
                         poll = nil
+                        place = nil
                     }
                 }
                 .padding(.horizontal, 12)
@@ -124,6 +165,21 @@ struct PostComposer: View {
         }
         .sheet(isPresented: $choosingCheckIn, onDismiss: { scenario = nil }) {
             CheckInPicker(model: model, start: scenario) { checkIn = $0 }
+        }
+        .sheet(isPresented: $choosingPlace) {
+            PlacePickerSheet(current: place, onDone: { place = $0; choosingPlace = false }, onDismiss: { choosingPlace = false })
+        }
+        // Отметить друзей на фото — снимок во весь экран
+        .fullScreenCover(item: $tagging) { item in
+            PhotoTagEditor(attachment: item, friends: model.state.friends, onDone: { tags in
+                media = media.map { a in
+                    guard a.id == item.id else { return a }
+                    var x = a
+                    x.tags = tags
+                    return x
+                }
+                tagging = nil
+            }, onDismiss: { tagging = nil })
         }
     }
 
@@ -159,5 +215,86 @@ struct PostComposer: View {
             .glass(Capsule())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Место для записи: название и, по желанию, точка «где я сейчас».
+/// Без точки место — просто подпись; с точкой — открывается на карте.
+/// То же — PlacePickerDialog в PostComposer.kt.
+struct PlacePickerSheet: View {
+    let current: SharedPlace?
+    let onDone: (SharedPlace?) -> Void
+    let onDismiss: () -> Void
+    @State private var title: String
+    @State private var at: LatLon?
+    @State private var busy = false
+    @State private var failed = false
+
+    init(current: SharedPlace?, onDone: @escaping (SharedPlace?) -> Void, onDismiss: @escaping () -> Void) {
+        self.current = current
+        self.onDone = onDone
+        self.onDismiss = onDismiss
+        _title = State(initialValue: current?.title ?? "")
+        _at = State(initialValue: current.flatMap { $0.lat != 0 || $0.lon != 0 ? $0.at : nil })
+    }
+
+    var body: some View {
+        let ready = !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || at != nil
+        VStack(alignment: .leading, spacing: 12) {
+            Text(t("Где это было?"))
+                .textStyle(.headline)
+                .accessibilityAddTraits(.isHeader)
+            GlassField(placeholder: t("Название: кафе, парк, город"), text: $title, limit: 80, singleLine: true)
+                .glass(Capsule())
+            Button(action: locate) {
+                HStack(spacing: 8) {
+                    if busy {
+                        ProgressView().tint(Palette.lilac)
+                    } else {
+                        Glyph(kind: .pin, color: Palette.lilac, size: 18)
+                    }
+                    Text(busy ? t("Ищем, где вы…") : at != nil ? t("Точка на карте добавлена") : t("Отметить, где я сейчас"))
+                        .textStyle(.bodySmall)
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .glass(radius: 14, strong: at != nil)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+            if failed {
+                Text(t("Не удалось определить, где вы. Включите геолокацию.")).textStyle(.bodySmall, Palette.error)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 10) {
+                GhostButton(title: current != nil ? t("Убрать") : t("Отмена")) {
+                    if current != nil { onDone(nil) } else { onDismiss() }
+                }
+                Spacer()
+                GlowButton(title: t("Готово"), enabled: ready) {
+                    onDone(SharedPlace(lat: at?.lat ?? 0, lon: at?.lon ?? 0,
+                                       title: title.trimmingCharacters(in: .whitespacesAndNewlines)))
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.night.ignoresSafeArea())
+        .presentationDetents([.medium])
+        .presentationBackground(Palette.night)
+        .presentationCornerRadius(28)
+    }
+
+    /// Где я сейчас — через Locator, как геолокация в переписке.
+    private func locate() {
+        guard !busy else { return }
+        busy = true
+        failed = false
+        Task { @MainActor in
+            let here = await Locator.shared.current()
+            busy = false
+            if let here { at = here } else { failed = true }
+        }
     }
 }

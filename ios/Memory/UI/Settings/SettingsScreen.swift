@@ -58,6 +58,7 @@ struct SettingsScreen: View {
                     case .growth: GrowthPage(model: model)
                     case .sounds: SoundsPage(model: model)
                     case .guide: GuidePage(model: model, query: $guideQuery, expanded: $guideOpen)
+                    case .theme: ThemePage()
                     case .wallpaper:
                         VStack(alignment: .leading, spacing: 12) {
                             BackdropChooser(
@@ -129,6 +130,8 @@ private struct MainSettings: View {
             NavRow(icon: .textSize, title: t("Размер текста"), value: textScaleTitle(L10n.shared.textScale)) {
                 model.openSettings(.textSize)
             }
+            Divider()
+            NavRow(icon: .eye, title: t("Оформление"), value: ThemeState.shared.mode.title) { model.openSettings(.theme) }
             Divider()
             NavRow(icon: .globe, title: t("Язык"), value: L10n.shared.choice.title) { model.openSettings(.language) }
             Divider()
@@ -292,6 +295,10 @@ private struct PrivacyPage: View {
                 FadeLine()
                 AudiencePicker(title: t("Кто может написать мне"), value: privacy.messages) { v in
                     update { $0.messages = v }
+                }
+                FadeLine()
+                AudiencePicker(title: t("Кто может мне звонить"), value: privacy.calls) { v in
+                    update { $0.calls = v }
                 }
                 FadeLine()
                 AudiencePicker(title: t("Кто может комментировать записи"), value: privacy.comments) { v in
@@ -594,6 +601,24 @@ private struct LanguagePage: View {
             }
         }
         Hint(text: t("Переводится интерфейс. Записи и сообщения остаются на том языке, на котором их написали."))
+    }
+}
+
+// MARK: - Оформление
+
+/// Как в системе, тёмное «ночное» или светлое «рассветное». Выбор — на этом телефоне.
+private struct ThemePage: View {
+    var body: some View {
+        let current = ThemeState.shared.mode
+        SettingsCard {
+            ForEach(Array(ThemeMode.allCases.enumerated()), id: \.element) { i, mode in
+                if i > 0 { Divider() }
+                ChoiceRow(title: mode.title, selected: current == mode) {
+                    DevicePrefs().setTheme(mode)
+                }
+            }
+        }
+        Hint(text: t("«Как в системе» — днём светлое, ночью тёмное, если так настроен телефон. PRISM, эфиры, звонки и фото на весь экран всегда тёмные."))
     }
 }
 

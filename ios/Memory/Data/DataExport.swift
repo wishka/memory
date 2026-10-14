@@ -50,6 +50,7 @@ enum DataExport {
             if let cover = p.cover { atts.append(cover) }
         }
         atts += s.recentGifs ?? []
+        atts += (s.stories ?? []).compactMap(\.media)
         var paths: [String] = atts.flatMap { [$0.fileName] + $0.frames }
         paths += (s.stickers ?? []).flatMap { [$0.fileName] + ($0.frameFiles ?? []) }
         paths += (s.tracks ?? []).map(\.fileName)

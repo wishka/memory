@@ -24,10 +24,14 @@ enum class ActivityKind(val id: String) {
     PollVotes("votes"),
     GroupJoin("join"),
     Live("live"),
+    Repost("repost"),
+    Tagged("tagged"),
+    StoryReply("story_reply"),
+    MissedCall("missed_call"),
     ;
 
     /** Такие события сливаются в одно: «Вера и ещё 3 оценили вашу запись». */
-    val groups: Boolean get() = this == Like || this == PrismLike || this == CommentLike || this == GroupJoin
+    val groups: Boolean get() = this == Like || this == PrismLike || this == CommentLike || this == GroupJoin || this == Repost
 
     companion object {
         fun of(id: String): ActivityKind? = entries.firstOrNull { it.id == id }
@@ -138,6 +142,10 @@ object Activity {
             ActivityKind.PollVotes -> tf("В вашем опросе%s — новые голоса: %s", quote, g.count)
             ActivityKind.GroupJoin -> tf(verb("%s вступили в вашу группу", "%s вступил в вашу группу", "%s вступила в вашу группу"), who) + quote
             ActivityKind.Live -> tf(verb("%s начали прямой эфир", "%s начал прямой эфир", "%s начала прямой эфир"), who) + quote
+            ActivityKind.Repost -> tf(verb("%s поделились вашей записью", "%s поделился вашей записью", "%s поделилась вашей записью"), who) + quote
+            ActivityKind.Tagged -> tf(verb("%s отметили вас на фото", "%s отметил вас на фото", "%s отметила вас на фото"), who) + quote
+            ActivityKind.StoryReply -> tf(verb("%s ответили на вашу историю", "%s ответил на вашу историю", "%s ответила на вашу историю"), who) + quote
+            ActivityKind.MissedCall -> tf("Пропущенный звонок: %s", who)
         }
     }
 

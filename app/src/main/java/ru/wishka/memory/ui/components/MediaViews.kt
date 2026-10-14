@@ -188,7 +188,7 @@ fun DocumentRow(attachment: Attachment, modifier: Modifier = Modifier, onClick: 
 
 /** Фото или видео на весь экран поверх приложения. */
 @Composable
-fun MediaViewer(attachment: Attachment, onClose: () -> Unit) {
+fun MediaViewer(attachment: Attachment, onClose: () -> Unit, onPerson: ((Int) -> Unit)? = null) {
     Dialog(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -218,6 +218,7 @@ fun MediaViewer(attachment: Attachment, onClose: () -> Unit) {
                     }
                 }
             }
+            if (attachment.kind == MediaKind.Photo) PhotoTagsLayer(attachment, onPerson)
             Box(
                 modifier = Modifier
                     .statusBarsPadding()
@@ -367,7 +368,13 @@ fun MenuRow(icon: LineIcon, title: String, color: Color = Palette.Ink, onClick: 
 
 /** Вложения, которые ещё не отправлены: маленькие плитки с крестиком. */
 @Composable
-fun PendingAttachments(items: List<Attachment>, onRemove: (Attachment) -> Unit, modifier: Modifier = Modifier) {
+fun PendingAttachments(
+    items: List<Attachment>,
+    onRemove: (Attachment) -> Unit,
+    modifier: Modifier = Modifier,
+    /** Нажатие на фото — отметить людей; null — плитки не нажимаются. */
+    onTag: ((Attachment) -> Unit)? = null,
+) {
     if (items.isEmpty()) return
     LazyRow(
         modifier = modifier,
@@ -379,7 +386,12 @@ fun PendingAttachments(items: List<Attachment>, onRemove: (Attachment) -> Unit, 
                 if (item.kind == MediaKind.Document) {
                     DocumentRow(item, Modifier.width(180.dp).height(64.dp))
                 } else {
-                    MediaTile(item, Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)), maxSide = 256)
+                    val taggable = onTag != null && item.kind == MediaKind.Photo && !item.sticker && !item.isGif
+                    MediaTile(
+                        item, Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)), maxSide = 256,
+                        onClick = if (taggable) ({ onTag?.invoke(item) }) else null,
+                    )
+                    TagCountBadge(item.tags.size, Modifier.align(Alignment.BottomStart).padding(3.dp))
                 }
                 Box(
                     modifier = Modifier

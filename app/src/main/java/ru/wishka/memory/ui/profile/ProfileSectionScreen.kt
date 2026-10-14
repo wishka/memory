@@ -159,6 +159,19 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                     }
                 }
             }
+            ProfileSection.Tagged -> {
+                val tagged = state.taggedPosts
+                if (tagged.isEmpty()) item { Empty(t("Здесь будут записи, где друзья отметили вас на фото.")) }
+                items(tagged, key = { it.id }) { post ->
+                    PostCard(
+                        post,
+                        onLike = { vm.likeAny(post.id) },
+                        onAuthor = { vm.openPerson(post.author.id) },
+                        onComments = { vm.openComments(post.id) },
+                        onOpenMedia = vm::openMedia,
+                    )
+                }
+            }
             // «Моя музыка», «Студия» и «Итоги» — свои экраны
             ProfileSection.Music, ProfileSection.Stickers, ProfileSection.Recap, ProfileSection.Shelf, ProfileSection.Premium -> Unit
         }
@@ -176,6 +189,7 @@ private fun subtitle(state: UiState, section: ProfileSection): String = when (se
     ProfileSection.Recap -> ""
     ProfileSection.Premium -> ""
     ProfileSection.Requests -> plural(state.followRequests.size, "заявка", "заявки", "заявок")
+    ProfileSection.Tagged -> plural(state.taggedPosts.size, "запись", "записи", "записей")
 }
 
 /** Заявка в друзья ко мне: принять или отклонить. */

@@ -2,6 +2,7 @@ package ru.wishka.memory
 
 import android.os.Bundle
 import android.widget.Toast
+import androidx.compose.runtime.SideEffect
 import ru.wishka.memory.i18n.t
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -147,10 +148,21 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
-        // Язык и размер текста — до первого экрана, чтобы не мигали
+        // Язык, размер текста и оформление — до первого экрана, чтобы не мигали
         DevicePrefs(applicationContext).load()
+        ru.wishka.memory.ui.theme.ThemeState.systemDark =
+            (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) != android.content.res.Configuration.UI_MODE_NIGHT_NO
         setContent {
-            MemoryTheme { AppRoot() }
+            MemoryTheme {
+                // Значки строки состояния — тёмные на светлом, светлые на тёмном
+                val light = ru.wishka.memory.ui.theme.ThemeState.light
+                LaunchedEffect(light) {
+                    val transparent = android.graphics.Color.TRANSPARENT
+                    val style = if (light) SystemBarStyle.light(transparent, transparent) else SystemBarStyle.dark(transparent)
+                    enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                }
+                AppRoot()
+            }
         }
     }
 }
@@ -193,6 +205,8 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
                 }
             }
             loadedFor = account.username
+            // Истории друзей и их «Актуальное» — в демо появляются сами
+            vm.ensureDemoStories()
             // Сохранённое на месте — можно считать итоги и оживлять демо
             vm.checkRecapReady()
             vm.startDemoLife()
@@ -246,6 +260,8 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
         needsConsent -> Stage.Consent
         else -> Stage.Main
     }
+    // Заставка, знакомство, вход и документы — на ночном небе: всегда тёмные
+    SideEffect { ru.wishka.memory.ui.theme.ThemeState.stageDark = stage != Stage.Main }
     Crossfade(targetState = stage, animationSpec = tween(500), label = "stage") { s ->
         when (s) {
             Stage.Splash -> AtomSplash(onFinished = { splashDone = true })
@@ -395,9 +411,17 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
     // → группа → лента → выход
     val canGoBack = state.viewing != null || state.openProduct != null || state.commentsPostId != null || state.commentsPrismId != null ||
         state.openChatId != null || state.openPersonId != null || state.profileSection != null || state.settingsPage != null ||
-        state.creatingPrism || state.activityOpen || state.watchingLiveId != null || state.liveStarting || state.searchOpen || state.openPostId != null || state.editingPostId != null ||
+        state.creatingPrism || state.activityOpen || state.storyViewer != null || state.storyComposer || state.call != null ||
+        state.repostingPostId != null || state.sharingPostId != null || state.watchingLiveId != null || state.liveStarting || state.searchOpen || state.openPostId != null || state.editingPostId != null ||
         state.openGroupId != null || state.tab != Tab.Feed
     BackHandler(enabled = canGoBack) { vm.back() }
+
+    // Что всегда ночное — PRISM, эфир, звонок, история, фото на весь экран — тёмное и в светлой теме
+    // Переписка с «космическим» фоном — тоже: светлый текст шапки на тёмной картинке
+    val darkBackdrop = state.openChat?.let { (it.backdrop ?: state.backdrop).style != ru.wishka.memory.data.BackdropStyle.Plain.id } ?: false
+    val overlayDark = state.tab == Tab.Prism || state.viewing != null || state.creatingPrism || state.watchingLiveId != null || darkBackdrop ||
+        state.storyViewer != null || state.storyComposer || state.call != null
+    SideEffect { ru.wishka.memory.ui.theme.ThemeState.overlayDark = overlayDark }
 
     // #теги, @упоминания и ссылки в тексте; ссылка на запись и правка — в меню любой карточки
     val links = remember(vm, state.me.id) {
@@ -420,6 +444,13 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             },
             onCopyLink = { post -> ru.wishka.memory.ui.auth.copyText(context, "Memory", Links.post(post.id), t("Ссылка скопирована")) },
             onEdit = { post -> vm.startEdit(post.id) },
+            onRepost = { post -> vm.openRepost(post.id) },
+            onSendToChat = { post -> vm.openSendToChat(post.id) },
+            onOpenRef = { ref ->
+                if (!vm.openPostRef(ref)) Toast.makeText(context, t("Это недоступно на этом телефоне — возможно, запись удалили или профиль закрыт."), Toast.LENGTH_LONG).show()
+            },
+            onPerson = vm::openPerson,
+            onUntagMe = { post -> vm.untagMe(post.id) },
         )
     }
     CompositionLocalProvider(LocalLinkActions provides links) {
@@ -535,7 +566,7 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         }
         state.echo?.let { EchoDialog(vm, state, it) }
         state.openedInvite?.let { InviteDialog(vm, it) }
-        state.viewing?.let { MediaViewer(it, onClose = vm::closeMedia) }
+        state.viewing?.let { MediaViewer(it, onClose = vm::closeMedia, onPerson = { id -> vm.closeMedia(); vm.openPerson(id) }) }
         state.reporting?.let { target ->
             ReportDialog(
                 target,
@@ -550,11 +581,17 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         state.legalDoc?.let { LegalDocViewer(it, onClose = vm::closeLegal) }
         // Свой PRISM — камера и редактор во весь экран, поверх всего
         if (state.creatingPrism) PrismCreateFlow(vm, state)
+        // Истории — просмотр и новая — во весь экран
+        if (state.storyComposer) ru.wishka.memory.ui.stories.StoryComposerScreen(vm, state)
+        if (state.storyViewer != null) ru.wishka.memory.ui.stories.StoryViewerScreen(vm, state)
+        state.call?.let { ru.wishka.memory.ui.calls.CallScreen(vm, state, it) }
         // Эфир — во весь экран, поверх всего
         state.watchingLive?.let { ru.wishka.memory.ui.live.LiveScreen(vm, state, it) }
         if (state.liveStarting) ru.wishka.memory.ui.live.LiveStartDialog(vm)
         state.liveSummary?.let { ru.wishka.memory.ui.live.LiveSummaryDialog(vm, it) }
         state.editingPostId?.let { id -> state.findPost(id)?.let { ru.wishka.memory.ui.feed.EditPostSheet(vm, it) } }
+        state.repostingPostId?.let { id -> state.findPost(id)?.let { ru.wishka.memory.ui.feed.RepostSheet(vm, it) } }
+        state.sharingPostId?.let { id -> state.findPost(id)?.let { ru.wishka.memory.ui.feed.SendToChatSheet(vm, state, it) } }
         if (askTelemetry && state.banner == null) ru.wishka.memory.ui.settings.TelemetryConsentDialog { askTelemetry = false }
     }
     }

@@ -66,6 +66,8 @@ data class Attachment(
     val frames: List<String> = emptyList(),
     /** Кадров в секунду у покадрового стикера. */
     val fps: Int = 0,
+    /** Отмеченные на фото люди: где на снимке (доли 0…1) и кто. */
+    val tags: List<PhotoTag> = emptyList(),
 ) {
     /** Гифка: играет сама, без рамки «видео». */
     val isGif: Boolean
@@ -125,7 +127,30 @@ data class Post(
     val poll: Poll? = null,
     /** Когда запись правили (мс); 0 — не правили. Видно как «изменено». */
     val editedAt: Long = 0,
+    /** Репост: чью запись показываем внутри; text — свои слова к ней (может быть пустым). */
+    val repostOf: PostRef? = null,
+    /** Сколько раз запись репостнули. */
+    val reposts: Int = 0,
+    /** Где это было: место, отмеченное в записи; null — без места. */
+    val place: SharedPlace? = null,
 )
+
+/**
+ * Запись внутри репоста или сообщения: копия сути на момент репоста —
+ * чтобы читалось, даже если оригинал потом изменят или удалят.
+ */
+data class PostRef(
+    val postId: Long,
+    val authorId: Int,
+    val authorName: String,
+    val text: String,
+    val photo: String = "",
+    val seed: Int = 0,
+    val createdAt: Long = 0,
+)
+
+/** Человек, отмеченный на фото: точка на снимке в долях ширины и высоты. */
+data class PhotoTag(val userId: Int, val x: Float, val y: Float)
 
 /** Минуты с момента createdAt, а для демо-данных — заданные заранее. */
 fun minutesSince(createdAt: Long, minutesAgo: Int, now: Long = System.currentTimeMillis()): Int =
@@ -161,6 +186,12 @@ data class Message(
     val secret: Boolean = false,
     /** Когда исчезнет (мс); 0 — не исчезает. */
     val expiresAt: Long = 0,
+    /** Ответ на историю: на какую; null — обычное сообщение. */
+    val story: StoryRef? = null,
+    /** Запись, которой поделились в переписке; null — нет. */
+    val post: PostRef? = null,
+    /** Звонок: строка «Видеозвонок · 3:12» или «Пропущенный звонок»; null — не звонок. */
+    val call: CallRecord? = null,
 )
 
 /**
@@ -376,6 +407,8 @@ data class Privacy(
      * вкус»). Выключены — ничего не подбирается по вашим оценкам.
      */
     val personalRecs: Boolean = true,
+    /** Кто может мне звонить. */
+    val calls: Audience = Audience.Everyone,
 )
 
 /** Какие уведомления присылать. all = false выключает все разом. */

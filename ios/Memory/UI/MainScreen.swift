@@ -114,6 +114,15 @@ struct MainScreen: View {
         .sheet(item: editingPost) { post in
             EditPostSheet(model: model, post: post)
         }
+        // Репост и «Отправить в чат» — шторкой; из репоста можно перейти в выбор переписки
+        .sheet(item: postShare) { share in
+            Group {
+                switch share {
+                case .repost(let post): RepostSheet(model: model, post: post)
+                case .send(let post): SendToChatSheet(model: model, post: post)
+                }
+            }
+        }
         .shareSheet($sharing)
         .toast($notice)
         // Шторка «Это в Memory+» — поверх всего, где бы ни нажали
@@ -136,13 +145,30 @@ struct MainScreen: View {
         .fullScreenCover(item: legalDoc) { doc in
             LegalDocViewer(doc: doc) { model.closeLegal() }
         }
-        // Фото или видео — на весь экран
+        // Фото или видео — на весь экран; имя отметки на фото — страница человека
         .fullScreenCover(item: viewing) { attachment in
-            MediaViewer(attachment: attachment) { model.closeMedia() }
+            MediaViewer(attachment: attachment, onClose: { model.closeMedia() }, onPerson: { id in
+                model.closeMedia()
+                model.openPerson(id)
+            })
         }
         // Свой PRISM: камера → редактор → публикация
         .fullScreenCover(isPresented: creatingPrism) {
             PrismCreateFlow(model: model)
+        }
+        // Истории — новая и просмотр — во весь экран
+        .fullScreenCover(isPresented: storyComposer) {
+            StoryComposerScreen(model: model)
+        }
+        .fullScreenCover(isPresented: storyViewer) {
+            StoryViewerScreen(model: model)
+        }
+        // Звонок — своим окном поверх всего, даже поверх шторок; жестом не закрывается
+        .callWindow(model)
+        // PRISM, эфир, звонок, история, фото на весь экран и переписка
+        // с «космическим» фоном — тёмные и в светлой теме
+        .onChange(of: overlayDark, initial: true) { _, dark in
+            ThemeState.shared.overlayDark = dark
         }
         .animation(.easeOut(duration: 0.22), value: state.tab)
         .animation(.easeOut(duration: 0.25), value: state.openChatId)
@@ -175,7 +201,56 @@ struct MainScreen: View {
                 copyText(Links.post(post.id))
                 notice = t("Ссылка скопирована")
             },
-            onEdit: { model.startEdit($0.id) }
+            onEdit: { model.startEdit($0.id) },
+            onRepost: { model.openRepost($0.id) },
+            onSendToChat: { model.openSendToChat($0.id) },
+            onOpenRef: { ref in
+                if !model.openPostRef(ref) {
+                    notice = t("Это недоступно на этом телефоне — возможно, запись удалили или профиль закрыт.")
+                }
+            },
+            onPerson: { model.openPerson($0) },
+            onUntagMe: { model.untagMe($0.id) }
+        )
+    }
+
+    /// Что всегда ночное — PRISM, эфир, звонок, история, фото на весь экран —
+    /// тёмное и в светлой теме. Переписка с «космическим» фоном — тоже:
+    /// светлый текст шапки на тёмной картинке. То же — overlayDark в MainActivity.kt.
+    private var overlayDark: Bool {
+        let s = model.state
+        let darkBackdrop = s.openChat.map { $0.backdropOr(s.backdrop).style != BackdropStyle.plain.id } ?? false
+        return s.tab == .prism || s.viewing != nil || s.creatingPrism || s.watchingLiveId != nil || darkBackdrop
+            || s.storyViewer != nil || s.storyComposer || s.call != nil
+    }
+
+    private var storyComposer: Binding<Bool> {
+        Binding(
+            get: { model.state.storyComposer },
+            set: { if !$0 && model.state.storyComposer { model.closeStoryComposer() } }
+        )
+    }
+
+    private var storyViewer: Binding<Bool> {
+        Binding(
+            get: { model.state.storyViewer != nil },
+            set: { if !$0 && model.state.storyViewer != nil { model.closeStories() } }
+        )
+    }
+
+    private var postShare: Binding<PostShare?> {
+        Binding(
+            get: {
+                let s = model.state
+                if let id = s.repostingPostId, let post = s.findPost(id) { return .repost(post) }
+                if let id = s.sharingPostId, let post = s.findPost(id) { return .send(post) }
+                return nil
+            },
+            set: {
+                if $0 == nil && (model.state.repostingPostId != nil || model.state.sharingPostId != nil) {
+                    model.closeRepost()
+                }
+            }
         )
     }
 
@@ -314,5 +389,18 @@ struct MainScreen: View {
                     model.back()
                 }
             }
+    }
+}
+
+/// Шторка записи: репост в свою ленту или отправка в переписку.
+private enum PostShare: Identifiable {
+    case repost(Post)
+    case send(Post)
+
+    var id: String {
+        switch self {
+        case .repost(let post): return "repost-\(post.id)"
+        case .send(let post): return "send-\(post.id)"
+        }
     }
 }

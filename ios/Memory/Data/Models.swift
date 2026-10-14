@@ -74,6 +74,8 @@ struct Attachment: Identifiable, Equatable, Codable, Hashable {
     var frameFiles: [String]? = nil
     /// Кадров в секунду у покадрового стикера.
     var frameRate: Int? = nil
+    /// Отмеченные на фото люди: где на снимке (доли 0…1) и кто.
+    var tags: [PhotoTag] = []
 
     var voice: Bool { voiceFlag ?? false }
     var sticker: Bool { stickerFlag ?? false }
@@ -102,6 +104,52 @@ struct Attachment: Identifiable, Equatable, Codable, Hashable {
     /// Музыка — документ со звуком: в записи он играет прямо в карточке.
     var isAudio: Bool {
         kind == .document && !voice && audioExtensions.contains((fileName as NSString).pathExtension.lowercased())
+    }
+}
+
+extension Attachment {
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, fileName, name, size, voiceFlag, durationMs, waveform, stickerFlag, animationId, frameFiles, frameRate, tags
+    }
+
+    /// Чтение с запасом: отметки на фото появились позже — старые сохранения читаются без них.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(MediaKind.self, forKey: .kind)
+        fileName = try c.decode(String.self, forKey: .fileName)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        size = try c.decodeIfPresent(Int64.self, forKey: .size) ?? 0
+        voiceFlag = try c.decodeIfPresent(Bool.self, forKey: .voiceFlag)
+        durationMs = try c.decodeIfPresent(Int64.self, forKey: .durationMs)
+        waveform = try c.decodeIfPresent([Int].self, forKey: .waveform)
+        stickerFlag = try c.decodeIfPresent(Bool.self, forKey: .stickerFlag)
+        animationId = try c.decodeIfPresent(String.self, forKey: .animationId)
+        frameFiles = try c.decodeIfPresent([String].self, forKey: .frameFiles)
+        frameRate = try c.decodeIfPresent(Int.self, forKey: .frameRate)
+        tags = try c.decodeIfPresent([PhotoTag].self, forKey: .tags) ?? []
+    }
+}
+
+/// Человек, отмеченный на фото: точка на снимке в долях ширины и высоты.
+struct PhotoTag: Equatable, Codable, Hashable {
+    let userId: Int
+    let x: Double
+    let y: Double
+}
+
+extension PhotoTag {
+    /// Ключи — как у Android (StateStore.kt): user, x, y.
+    private enum CodingKeys: String, CodingKey {
+        case userId = "user"
+        case x, y
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        userId = try c.decodeIfPresent(Int.self, forKey: .userId) ?? 0
+        x = try c.decodeIfPresent(Double.self, forKey: .x) ?? 0.5
+        y = try c.decodeIfPresent(Double.self, forKey: .y) ?? 0.5
     }
 }
 
@@ -160,6 +208,76 @@ struct Post: Identifiable, Equatable, Codable {
     var poll: Poll? = nil
     /// Когда запись правили; nil — не правили. Видно как «изменено».
     var editedAt: Date? = nil
+    /// Репост: чью запись показываем внутри; text — свои слова к ней (может быть пустым).
+    var repostOf: PostRef? = nil
+    /// Сколько раз запись репостнули.
+    var reposts: Int = 0
+    /// Где это было: место, отмеченное в записи; nil — без места.
+    var place: SharedPlace? = nil
+}
+
+extension Post {
+    private enum CodingKeys: String, CodingKey {
+        case id, author, text, minutesAgo, artSeed, likes, liked, comments, media, commentList, createdAt,
+             checkIn, poll, editedAt, repostOf, reposts, place
+    }
+
+    /// Чтение с запасом: репосты и место появились позже — старые сохранения читаются без них.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        author = try c.decode(User.self, forKey: .author)
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        minutesAgo = try c.decodeIfPresent(Int.self, forKey: .minutesAgo) ?? 0
+        artSeed = try c.decodeIfPresent(Int.self, forKey: .artSeed)
+        likes = try c.decodeIfPresent(Int.self, forKey: .likes) ?? 0
+        liked = try c.decodeIfPresent(Bool.self, forKey: .liked) ?? false
+        comments = try c.decodeIfPresent(Int.self, forKey: .comments) ?? 0
+        media = try c.decodeIfPresent([Attachment].self, forKey: .media) ?? []
+        commentList = try c.decodeIfPresent([Comment].self, forKey: .commentList) ?? []
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
+        checkIn = try c.decodeIfPresent(CheckIn.self, forKey: .checkIn)
+        poll = try c.decodeIfPresent(Poll.self, forKey: .poll)
+        editedAt = try c.decodeIfPresent(Date.self, forKey: .editedAt)
+        repostOf = try c.decodeIfPresent(PostRef.self, forKey: .repostOf)
+        reposts = try c.decodeIfPresent(Int.self, forKey: .reposts) ?? 0
+        place = try c.decodeIfPresent(SharedPlace.self, forKey: .place)
+    }
+}
+
+/// Запись внутри репоста или сообщения: копия сути на момент репоста —
+/// чтобы читалось, даже если оригинал потом изменят или удалят.
+/// photo — имя файла первого фото в папке вложений; "" — туманность по seed.
+struct PostRef: Equatable, Codable {
+    var postId: Int64
+    var authorId: Int
+    var authorName: String
+    var text: String
+    var photo: String = ""
+    var seed: Int = 0
+    /// Когда опубликован оригинал; nil — демо-запись без времени.
+    var createdAt: Date? = nil
+}
+
+extension PostRef {
+    /// Ключи — как у Android (StateStore.kt): postId, author, name, text, photo, seed, createdAt.
+    private enum CodingKeys: String, CodingKey {
+        case postId
+        case authorId = "author"
+        case authorName = "name"
+        case text, photo, seed, createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        postId = try c.decodeIfPresent(Int64.self, forKey: .postId) ?? 0
+        authorId = try c.decodeIfPresent(Int.self, forKey: .authorId) ?? 0
+        authorName = try c.decodeIfPresent(String.self, forKey: .authorName) ?? ""
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        photo = try c.decodeIfPresent(String.self, forKey: .photo) ?? ""
+        seed = try c.decodeIfPresent(Int.self, forKey: .seed) ?? 0
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
+    }
 }
 
 /// Минуты с момента createdAt, а для демо-данных — заданные заранее.
@@ -198,6 +316,12 @@ struct Message: Identifiable, Equatable, Codable {
     var secretFlag: Bool? = nil
     /// Когда исчезнет; nil — не исчезает.
     var expiresAt: Date? = nil
+    /// Ответ на историю: на какую; nil — обычное сообщение.
+    var story: StoryRef? = nil
+    /// Запись, которой поделились в переписке; nil — нет.
+    var post: PostRef? = nil
+    /// Звонок: строка «Видеозвонок · 3:12» или «Пропущенный звонок»; nil — не звонок.
+    var call: CallRecord? = nil
 
     var secret: Bool {
         get { secretFlag ?? false }
@@ -510,6 +634,14 @@ struct Privacy: Equatable, Codable {
     /// Персональные рекомендации на полке (по оценкам и вкусу похожих
     /// людей). Необязательное — для старых сохранений; снаружи — personalRecs.
     var personalRecsFlag: Bool? = nil
+    /// Кто может мне звонить. Необязательное — для старых сохранений; снаружи — calls.
+    var callsAudience: Audience? = nil
+
+    /// Кто может мне звонить.
+    var calls: Audience {
+        get { callsAudience ?? .everyone }
+        set { callsAudience = newValue }
+    }
 
     var closedProfile: Bool {
         get { closedProfileFlag ?? false }

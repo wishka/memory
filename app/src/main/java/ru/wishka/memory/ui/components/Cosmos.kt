@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import ru.wishka.memory.data.User
 import ru.wishka.memory.ui.theme.Inter
 import ru.wishka.memory.ui.theme.Palette
+import ru.wishka.memory.ui.theme.ThemeState
 import kotlin.random.Random
 
 /**
@@ -50,6 +51,7 @@ fun CosmicBackground(modifier: Modifier = Modifier) {
     }
     Canvas(modifier = modifier.fillMaxSize()) {
         drawRect(Brush.verticalGradient(listOf(Palette.Night, Palette.Void, Palette.Void)))
+        val light = ThemeState.light
         drawRect(
             Brush.radialGradient(
                 listOf(Palette.Orchid.copy(alpha = 0.32f), Color.Transparent),
@@ -64,7 +66,8 @@ fun CosmicBackground(modifier: Modifier = Modifier) {
                 radius = size.width * 1.0f,
             )
         )
-        stars.forEach { (x, y, s) ->
+        // Днём звёзд не видно
+        if (!light) stars.forEach { (x, y, s) ->
             drawCircle(
                 Palette.Ink.copy(alpha = 0.15f + s * 0.45f),
                 radius = 0.6f + s * 1.3f,
@@ -78,7 +81,8 @@ fun CosmicBackground(modifier: Modifier = Modifier) {
 fun Modifier.glass(shape: Shape = RoundedCornerShape(22.dp), strong: Boolean = false): Modifier =
     this
         .clip(shape)
-        .background(Palette.Plum.copy(alpha = if (strong) 0.7f else 0.38f))
+        // На светлом фоне стекло — почти белое, иначе карточки сливаются с фоном
+        .background(Palette.Plum.copy(alpha = if (ThemeState.light) (if (strong) 0.95f else 0.72f) else if (strong) 0.7f else 0.38f))
         .border(
             1.dp,
             Brush.linearGradient(listOf(Palette.Lilac.copy(alpha = 0.38f), Palette.Sky.copy(alpha = 0.12f))),

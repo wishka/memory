@@ -12,6 +12,7 @@ enum LineIcon {
     case flash, flip, scissors, speed, crop, filter, sliders, text, sticker, volume, rotate, mirror, pause
     case copy, flag, search, brush, smile, undo, grid, award, mic, together
     case poll, gif
+    case phone, hangUp, repost, personTag, micOff, videoOff
 }
 
 struct Glyph: View {
@@ -644,6 +645,74 @@ struct Glyph: View {
             let thin = StrokeStyle(lineWidth: 1.05, lineCap: .butt)
             context.stroke(line(s, 0.24, 0.22, 0.24, 0.78), with: shading, style: thin)
             context.stroke(line(s, 0.76, 0.22, 0.76, 0.78), with: shading, style: thin)
+        case .phone, .hangUp:
+            // Трубка; «положить» — та же трубка, повёрнутая горизонтально
+            var handset = Path()
+            handset.move(to: p(s, 0.26, 0.16))
+            handset.addLine(to: p(s, 0.38, 0.14))
+            handset.addLine(to: p(s, 0.44, 0.32))
+            handset.addLine(to: p(s, 0.36, 0.40))
+            handset.addQuadCurve(to: p(s, 0.60, 0.64), control: p(s, 0.44, 0.58))
+            handset.addLine(to: p(s, 0.68, 0.56))
+            handset.addLine(to: p(s, 0.86, 0.62))
+            handset.addLine(to: p(s, 0.84, 0.74))
+            handset.addQuadCurve(to: p(s, 0.66, 0.84), control: p(s, 0.80, 0.86))
+            handset.addQuadCurve(to: p(s, 0.16, 0.34), control: p(s, 0.22, 0.72))
+            handset.addQuadCurve(to: p(s, 0.26, 0.16), control: p(s, 0.14, 0.20))
+            handset.closeSubpath()
+            if kind == .hangUp {
+                let c = s * 0.5
+                let turn = CGAffineTransform(translationX: c, y: c).rotated(by: .pi * 135 / 180).translatedBy(x: -c, y: -c)
+                strokePath(handset.applying(turn))
+            } else {
+                strokePath(handset)
+            }
+        case .repost:
+            // Две стрелки по кругу: туда и обратно
+            var top = Path()
+            top.move(to: p(s, 0.18, 0.46)); top.addLine(to: p(s, 0.18, 0.32)); top.addLine(to: p(s, 0.76, 0.32))
+            strokePath(top)
+            var topHead = Path()
+            topHead.move(to: p(s, 0.64, 0.20)); topHead.addLine(to: p(s, 0.78, 0.32)); topHead.addLine(to: p(s, 0.64, 0.44))
+            strokePath(topHead)
+            var bottom = Path()
+            bottom.move(to: p(s, 0.82, 0.54)); bottom.addLine(to: p(s, 0.82, 0.68)); bottom.addLine(to: p(s, 0.24, 0.68))
+            strokePath(bottom)
+            var bottomHead = Path()
+            bottomHead.move(to: p(s, 0.36, 0.56)); bottomHead.addLine(to: p(s, 0.22, 0.68)); bottomHead.addLine(to: p(s, 0.36, 0.80))
+            strokePath(bottomHead)
+        case .personTag:
+            // Человек в рамке-ярлыке
+            strokePath(circle(s, 0.5, 0.38, 0.11))
+            var shoulders = Path()
+            shoulders.addArc(center: .zero, radius: 1, startAngle: .degrees(200), endAngle: .degrees(340), clockwise: false,
+                             transform: CGAffineTransform(translationX: s * 0.5, y: s * 0.70).scaledBy(x: s * 0.20, y: s * 0.18))
+            strokePath(shoulders)
+            var label = Path()
+            label.move(to: p(s, 0.5, 0.08))
+            label.addLine(to: p(s, 0.86, 0.20))
+            label.addLine(to: p(s, 0.86, 0.86))
+            label.addLine(to: p(s, 0.14, 0.86))
+            label.addLine(to: p(s, 0.14, 0.20))
+            label.closeSubpath()
+            strokePath(label)
+        case .micOff:
+            strokePath(roundRect(s, 0.38, 0.12, 0.24, 0.44, 0.12))
+            var holder = Path()
+            holder.addArc(center: CGPoint(x: s * 0.5, y: s * 0.48), radius: s * 0.24,
+                          startAngle: .degrees(0), endAngle: .degrees(180), clockwise: false)
+            strokePath(holder)
+            strokePath(line(s, 0.5, 0.72, 0.5, 0.86))
+            strokePath(line(s, 0.16, 0.14, 0.84, 0.86))
+        case .videoOff:
+            strokePath(roundRect(s, 0.1, 0.28, 0.56, 0.44, 0.08))
+            var lens = Path()
+            lens.move(to: p(s, 0.66, 0.44))
+            lens.addLine(to: p(s, 0.9, 0.32))
+            lens.addLine(to: p(s, 0.9, 0.68))
+            lens.addLine(to: p(s, 0.66, 0.56))
+            strokePath(lens)
+            strokePath(line(s, 0.12, 0.14, 0.88, 0.86))
         case .info:
             strokePath(diamond(s, 0.5, 0.5, 0.34))
             strokePath(line(s, 0.5, 0.46, 0.5, 0.64))

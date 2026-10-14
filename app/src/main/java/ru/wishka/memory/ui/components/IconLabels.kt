@@ -77,5 +77,11 @@ val LineIcon.label: String
             LineIcon.Together -> "Вместе"
             LineIcon.Poll -> "Опрос"
             LineIcon.Gif -> "Гифки"
+            LineIcon.Phone -> "Позвонить"
+            LineIcon.HangUp -> "Завершить звонок"
+            LineIcon.Repost -> "Репост"
+            LineIcon.PersonTag -> "Отметить людей"
+            LineIcon.MicOff -> "Микрофон выключен"
+            LineIcon.VideoOff -> "Камера выключена"
         }
     )

@@ -1,9 +1,20 @@
 import Foundation
 
 /// Настройки телефона, а не аккаунта: знакомство «выберите любимое» и
-/// любимое, выбранное до регистрации. То же — в DevicePrefs.kt.
+/// любимое, выбранное до регистрации, оформление. То же — в DevicePrefs.kt.
 struct DevicePrefs {
     var defaults: UserDefaults = .standard
+
+    /// Оформление — до первого экрана, чтобы не мигало. Язык и размер текста L10n читает сам.
+    func load() {
+        ThemeState.shared.mode = ThemeMode.of(defaults.string(forKey: "theme"))
+    }
+
+    /// Оформление — на этом телефоне, как язык и размер текста.
+    func setTheme(_ mode: ThemeMode) {
+        ThemeState.shared.mode = mode
+        defaults.set(mode.id, forKey: "theme")
+    }
 
     /// Знакомство уже показали на этом телефоне.
     var onboarded: Bool { defaults.bool(forKey: "onboarded") }

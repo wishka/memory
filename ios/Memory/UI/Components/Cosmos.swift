@@ -3,7 +3,7 @@ import SwiftUI
 /// Фон всех экранов: глубокий тёмно-синий, два размытых свечения —
 /// фиолетовое сверху справа и синее снизу слева — и редкие звёзды.
 /// Звёзды неподвижны и одинаковы при каждом запуске: мерцающий фон
-/// отвлекал бы от ленты.
+/// отвлекал бы от ленты. В светлой теме звёзд нет — «рассвет».
 struct CosmicBackground: View {
     private static let stars: [(Double, Double, Double)] = {
         var rnd = SeededRandom(42)
@@ -11,6 +11,8 @@ struct CosmicBackground: View {
     }()
 
     var body: some View {
+        // Тема читается здесь, в body: сменилась — фон перерисовывается
+        let light = ThemeState.shared.light
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size)
             context.fill(Path(rect), with: .linearGradient(
@@ -27,6 +29,8 @@ struct CosmicBackground: View {
                 center: CGPoint(x: size.width * 0.05, y: size.height * 0.88),
                 startRadius: 0, endRadius: size.width
             ))
+            // Днём звёзд не видно
+            if light { return }
             for (x, y, s) in Self.stars {
                 let r = (0.6 + s * 1.3) / 2
                 context.fill(
@@ -43,7 +47,8 @@ extension View {
     /// Стекло: полупрозрачная сливовая заливка и тонкая сиренево-синяя кромка.
     func glass<S: Shape>(_ shape: S, strong: Bool = false) -> some View {
         self
-            .background(shape.fill(Palette.plumRGB.opacity(strong ? 0.7 : 0.38)))
+            // На светлом фоне стекло — почти белое, иначе карточки сливаются с фоном
+            .background(shape.fill(Palette.plumRGB.opacity(ThemeState.shared.light ? (strong ? 0.95 : 0.72) : (strong ? 0.7 : 0.38))))
             .overlay(
                 // Линия в 2pt по контуру, обрезанная формой, — кромка в 1pt внутри
                 shape.stroke(

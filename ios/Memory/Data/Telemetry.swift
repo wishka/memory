@@ -21,6 +21,10 @@ enum AppEvent: String, CaseIterable {
     case liveWatched = "live_watched"
     case secretChat = "secret_chat"
     case disappearing = "disappearing_set"
+    case storyPublished = "story_published"
+    case reposted = "reposted"
+    case voiceCall = "voice_call"
+    case videoCall = "video_call"
 
     var id: String { rawValue }
 }
