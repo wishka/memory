@@ -1,7 +1,6 @@
-@file:OptIn(UnstableApi::class)
-
 package ru.wishka.memory.ui.prism
 
+import androidx.annotation.OptIn as AndroidOptIn
 import android.net.Uri
 import android.view.ViewGroup
 import androidx.compose.runtime.Composable
@@ -24,6 +23,7 @@ import java.io.File
  * Играет, только пока ролик на экране и не на паузе. position —
  * текущее время и длительность, для полосы сверху.
  */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 fun PrismVideo(
     path: String,

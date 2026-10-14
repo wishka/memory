@@ -8,44 +8,12 @@ import android.net.Uri
 import ru.wishka.memory.i18n.t
 
 /**
- * Звуки уведомлений в стиле Memory: стекло, звёзды, космос. Файлы —
- * res/raw/snd_*.wav (их рисует scripts/media_assets.py). У каждого вида
- * уведомлений свой звук; поменять — «Настройки → Уведомления → Звуки».
- * Те же звуки и правила — в Sounds.swift.
+ * Звуки уведомлений Memory: 57 своих в девяти стилях (стекло, маримба,
+ * пузыри, лоу-фай, синт, амбиент, 8-бит, минимал, природа), звук телефона
+ * и тишина. Список — SoundCatalog.kt, файлы — res/raw/snd_*.ogg; всё это
+ * собирает scripts/make_sounds.py из scripts/sounds/catalog.py.
+ * У каждого вида уведомлений свой звук; поменять — «Настройки → Звуки».
  */
-enum class NotifySound(val id: String, private val ru: String) {
-    Crystal("crystal", "Кристалл"),
-    Stardust("stardust", "Звёздная пыль"),
-    Comet("comet", "Комета"),
-    Moon("moon", "Луна"),
-    Prism("prism", "Призма"),
-    Nebula("nebula", "Туманность"),
-    Orbit("orbit", "Орбита"),
-    Droplet("droplet", "Капля света"),
-    System("system", "Как в телефоне"),
-    Silent("silent", "Без звука"),
-    ;
-
-    val title: String get() = t(ru)
-
-    /** Имя файла без расширения; null — звук телефона или тишина. */
-    val file: String? get() = if (this == System || this == Silent) null else "snd_$id"
-
-    companion object {
-        fun of(id: String?): NotifySound? = entries.firstOrNull { it.id == id }
-
-        /** Звук по умолчанию: у каждого вида — свой, чтобы различать на слух. */
-        fun default(kind: NudgeKind): NotifySound = when (kind) {
-            NudgeKind.Messages -> Crystal
-            NudgeKind.Prism -> Prism
-            NudgeKind.Reactions -> Stardust
-            NudgeKind.Follows -> Orbit
-            NudgeKind.Groups -> Moon
-            NudgeKind.Friends -> Comet
-            NudgeKind.Recap -> Nebula
-        }
-    }
-}
 
 /** Выбор звуков — настройка телефона (каналы уведомлений тоже на телефоне). */
 class SoundPrefs(context: Context) {
@@ -67,7 +35,8 @@ object SoundPlayer {
     fun uri(context: Context, sound: NotifySound): Uri? {
         val file = sound.file ?: return if (sound == NotifySound.System) RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION) else null
         val res = context.resources.getIdentifier(file, "raw", context.packageName)
-        return if (res == 0) null else Uri.parse("android.resource://${context.packageName}/$res")
+        // По имени, а не по номеру ресурса: номер меняется при добавлении звуков, а канал его помнит
+        return if (res == 0) null else Uri.parse("android.resource://${context.packageName}/raw/$file")
     }
 
     fun play(context: Context, sound: NotifySound) {

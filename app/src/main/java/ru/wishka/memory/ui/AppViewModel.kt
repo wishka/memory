@@ -241,7 +241,7 @@ data class UiState(
     /** Подписка Memory+ — как хранится. */
     val subscription: Subscription = Subscription(),
     /** Какой тариф действует сейчас (закончившаяся подписка — Free). Обновляет refreshPlan(). */
-    val plan: PlanTier = PlanTier.Free,
+    val plan: PlanTier = if (Premium.enabled) PlanTier.Free else Premium.OPEN_TIER,
     /** Шторка «Это в Memory+»: что пытались открыть без подписки. */
     val paywall: PremiumFeature? = null,
     /** Открытая глава гида; null — список глав. */
@@ -419,7 +419,7 @@ class AppViewModel(
     // ==================== MEMORY+ ====================
 
     /** Тариф, который действует сейчас. */
-    fun plan(): PlanTier = _state.value.subscription.tierAt(clock())
+    fun plan(): PlanTier = if (!Premium.enabled) Premium.OPEN_TIER else _state.value.subscription.tierAt(clock())
 
     /** Есть ли доступ к премиум-функции — без шторки. */
     fun has(feature: PremiumFeature): Boolean = plan().covers(feature.tier)
@@ -429,6 +429,7 @@ class AppViewModel(
      * открывается шторка «Это в Memory+» и ответ false.
      */
     fun require(feature: PremiumFeature): Boolean {
+        if (!Premium.enabled) return true
         refreshPlan()
         if (has(feature)) return true
         _state.update { it.copy(paywall = feature) }
@@ -441,6 +442,7 @@ class AppViewModel(
 
     /** Экран «Memory+» в профиле: тарифы, пробный период, смена тарифа. */
     fun openPremium() {
+        if (!Premium.enabled) return
         refreshPlan()
         _state.update { it.copy(paywall = null) }
         openProfileSection(ProfileSection.Premium)
@@ -459,7 +461,7 @@ class AppViewModel(
                 while (until <= now) until += sub.period.days * DAY_MS
                 sub = sub.copy(until = until)
             }
-            val plan = sub.tierAt(now)
+            val plan = if (Premium.enabled) sub.tierAt(now) else Premium.OPEN_TIER
             if (sub == s.subscription && plan == s.plan) s else s.copy(subscription = sub, plan = plan)
         }
     }

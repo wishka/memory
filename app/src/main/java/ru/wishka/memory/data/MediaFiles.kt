@@ -246,11 +246,18 @@ object MediaFiles {
 /** «2,4 МБ» — размер документа. */
 fun sizeTitle(bytes: Long): String {
     val en = ru.wishka.memory.i18n.L10n.english
-    val locale = if (en) java.util.Locale.US else java.util.Locale("ru")
+    val hy = ru.wishka.memory.i18n.L10n.armenian
+    val locale = ru.wishka.memory.i18n.L10n.locale
+    // Единицы: GB/MB/KB по-английски, ԳԲ/ՄԲ/ԿԲ по-армянски, ГБ/МБ/КБ по-русски
+    val (gb, mb, kb, b) = when {
+        en -> listOf("GB", "MB", "KB", "B")
+        hy -> listOf("ԳԲ", "ՄԲ", "ԿԲ", "Բ")
+        else -> listOf("ГБ", "МБ", "КБ", "Б")
+    }
     return when {
-        bytes >= 1024L * 1024 * 1024 -> String.format(locale, if (en) "%.1f GB" else "%.1f ГБ", bytes / (1024.0 * 1024 * 1024))
-        bytes >= 1024L * 1024 -> String.format(locale, if (en) "%.1f MB" else "%.1f МБ", bytes / (1024.0 * 1024))
-        bytes >= 1024 -> if (en) "${bytes / 1024} KB" else "${bytes / 1024} КБ"
-        else -> if (en) "$bytes B" else "$bytes Б"
+        bytes >= 1024L * 1024 * 1024 -> String.format(locale, "%.1f $gb", bytes / (1024.0 * 1024 * 1024))
+        bytes >= 1024L * 1024 -> String.format(locale, "%.1f $mb", bytes / (1024.0 * 1024))
+        bytes >= 1024 -> "${bytes / 1024} $kb"
+        else -> "$bytes $b"
     }
 }

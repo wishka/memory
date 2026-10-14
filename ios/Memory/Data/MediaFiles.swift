@@ -113,12 +113,18 @@ enum MediaFiles {
 
 /// «2,4 МБ» — размер документа.
 func sizeTitle(_ bytes: Int64) -> String {
-    let en = L10n.shared.english
-    let locale = Locale(identifier: en ? "en_US" : "ru_RU")
+    let locale = L10n.shared.locale
+    // Единицы: GB/MB/KB по-английски, ԳԲ/ՄԲ/ԿԲ по-армянски, ГБ/МБ/КБ по-русски
+    let units: (gb: String, mb: String, kb: String, b: String)
+    switch L10n.shared.lang {
+    case .en: units = ("GB", "MB", "KB", "B")
+    case .hy: units = ("ԳԲ", "ՄԲ", "ԿԲ", "Բ")
+    default: units = ("ГБ", "МБ", "КБ", "Б")
+    }
     let kb = 1024.0
     let value = Double(bytes)
-    if value >= kb * kb * kb { return String(format: en ? "%.1f GB" : "%.1f ГБ", locale: locale, value / (kb * kb * kb)) }
-    if value >= kb * kb { return String(format: en ? "%.1f MB" : "%.1f МБ", locale: locale, value / (kb * kb)) }
-    if value >= kb { return en ? "\(bytes / 1024) KB" : "\(bytes / 1024) КБ" }
-    return en ? "\(bytes) B" : "\(bytes) Б"
+    if value >= kb * kb * kb { return String(format: "%.1f \(units.gb)", locale: locale, value / (kb * kb * kb)) }
+    if value >= kb * kb { return String(format: "%.1f \(units.mb)", locale: locale, value / (kb * kb)) }
+    if value >= kb { return "\(bytes / 1024) \(units.kb)" }
+    return "\(bytes) \(units.b)"
 }

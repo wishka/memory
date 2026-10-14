@@ -81,7 +81,7 @@ fun PlusBadge(feature: PremiumFeature, modifier: Modifier = Modifier) {
 
 /** Дата окончания: «16 октября». */
 private fun dateTitle(ms: Long): String {
-    val locale = if (ru.wishka.memory.i18n.L10n.english) Locale.ENGLISH else Locale("ru")
+    val locale = ru.wishka.memory.i18n.L10n.locale
     val pattern = if (ru.wishka.memory.i18n.L10n.english) "MMMM d" else "d MMMM"
     return Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern(pattern, locale))
 }

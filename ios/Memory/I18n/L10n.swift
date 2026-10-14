@@ -1,9 +1,9 @@
 import Foundation
 import Observation
 
-/// Язык приложения: как в системе телефона, русский или английский.
+/// Язык приложения: как в системе телефона, русский, английский или армянский.
 enum Lang: String, CaseIterable, Identifiable {
-    case system, ru, en
+    case system, ru, en, hy
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum Lang: String, CaseIterable, Identifiable {
         case .system: return t("Как в системе")
         case .ru: return "Русский"
         case .en: return "English"
+        case .hy: return "Հայերեն"
         }
     }
 }
@@ -22,7 +23,8 @@ enum Lang: String, CaseIterable, Identifiable {
 /// экране входа.
 ///
 /// Строки в коде — по-русски; t() возвращает английский вариант из
-/// словаря `english`, если выбран английский. Класс наблюдаемый: смена
+/// словаря `english` или армянский из словаря `armenian`, если выбран
+/// английский или армянский. Класс наблюдаемый: смена
 /// языка в настройках сразу перерисовывает экраны. Тексты людей (записи,
 /// сообщения, имена) не переводятся — только интерфейс.
 @Observable
@@ -47,12 +49,33 @@ final class L10n {
         systemLanguage = Locale.preferredLanguages.first.map { String($0.prefix(2)) } ?? "ru"
     }
 
-    /// Русский — для русского и близких языков интерфейса телефона, иначе английский.
-    var english: Bool {
-        switch choice {
-        case .en: return true
-        case .ru: return false
-        case .system: return !Self.russianSpeaking.contains(systemLanguage)
+    /// Язык, который действует сейчас. «Как в системе»: армянский телефон —
+    /// армянский, русский и близкие — русский, остальные — английский.
+    var lang: Lang {
+        guard choice == .system else { return choice }
+        if systemLanguage == "hy" { return .hy }
+        return Self.russianSpeaking.contains(systemLanguage) ? .ru : .en
+    }
+
+    var english: Bool { lang == .en }
+
+    var armenian: Bool { lang == .hy }
+
+    /// Локаль для дат и чисел.
+    var locale: Locale {
+        switch lang {
+        case .en: return Locale(identifier: "en_US")
+        case .hy: return Locale(identifier: "hy_AM")
+        default: return Locale(identifier: "ru")
+        }
+    }
+
+    /// Готовая строка на одном из трёх языков (каталоги, гид).
+    func pick(ru: String, en: String, hy: String) -> String {
+        switch lang {
+        case .en: return en
+        case .hy: return hy
+        default: return ru
         }
     }
 
@@ -71,7 +94,11 @@ final class L10n {
 
 /// Строка интерфейса на выбранном языке.
 func t(_ ru: String) -> String {
-    L10n.shared.english ? (english[ru] ?? ru) : ru
+    switch L10n.shared.lang {
+    case .en: return english[ru] ?? ru
+    case .hy: return armenian[ru] ?? ru
+    default: return ru
+    }
 }
 
 /// Строка с подстановками: tf("Вы в %s", x) — каждое %s по порядку.

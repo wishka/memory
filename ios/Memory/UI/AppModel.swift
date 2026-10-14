@@ -211,7 +211,7 @@ struct UiState: Equatable {
     /// Подписка Memory+ — как хранится.
     var subscription = MemorySubscription()
     /// Какой тариф действует сейчас (закончившаяся подписка — free). Обновляет refreshPlan().
-    var plan: PlanTier = .free
+    var plan: PlanTier = Premium.enabled ? .free : Premium.openTier
     /// Шторка «Это в Memory+»: что пытались открыть без подписки.
     var paywall: PremiumFeature? = nil
 
@@ -542,7 +542,7 @@ final class AppModel {
     // MARK: - Memory+
 
     /// Тариф, который действует сейчас.
-    func plan() -> PlanTier { state.subscription.tierAt(clock()) }
+    func plan() -> PlanTier { Premium.enabled ? state.subscription.tierAt(clock()) : Premium.openTier }
 
     /// Есть ли доступ к премиум-функции — без шторки.
     func has(_ feature: PremiumFeature) -> Bool { plan().covers(feature.tier) }
@@ -551,6 +551,7 @@ final class AppModel {
     /// открывается шторка «Это в Memory+» и ответ false.
     @discardableResult
     func require(_ feature: PremiumFeature) -> Bool {
+        if !Premium.enabled { return true }
         refreshPlan()
         if has(feature) { return true }
         state.paywall = feature
@@ -563,6 +564,7 @@ final class AppModel {
 
     /// Экран «Memory+» в профиле: тарифы, пробный период, смена тарифа.
     func openPremium() {
+        if !Premium.enabled { return }
         refreshPlan()
         state.paywall = nil
         openProfileSection(.premium)
@@ -578,7 +580,7 @@ final class AppModel {
             while until <= now { until = until.addingTimeInterval(Double(sub.period.days) * daySeconds) }
             sub.until = until
         }
-        let tier = sub.tierAt(now)
+        let tier = Premium.enabled ? sub.tierAt(now) : Premium.openTier
         // Без лишних изменений состояния — экраны не перерисовываются зря
         if sub != state.subscription { state.subscription = sub }
         if tier != state.plan { state.plan = tier }

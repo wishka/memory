@@ -1,7 +1,6 @@
-@file:OptIn(UnstableApi::class)
-
 package ru.wishka.memory.ui.prism.create
 
+import androidx.annotation.OptIn as AndroidOptIn
 import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -66,6 +65,7 @@ import java.io.File
 import java.util.UUID
 
 /** Этапы создания PRISM. */
+@AndroidOptIn(UnstableApi::class)
 private enum class Stage { Camera, Editor, Publish }
 
 /**
@@ -73,6 +73,7 @@ private enum class Stage { Camera, Editor, Publish }
  * подпись и сборка ролика. Исходник после сборки удаляется: в ролик
  * уже вошло всё нужное.
  */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 fun PrismCreateFlow(vm: AppViewModel, state: UiState) {
     val context = LocalContext.current
@@ -166,6 +167,7 @@ fun PrismCreateFlow(vm: AppViewModel, state: UiState) {
 }
 
 /** Подпись, обложка и сборка ролика. */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun PublishPrism(
     edit: VideoEdit,
@@ -263,6 +265,7 @@ private fun PublishPrism(
 }
 
 /** Обложка — кадр готового ролика (с фильтрами и текстом) в JPEG рядом с вложениями. */
+@AndroidOptIn(UnstableApi::class)
 private fun saveCover(video: File, timeMs: Long): Attachment? {
     val frame = VideoExporter.frame(video.absolutePath, timeMs, 1080) ?: return null
     val id = UUID.randomUUID().toString()

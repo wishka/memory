@@ -46,7 +46,10 @@ object MemoryNotifications {
      * Канал = вид уведомления + звук: у канала Android звук задаётся один раз,
      * поэтому новый звук — новый канал (старый удаляем).
      */
-    private fun channelId(kind: NudgeKind, sound: NotifySound) = "memory_" + kind.name.lowercase() + "_" + sound.id
+    private fun channelId(kind: NudgeKind, sound: NotifySound) = "memory_" + kind.name.lowercase() + "_" + sound.id + "_" + SOUNDS_VERSION
+
+    /** Версия набора звуков: звуки обновили — каналы пересоздаются с новыми файлами. */
+    private const val SOUNDS_VERSION = "v2"
 
     private fun channelId(context: Context, kind: NudgeKind) = channelId(kind, SoundPrefs(context).get(kind))
 
@@ -88,7 +91,10 @@ object MemoryNotifications {
             }
             manager.createNotificationChannel(channel)
         }
-        // Запасной канал для пушей FCM без своего канала — не удаляется при смене звуков
+        // Запасной канал для пушей FCM без своего канала — не удаляется при смене звуков.
+        // Прежние версии (memory_default и т. п.) — со старым звуком, их убираем
+        manager.notificationChannels.filter { it.id.startsWith("memory_default") && it.id != DEFAULT_CHANNEL }
+            .forEach { manager.deleteNotificationChannel(it.id) }
         if (manager.getNotificationChannel(DEFAULT_CHANNEL) == null) {
             manager.createNotificationChannel(NotificationChannel(DEFAULT_CHANNEL, "Memory", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 setSound(
@@ -100,7 +106,7 @@ object MemoryNotifications {
     }
 
     /** Канал по умолчанию для FCM (AndroidManifest: default_notification_channel_id). */
-    const val DEFAULT_CHANNEL = "memory_default"
+    const val DEFAULT_CHANNEL = "memory_default_v2"
 
     /** Сменили звук в настройках: запомнить и пересоздать канал. */
     fun changeSound(context: Context, kind: NudgeKind, sound: NotifySound) {

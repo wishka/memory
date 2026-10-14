@@ -1,159 +1,26 @@
-"""Звуки уведомлений и встроенные гифки Memory — в стиле приложения.
+"""Встроенные гифки Memory — в стиле приложения.
 
-Звуки: стекло, звёзды, космос. Каждый — короткий (0,4–1,3 с), мягкая
-атака, хвост-реверберация. Синтез: синусоиды с негармоническими
-призвуками (так звучит стекло и колокольчик), огибающая и эхо.
+Звуки уведомлений теперь собирает scripts/make_sounds.py.
 
 Гифки: 240 × 240, ночное небо в цветах приложения, кристальный текст
 (Unbounded) и простая анимация — мерцание, пульс, полёт.
 
 Запуск: python3 scripts/media_assets.py  (нужны Pillow и numpy)
 Пишет прямо в проект:
-  app/src/main/res/raw/snd_*.wav            ios/Memory/Sounds/snd_*.wav
   app/src/main/assets/gifs/*.gif             ios/Memory/Gifs/*.gif
-Тот же список — в data/Sounds.kt и data/Gifs.kt (и .swift).
+Тот же список — в data/Gifs.kt (и .swift).
 """
 import math
 import os
 import random
-import wave
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RAW = os.path.join(ROOT, "app", "src", "main", "res", "raw")
-IOS_SND = os.path.join(ROOT, "ios", "Memory", "Sounds")
 ASSETS = os.path.join(ROOT, "app", "src", "main", "assets", "gifs")
 IOS_GIF = os.path.join(ROOT, "ios", "Memory", "Gifs")
 FONT = os.path.join(ROOT, "ios", "Memory", "Fonts", "Unbounded-SemiBold.ttf")
-
-RATE = 32000
-
-
-# ==================== ЗВУКИ ====================
-
-def env(n, attack=0.004, decay=0.5):
-    t = np.arange(n) / RATE
-    a = np.clip(t / attack, 0, 1)
-    return a * np.exp(-t / decay)
-
-
-def tone(freq, dur, decay=0.45, partials=((1, 1.0), (2.76, 0.32), (5.4, 0.12)), attack=0.004):
-    """Колокольчик/стекло: основной тон и негармонические призвуки, каждый гаснет быстрее."""
-    n = int(dur * RATE)
-    t = np.arange(n) / RATE
-    out = np.zeros(n)
-    for k, (mul, amp) in enumerate(partials):
-        out += amp * np.sin(2 * np.pi * freq * mul * t) * env(n, attack, decay / (1 + k * 0.8))
-    return out
-
-
-def place(buf, sig, at):
-    i = int(at * RATE)
-    end = min(len(buf), i + len(sig))
-    buf[i:end] += sig[: end - i]
-
-
-def echo(sig, delay=0.11, fb=0.35, taps=4):
-    out = sig.copy()
-    d = int(delay * RATE)
-    for k in range(1, taps + 1):
-        shifted = np.zeros_like(sig)
-        if k * d < len(sig):
-            shifted[k * d:] = sig[: len(sig) - k * d] * (fb ** k)
-        out += shifted
-    return out
-
-
-def sweep(f0, f1, dur, decay=0.3):
-    n = int(dur * RATE)
-    t = np.arange(n) / RATE
-    f = f0 * (f1 / f0) ** (t / dur)
-    phase = 2 * np.pi * np.cumsum(f) / RATE
-    return np.sin(phase) * env(n, 0.003, decay)
-
-
-def noise(dur, seed=1):
-    rnd = np.random.default_rng(seed)
-    return rnd.standard_normal(int(dur * RATE))
-
-
-def lowpass(sig, a=0.08):
-    out = np.zeros_like(sig)
-    acc = 0.0
-    for i, x in enumerate(sig):
-        acc += a * (x - acc)
-        out[i] = acc
-    return out
-
-
-def finish(sig, dur, peak=0.72):
-    n = int(dur * RATE)
-    sig = np.concatenate([sig, np.zeros(max(0, n - len(sig)))])[:n]
-    fade = int(0.03 * RATE)
-    sig[-fade:] *= np.linspace(1, 0, fade)
-    m = np.max(np.abs(sig)) or 1
-    return sig / m * peak
-
-
-def make_sounds():
-    s = {}
-    # Кристалл: две стеклянные ноты, вторая чуть позже — «дзинь-дзинь»
-    b = np.zeros(int(1.2 * RATE))
-    place(b, tone(1568, 1.0, 0.5), 0)
-    place(b, tone(2349, 0.9, 0.45) * 0.7, 0.09)
-    s["crystal"] = finish(echo(b, 0.13, 0.25), 1.2)
-    # Звёздная пыль: быстрая восходящая россыпь колокольчиков
-    b = np.zeros(int(1.0 * RATE))
-    for i, f in enumerate((1047, 1319, 1568, 2093)):
-        place(b, tone(f, 0.6, 0.22) * (0.8 + 0.07 * i), i * 0.06)
-    s["stardust"] = finish(echo(b, 0.09, 0.3), 1.0)
-    # Комета: шорох-проводка сверху вниз и мягкий удар в конце
-    b = np.zeros(int(1.0 * RATE))
-    whoosh = lowpass(noise(0.45, 3), 0.12) * env(int(0.45 * RATE), 0.12, 0.2) * 0.5
-    place(b, whoosh, 0)
-    place(b, sweep(2600, 900, 0.4, 0.25) * 0.35, 0.02)
-    place(b, tone(1175, 0.6, 0.35), 0.36)
-    s["comet"] = finish(b, 1.0)
-    # Луна: низкий мягкий колокол с длинным хвостом
-    b = tone(659, 1.3, 0.75, ((1, 1.0), (2.0, 0.25), (3.01, 0.1)), attack=0.012)
-    s["moon"] = finish(echo(b, 0.18, 0.2), 1.3)
-    # Призма: аккорд из трёх стеклянных нот с переливом (тремоло)
-    n = int(1.1 * RATE)
-    t = np.arange(n) / RATE
-    b = np.zeros(n)
-    for i, f in enumerate((880, 1109, 1319)):
-        place(b, tone(f, 1.0, 0.55) * 0.7, i * 0.025)
-    b *= 1 + 0.18 * np.sin(2 * np.pi * 7 * t)
-    s["prism"] = finish(b, 1.1)
-    # Туманность: воздушная волна — шум, отфильтрованный, и тихая нота под ним
-    n = int(1.0 * RATE)
-    t = np.arange(n) / RATE
-    swell = np.sin(np.pi * np.clip(t / 0.9, 0, 1)) ** 2
-    b = lowpass(noise(1.0, 5), 0.05) * swell * 0.6 + np.sin(2 * np.pi * 784 * t) * swell * 0.35
-    s["nebula"] = finish(b, 1.0, 0.6)
-    # Орбита: две ноты туда-обратно с эхом
-    b = np.zeros(int(0.9 * RATE))
-    place(b, tone(988, 0.5, 0.25), 0)
-    place(b, tone(1480, 0.5, 0.25), 0.12)
-    s["orbit"] = finish(echo(b, 0.16, 0.35, 3), 0.9)
-    # Капля света: короткое «плинк» с падающим тоном
-    b = np.zeros(int(0.55 * RATE))
-    place(b, sweep(1500, 820, 0.35, 0.12), 0)
-    place(b, 0.3 * sweep(3000, 1640, 0.25, 0.06), 0)
-    s["droplet"] = finish(echo(b, 0.1, 0.2, 2), 0.55)
-    return s
-
-
-def write_wav(path, sig):
-    data = (np.clip(sig, -1, 1) * 32767).astype(np.int16)
-    with wave.open(path, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(RATE)
-        w.writeframes(data.tobytes())
-
 
 # ==================== ГИФКИ ====================
 
@@ -398,11 +265,8 @@ GIFS = [
 
 
 def main():
-    for d in (RAW, IOS_SND, ASSETS, IOS_GIF):
+    for d in (ASSETS, IOS_GIF):
         os.makedirs(d, exist_ok=True)
-    for name, sig in make_sounds().items():
-        write_wav(os.path.join(RAW, f"snd_{name}.wav"), sig)
-        write_wav(os.path.join(IOS_SND, f"snd_{name}.wav"), sig)
     for i, (name, text, extra) in enumerate(GIFS):
         make_gif(name, text, extra, seed=11 + i)
         with open(os.path.join(ASSETS, name + ".gif"), "rb") as src, open(os.path.join(IOS_GIF, name + ".gif"), "wb") as dst:

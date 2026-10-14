@@ -5,11 +5,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-/** Язык приложения: как в системе телефона, русский или английский. */
+/** Язык приложения: как в системе телефона, русский, английский или армянский. */
 enum class Lang(val code: String, private val name0: String) {
     System("system", "Как в системе"),
     Ru("ru", "Русский"),
     En("en", "English"),
+    Hy("hy", "Հայերեն"),
     ;
 
     /** Названия языков — на своём языке; «Как в системе» переводится. */
@@ -31,12 +32,30 @@ object L10n {
     /** Язык телефона — читается при запуске. */
     var systemLanguage: String = java.util.Locale.getDefault().language
 
-    /** Русский — для русского и близких языков интерфейса телефона, иначе английский. */
-    val english: Boolean
+    /**
+     * Язык, который действует сейчас. «Как в системе»: армянский телефон —
+     * армянский, русский и близкие — русский, остальные — английский.
+     */
+    val lang: Lang
         get() = when (choice) {
-            Lang.En -> true
-            Lang.Ru -> false
-            Lang.System -> systemLanguage !in RUSSIAN_SPEAKING
+            Lang.System -> when (systemLanguage) {
+                "hy" -> Lang.Hy
+                in RUSSIAN_SPEAKING -> Lang.Ru
+                else -> Lang.En
+            }
+            else -> choice
+        }
+
+    val english: Boolean get() = lang == Lang.En
+
+    val armenian: Boolean get() = lang == Lang.Hy
+
+    /** Локаль для дат и чисел. */
+    val locale: java.util.Locale
+        get() = when (lang) {
+            Lang.En -> java.util.Locale.US
+            Lang.Hy -> java.util.Locale("hy", "AM")
+            else -> java.util.Locale("ru")
         }
 
     /** Множитель размера текста из настроек: 0.9 — мелкий … 1.3 — огромный. */
@@ -46,7 +65,11 @@ object L10n {
 }
 
 /** Строка интерфейса на выбранном языке. */
-fun t(ru: String): String = if (L10n.english) EN[ru] ?: ru else ru
+fun t(ru: String): String = when (L10n.lang) {
+    Lang.En -> EN[ru] ?: ru
+    Lang.Hy -> HY[ru] ?: ru
+    else -> ru
+}
 
 /** Строка с подстановками: tf("Вы в %s", x) — каждое %s по порядку. */
 fun tf(ru: String, vararg args: Any?): String {

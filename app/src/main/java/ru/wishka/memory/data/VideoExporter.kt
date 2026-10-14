@@ -1,7 +1,6 @@
-@file:OptIn(UnstableApi::class)
-
 package ru.wishka.memory.data
 
+import androidx.annotation.OptIn as AndroidOptIn
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -42,6 +41,7 @@ import java.io.File
 import java.util.UUID
 
 /** Что известно о видео до правок: длительность и размер кадра с учётом поворота. */
+@AndroidOptIn(UnstableApi::class)
 data class VideoInfo(val durationMs: Long, val width: Int, val height: Int)
 
 /**
@@ -50,6 +50,7 @@ data class VideoInfo(val durationMs: Long, val width: Int, val height: Int)
  * стикеры, музыка и громкость. Работает с главного потока: Transformer
  * сам уходит в фон и сообщает о ходе работы.
  */
+@AndroidOptIn(UnstableApi::class)
 object VideoExporter {
 
     /** Длительность и размер видео; null — файл не читается. */
@@ -219,6 +220,7 @@ object VideoExporter {
 }
 
 /** Рисует тексты и стикеры на холсте размером w × h — для итогового кадра. */
+@AndroidOptIn(UnstableApi::class)
 object OverlayPainter {
     fun draw(context: Context, canvas: Canvas, w: Int, h: Int, overlays: List<VideoOverlay>) {
         val inter = runCatching { ResourcesCompat.getFont(context, R.font.inter_semibold) }.getOrNull()

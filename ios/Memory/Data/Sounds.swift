@@ -3,56 +3,16 @@ import AVFoundation
 import Foundation
 import UserNotifications
 
-/// Звуки уведомлений в стиле Memory: стекло, звёзды, космос. Файлы —
-/// Sounds/snd_*.wav (их рисует scripts/media_assets.py). У каждого вида
-/// уведомлений свой звук; поменять — «Настройки → Уведомления → Звуки».
-/// Те же звуки и правила — в Sounds.kt.
-enum NotifySound: String, CaseIterable, Identifiable {
-    case crystal, stardust, comet, moon, prism, nebula, orbit, droplet, system, silent
-
-    var id: String { rawValue }
-
-    private var ru: String {
-        switch self {
-        case .crystal: return "Кристалл"
-        case .stardust: return "Звёздная пыль"
-        case .comet: return "Комета"
-        case .moon: return "Луна"
-        case .prism: return "Призма"
-        case .nebula: return "Туманность"
-        case .orbit: return "Орбита"
-        case .droplet: return "Капля света"
-        case .system: return "Как в телефоне"
-        case .silent: return "Без звука"
-        }
-    }
-
-    var title: String { t(ru) }
-
-    /// Имя файла без расширения; nil — звук телефона или тишина.
-    var file: String? { self == .system || self == .silent ? nil : "snd_\(rawValue)" }
-
-    static func of(_ id: String?) -> NotifySound? { allCases.first { $0.rawValue == id } }
-
-    /// Звук по умолчанию: у каждого вида — свой, чтобы различать на слух.
-    static func `default`(_ kind: NudgeKind) -> NotifySound {
-        switch kind {
-        case .messages: return .crystal
-        case .prism: return .prism
-        case .reactions: return .stardust
-        case .follows: return .orbit
-        case .groups: return .moon
-        case .friends: return .comet
-        case .recap: return .nebula
-        }
-    }
-
+/// Звуки уведомлений Memory: 57 своих в девяти стилях, звук телефона и тишина.
+/// Список — SoundCatalog.swift, файлы — Sounds/snd_*.caf; всё это собирает
+/// scripts/make_sounds.py из scripts/sounds/catalog.py. Те же звуки — в Sounds.kt.
+extension NotifySound {
     /// Звук системного уведомления: свой файл, звук телефона или ничего.
     var notificationSound: UNNotificationSound? {
         switch self {
         case .silent: return nil
         case .system: return UNNotificationSound.default
-        default: return UNNotificationSound(named: UNNotificationSoundName("snd_\(rawValue).wav"))
+        default: return UNNotificationSound(named: UNNotificationSoundName("snd_\(rawValue).caf"))
         }
     }
 }
@@ -85,7 +45,7 @@ enum SoundPlayer {
 
     static func url(_ sound: NotifySound) -> URL? {
         guard let file = sound.file else { return nil }
-        return Bundle.main.url(forResource: file, withExtension: "wav")
+        return Bundle.main.url(forResource: file, withExtension: "caf")
     }
 
     static func play(_ sound: NotifySound) {

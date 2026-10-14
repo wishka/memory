@@ -28,6 +28,13 @@ class Round17Test {
     @Before
     fun russian() {
         L10n.choice = Lang.Ru
+        // Memory+ пока скрыт; здесь проверяем, как он работает включённым
+        Premium.enabled = true
+    }
+
+    @org.junit.After
+    fun hidePremium() {
+        Premium.enabled = false
     }
 
     private var now = 1_790_000_000_000L

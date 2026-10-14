@@ -223,7 +223,7 @@ private fun LazyListScope.forYou(
     }
 }
 
-/** «Как работают советы» — правила рекомендаций (149-ФЗ, ст. 10.2-2). */
+/** «Как работают советы» — правила рекомендаций: логика автоматического подбора. */
 @Composable
 private fun RecsHow(vm: AppViewModel) {
     Text(

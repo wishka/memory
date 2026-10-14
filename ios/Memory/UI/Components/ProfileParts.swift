@@ -27,6 +27,7 @@ func compact(_ n: Int) -> String {
         if n >= 1_000 { return String(format: "%.1fK", locale: us, Double(n) / 1000) }
         return String(n)
     }
+    // Русский и армянский (как на Android): формат «%.1f тыс.» — через словарь t()
     let ru = Locale(identifier: "ru_RU")
     if n >= 1_000_000 { return String(format: t("%.1f млн"), locale: ru, Double(n) / 1_000_000) }
     if n >= 10_000 { return tf("%s тыс.", n / 1000) }

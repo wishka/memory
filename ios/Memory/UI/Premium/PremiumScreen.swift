@@ -30,7 +30,7 @@ struct PlusBadge: View {
 private func premiumDateTitle(_ date: Date) -> String {
     let f = DateFormatter()
     let english = L10n.shared.english
-    f.locale = Locale(identifier: english ? "en_US" : "ru_RU")
+    f.locale = L10n.shared.locale
     f.dateFormat = english ? "MMMM d" : "d MMMM"
     return f.string(from: date)
 }

@@ -204,6 +204,8 @@ fun agoTitle(minutes: Int): String = when {
  */
 fun plural(n: Int, one: String, few: String, many: String): String {
     if (L10n.english) return "$n ${t(if (n == 1) one else many)}"
+    // По-армянски после числа — единственное число: «5 գրառում»
+    if (L10n.armenian) return "$n ${t(one)}"
     val mod10 = n % 10
     val mod100 = n % 100
     val word = when {
