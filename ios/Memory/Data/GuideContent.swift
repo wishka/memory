@@ -122,6 +122,33 @@ enum GuideContent {
             tip: nil, action: nil
         ))
         topics.append(GuideTopic(
+            id: "activity", title: GuideText(ru: "Колокольчик: кто оценил и упомянул", en: "The bell: who liked and mentioned you", hy: "Զանգակ․ ով հավանեց և նշեց ձեզ"),
+            steps: [
+                GuideText(ru: "В «Ленте» вверху — колокольчик. Точка на нём — сколько нового.", en: "At the top of the Feed there’s a bell. The badge shows how much is new.", hy: "«Լրահոսի» վերևում զանգակ է։ Նրա վրայի կետը ցույց է տալիս՝ որքան նոր բան կա։"),
+                GuideText(ru: "Внутри — кто оценил и прокомментировал ваши записи, упомянул вас, позвал в друзья или начал эфир.", en: "Inside: who liked or commented on your posts, mentioned you, sent a friend request or went live.", hy: "Ներսում՝ ով հավանեց կամ մեկնաբանեց ձեր գրառումները, նշեց ձեզ, ընկերության հայտ ուղարկեց կամ եթեր սկսեց։"),
+                GuideText(ru: "Заявки в друзья можно принять прямо там. Нажатие на событие ведёт к записи или человеку.", en: "You can accept friend requests right there. Tapping an event opens the post or person.", hy: "Ընկերության հայտերը կարող եք ընդունել հենց այնտեղ։ Իրադարձության վրա սեղմելը տանում է գրառմանը կամ մարդուն։"),
+            ],
+            tip: GuideText(ru: "Несколько «нравится» к одной записи складываются в одну строку.", en: "Several likes on one post are combined into a single line.", hy: "Մեկ գրառման մի քանի հավանումները միավորվում են մեկ տողում։"), action: .feed
+        ))
+        topics.append(GuideTopic(
+            id: "search", title: GuideText(ru: "Поиск, #теги и @упоминания", en: "Search, #tags and @mentions", hy: "Որոնում, #պիտակներ և @նշումներ"),
+            steps: [
+                GuideText(ru: "Лупа в «Ленте» — поиск людей, записей, групп и тегов.", en: "The magnifier in the Feed searches people, posts, groups and tags.", hy: "«Լրահոսի» խոշորացույցը որոնում է մարդկանց, գրառումներ, խմբեր և պիտակներ։"),
+                GuideText(ru: "Пишите #тег в записи — по нему записи найдут другие. Нажатие на тег открывает все записи с ним.", en: "Write a #tag in a post so others can find it. Tapping a tag shows all posts with it.", hy: "Գրառման մեջ գրեք #պիտակ, որ ուրիշները գտնեն այն։ Պիտակի վրա սեղմելը ցույց է տալիս դրանով բոլոր գրառումները։"),
+                GuideText(ru: "Наберите @ и начало имени — Memory подскажет человека. Он узнает об упоминании.", en: "Type @ and the start of a name — Memory suggests the person. They’ll be notified of the mention.", hy: "Գրեք @ և անվան սկիզբը — Memory-ն կառաջարկի մարդուն։ Նա կիմանա նշման մասին։"),
+            ],
+            tip: nil, action: .feed
+        ))
+        topics.append(GuideTopic(
+            id: "edit-share", title: GuideText(ru: "Изменить запись и поделиться ссылкой", en: "Edit a post and share a link", hy: "Խմբագրել գրառումը և կիսվել հղումով"),
+            steps: [
+                GuideText(ru: "«⋯» на своей записи → «Изменить»: поправьте текст или уберите лишние фото. У записи появится пометка «изменено».", en: "“⋯” on your post → “Edit”: fix the text or remove extra photos. The post gets an “edited” mark.", hy: "Ձեր գրառման «⋯» → «Խմբագրել»՝ ուղղեք տեքստը կամ հեռացրեք ավելորդ լուսանկարները։ Գրառման վրա կհայտնվի «խմբագրված» նշումը։"),
+                GuideText(ru: "«⋯» на любой записи → «Поделиться ссылкой» или «Скопировать ссылку».", en: "“⋯” on any post → “Share link” or “Copy link”.", hy: "Ցանկացած գրառման «⋯» → «Կիսվել հղումով» կամ «Պատճենել հղումը»։"),
+                GuideText(ru: "Ссылка открывает запись в Memory, а без приложения — подскажет, как его поставить. Ссылку на профиль — «⋯» на странице человека.", en: "The link opens the post in Memory, or explains how to install the app. For a profile link — “⋯” on the person’s page.", hy: "Հղումը բացում է գրառումը Memory-ում, իսկ առանց հավելվածի՝ կբացատրի, ինչպես տեղադրել այն։ Պրոֆիլի հղումը՝ մարդու էջի «⋯»։"),
+            ],
+            tip: nil, action: .feed
+        ))
+        topics.append(GuideTopic(
             id: "photos", title: GuideText(ru: "Фото и видео на весь экран", en: "Full-screen photos and videos", hy: "Լուսանկարներ և տեսանյութեր ամբողջ էկրանով"),
             steps: [
                 GuideText(ru: "Нажмите на фото или видео — откроется на весь экран.", en: "Tap a photo or video to open it full screen.", hy: "Սեղմեք լուսանկարին կամ տեսանյութին, և այն կբացվի ամբողջ էկրանով։"),
@@ -166,6 +193,15 @@ enum GuideContent {
                 GuideText(ru: "Поле вверху — то же, что в Ленте: фото, стикеры, чек-ины.", en: "The field at the top works like the Feed’s: photos, stickers, check-ins.", hy: "Վերևի դաշտը նույնն է, ինչ Լրահոսում՝ լուսանկարներ, ստիկերներ, չեք-իններ։"),
             ],
             tip: nil, action: nil
+        ))
+        topics.append(GuideTopic(
+            id: "live", title: GuideText(ru: "Прямой эфир", en: "Live stream", hy: "Ուղիղ եթեր"),
+            steps: [
+                GuideText(ru: "«Истории» → «Эфир»: назовите эфир, выберите, кто видит, и нажмите «Начать».", en: "Stories → “Live”: name the stream, choose who can see it and tap “Start”.", hy: "«Պատմություններ» → «Եթեր»՝ անվանեք եթերը, ընտրեք, ով է տեսնում, և սեղմեք «Սկսել»։"),
+                GuideText(ru: "Друзья получат уведомление. Зрители пишут в чат эфира и шлют сердечки.", en: "Friends are notified. Viewers write in the live chat and send hearts.", hy: "Ընկերները ծանուցում կստանան։ Դիտողները գրում են եթերի զրուցարանում և սրտիկներ ուղարկում։"),
+                GuideText(ru: "Эфиры друзей — кружками с меткой «В ЭФИРЕ» над историями.", en: "Friends’ streams appear as circles marked LIVE above the stories.", hy: "Ընկերների եթերները՝ «ԵԹԵՐ» նշումով շրջանակներ պատմությունների վերևում։"),
+            ],
+            tip: GuideText(ru: "Эфир не сохраняется: он есть, пока идёт. Пока сервера нет, видео видит только ведущий — это демо.", en: "Streams aren’t saved — they exist only while live. Until the server is ready, only the host sees the video — it’s a demo.", hy: "Եթերը չի պահպանվում՝ այն կա, քանի դեռ ընթանում է։ Քանի դեռ սերվեր չկա, տեսանյութը տեսնում է միայն վարողը — սա դեմո է։"), action: .stories
         ))
         return GuideChapter(id: "stories", emoji: "🌙",
                             title: GuideText(ru: "Истории", en: "Stories", hy: "Պատմություններ"),
@@ -263,6 +299,15 @@ enum GuideContent {
                 GuideText(ru: "Нажатие на имя собеседника — его страница.", en: "Tap the other person’s name to open their page.", hy: "Զրուցակցի անվանը սեղմելով՝ կբացվի նրա էջը։"),
             ],
             tip: nil, action: nil
+        ))
+        topics.append(GuideTopic(
+            id: "secret", title: GuideText(ru: "Шифрование и исчезающие сообщения", en: "Encryption and disappearing messages", hy: "Գաղտնագրում և անհետացող հաղորդագրություններ"),
+            steps: [
+                GuideText(ru: "«⋯» в переписке → «Сквозное шифрование»: сообщения читаете только вы двое.", en: "“⋯” in a chat → “End-to-end encryption”: only the two of you can read the messages.", hy: "Նամակագրության «⋯» → «Ծայրից ծայր գաղտնագրում»՝ հաղորդագրությունները կարդում եք միայն դուք երկուսով։"),
+                GuideText(ru: "«Код безопасности» — 60 цифр. Сверьте с собеседником: совпали — переписку никто не перехватывает.", en: "The “Safety code” is 60 digits. Compare it with your friend: if it matches, no one is intercepting.", hy: "«Անվտանգության կոդը» 60 թվանշան է։ Համեմատեք զրուցակցի հետ՝ եթե համընկնում է, ոչ ոք չի որսում։"),
+                GuideText(ru: "«Исчезающие» — новые сообщения исчезнут у обоих через 5 минут, час, день или неделю.", en: "“Disappearing” — new messages vanish for both of you after 5 minutes, an hour, a day or a week.", hy: "«Անհետացող»՝ նոր հաղորդագրությունները կանհետանան երկուսի մոտ 5 րոպեից, ժամից, օրից կամ շաբաթից։"),
+            ],
+            tip: GuideText(ru: "Значки у времени: 🔒 — ушло зашифрованным, ⏱ — исчезнет.", en: "Icons by the time: 🔒 — sent encrypted, ⏱ — will disappear.", hy: "Ժամի կողքի նշանները՝ 🔒 — ուղարկված է գաղտնագրված, ⏱ — կանհետանա։"), action: .chats
         ))
         topics.append(GuideTopic(
             id: "backdrop", title: GuideText(ru: "Фон переписки", en: "Chat background", hy: "Զրույցի ֆոն"),
@@ -533,6 +578,24 @@ enum GuideContent {
             tip: nil, action: .privacy
         ))
         topics.append(GuideTopic(
+            id: "my-data", title: GuideText(ru: "Скачать мои данные", en: "Download my data", hy: "Ներբեռնել իմ տվյալները"),
+            steps: [
+                GuideText(ru: "Настройки → «Приватность» → «Скачать мои данные».", en: "Settings → “Privacy” → “Download my data”.", hy: "Կարգավորումներ → «Գաղտնիություն» → «Ներբեռնել իմ տվյալները»։"),
+                GuideText(ru: "Выберите, класть ли фото, видео и музыку, и место для архива — «Файлы», диск или флешка.", en: "Choose whether to include photos, videos and music, and where to save the archive — Files, a drive or a USB stick.", hy: "Ընտրեք՝ ներառե՞լ լուսանկարները, տեսանյութերն ու երաժշտությունը, և արխիվի տեղը՝ «Ֆայլեր», սկավառակ կամ ֆլեշ։"),
+                GuideText(ru: "В архиве — профиль, записи, переписка, группы, PRISM, полка и настройки. Пароля и кодов там нет.", en: "The archive has your profile, posts, chats, groups, PRISM, shelf and settings. No password or codes.", hy: "Արխիվում՝ պրոֆիլ, գրառումներ, նամակագրություն, խմբեր, PRISM, դարակ և կարգավորումներ։ Գաղտնաբառ և կոդեր չկան։"),
+            ],
+            tip: nil, action: .privacy
+        ))
+        topics.append(GuideTopic(
+            id: "crashes", title: GuideText(ru: "Отчёты о сбоях и статистика", en: "Crash reports and statistics", hy: "Խափանումների հաշվետվություններ և վիճակագրություն"),
+            steps: [
+                GuideText(ru: "Настройки → «Приватность» → «Сбои и статистика»: два отдельных переключателя, по умолчанию выключены.", en: "Settings → “Privacy” → “Crashes and statistics”: two separate switches, off by default.", hy: "Կարգավորումներ → «Գաղտնիություն» → «Խափանումներ և վիճակագրություն»՝ երկու առանձին անջատիչ, լռելյայն անջատված։"),
+                GuideText(ru: "Отчёт о сбое — что сломалось и где в коде, без ваших записей и переписки.", en: "A crash report says what broke and where in the code — without your posts or chats.", hy: "Խափանման հաշվետվությունը ցույց է տալիս՝ ինչ է խափանվել և որտեղ կոդում, առանց ձեր գրառումների և նամակագրության։"),
+                GuideText(ru: "Статистика — раз в день счётчики вроде «опубликовано записей: 3», без текстов.", en: "Statistics — once a day, counters like “posts published: 3”, no texts.", hy: "Վիճակագրություն՝ օրը մեկ հաշվիչներ, օրինակ՝ «հրապարակված գրառումներ՝ 3», առանց տեքստերի։"),
+            ],
+            tip: nil, action: .privacy
+        ))
+        topics.append(GuideTopic(
             id: "report", title: GuideText(ru: "Пожаловаться", en: "Reporting", hy: "Բողոքել"),
             steps: [
                 GuideText(ru: "«Пожаловаться» есть у записи, комментария, ролика, сообщения и человека.", en: "“Report” is available on posts, comments, videos, messages and people.", hy: "«Բողոքել» կոճակը կա գրառման, մեկնաբանության, տեսահոլովակի, հաղորդագրության և մարդու մոտ։"),
@@ -551,10 +614,11 @@ enum GuideContent {
             tip: nil, action: .blacklist
         ))
         topics.append(GuideTopic(
-            id: "password", title: GuideText(ru: "Пароль и удаление аккаунта", en: "Password and deleting your account", hy: "Գաղտնաբառ և հաշվի ջնջում"),
+            id: "password", title: GuideText(ru: "Пароль, восстановление и удаление аккаунта", en: "Password, recovery and deleting your account", hy: "Գաղտնաբառ, վերականգնում և հաշվի ջնջում"),
             steps: [
                 GuideText(ru: "Настройки → «Безопасность»: сменить пароль.", en: "Settings → “Security”: change your password.", hy: "Կարգավորումներ → «Անվտանգություն»՝ փոխել գաղտնաբառը։"),
-                GuideText(ru: "Там же — удалить аккаунт: всё ваше будет стёрто с телефона без возврата.", en: "Also there: delete your account — everything of yours is erased from the phone for good.", hy: "Այնտեղ է նաև հաշվի ջնջումը․ ձեր ամբողջ տվյալներն անվերադարձ կջնջվեն հեռախոսից։"),
+                GuideText(ru: "Там же — коды восстановления (новые — по паролю) и почта: подтвердите её кодом из письма.", en: "Also there: recovery codes (new ones need your password) and email — confirm it with the code from the message.", hy: "Այնտեղ են նաև վերականգնման կոդերը (նորերը՝ գաղտնաբառով) և էլ. փոստը՝ հաստատեք այն նամակի կոդով։"),
+                GuideText(ru: "И удалить аккаунт: всё ваше будет стёрто с телефона без возврата.", en: "And delete your account: everything of yours is erased from the phone for good.", hy: "Եվ ջնջել հաշիվը․ ձեր ամբողջ տվյալներն անվերադարձ կջնջվեն հեռախոսից։"),
             ],
             tip: nil, action: .security
         ))
@@ -598,6 +662,15 @@ enum GuideContent {
             tip: GuideText(ru: "Язык и размер текста хранятся на телефоне, остальное — в аккаунте.", en: "Language and text size are stored on the phone; everything else belongs to the account.", hy: "Լեզուն և տեքստի չափը պահվում են հեռախոսում, մնացածը՝ հաշվում։"), action: .language
         ))
         topics.append(GuideTopic(
+            id: "screen-reader", title: GuideText(ru: "Экранный диктор", en: "Screen reader", hy: "Էկրանի ընթերցիչ"),
+            steps: [
+                GuideText(ru: "Memory работает с TalkBack на Android и VoiceOver на iPhone: у кнопок-значков есть названия.", en: "Memory works with TalkBack on Android and VoiceOver on iPhone: icon buttons have names.", hy: "Memory-ն աշխատում է TalkBack-ի (Android) և VoiceOver-ի (iPhone) հետ՝ պատկերակ-կոճակներն ունեն անուններ։"),
+                GuideText(ru: "Карточки записей читаются целиком, «нравится» и комментарии — с числом, переключатели — со словами «вкл.» и «выкл.».", en: "Post cards are read as a whole, likes and comments with their counts, switches as on or off.", hy: "Գրառումների քարտերը կարդացվում են ամբողջությամբ, հավանումներն ու մեկնաբանությունները՝ թվով, անջատիչները՝ միացված/անջատված։"),
+                GuideText(ru: "Размер текста — Настройки → «Размер текста».", en: "Text size — Settings → “Text size”.", hy: "Տեքստի չափը՝ Կարգավորումներ → «Տեքստի չափը»։"),
+            ],
+            tip: nil, action: .language
+        ))
+        topics.append(GuideTopic(
             id: "ideas", title: GuideText(ru: "Идеи и ошибки", en: "Ideas and bugs", hy: "Գաղափարներ և սխալներ"),
             steps: [
                 GuideText(ru: "Настройки → «Друзья и идеи»: «Предложить идею» или «Сообщить об ошибке».", en: "Settings → “Friends & ideas”: “Suggest an idea” or “Report a bug”.", hy: "Կարգավորումներ → «Ընկերներ և գաղափարներ»՝ «Առաջարկել գաղափար» կամ «Հայտնել սխալի մասին»։"),
@@ -629,9 +702,11 @@ enum GuideContent {
         topics.append(GuideTopic(
             id: "forgot", title: GuideText(ru: "Я забыл пароль", en: "I forgot my password", hy: "Մոռացել եմ գաղտնաբառը"),
             steps: [
-                GuideText(ru: "Пароль хранится на телефоне только в зашифрованном виде, восстановить его нельзя. Создайте новый аккаунт.", en: "The password is stored on the phone only in encrypted form and can’t be recovered. Create a new account.", hy: "Գաղտնաբառը հեռախոսում պահվում է միայն գաղտնագրված տեսքով, այն վերականգնել հնարավոր չէ։ Ստեղծեք նոր հաշիվ։"),
+                GuideText(ru: "На экране входа — «Забыли пароль?».", en: "On the sign-in screen tap “Forgot password?”.", hy: "Մուտքի էկրանին սեղմեք «Մոռացե՞լ եք գաղտնաբառը»։"),
+                GuideText(ru: "Введите логин и один из кодов восстановления, которые вы сохранили при регистрации, — и новый пароль.", en: "Enter your login, one of the recovery codes you saved when signing up, and a new password.", hy: "Մուտքագրեք մուտքանունը, գրանցվելիս պահպանած վերականգնման կոդերից մեկը և նոր գաղտնաբառ։"),
+                GuideText(ru: "Нет кодов — «Письмо на почту», если вы подтвердили почту в «Безопасности».", en: "No codes? Choose “Email” if you confirmed your email in Security.", hy: "Կոդեր չկա՞ն — ընտրեք «Նամակ էլ. փոստին», եթե հաստատել եք էլ. փոստը «Անվտանգություն» բաժնում։"),
             ],
-            tip: nil, action: nil
+            tip: GuideText(ru: "Каждый код работает один раз. Новые коды — в «Безопасности».", en: "Each code works once. New codes are in Security.", hy: "Յուրաքանչյուր կոդ աշխատում է մեկ անգամ։ Նոր կոդերը՝ «Անվտանգություն» բաժնում։"), action: nil
         ))
         topics.append(GuideTopic(
             id: "no-posts", title: GuideText(ru: "Почему я не вижу записи человека?", en: "Why can’t I see someone’s posts?", hy: "Ինչո՞ւ չեմ տեսնում մարդու գրառումները"),

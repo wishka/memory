@@ -42,6 +42,19 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="memory" android:host="invite" />
             </intent-filter>
+            <!-- Ссылки на запись, профиль, PRISM, группу и тег: memory://post/123, memory://u/vera…
+                 (их открывает страница docs/l, на которую ведут веб-ссылки «Поделиться») -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="memory" />
+                <data android:host="post" />
+                <data android:host="u" />
+                <data android:host="prism" />
+                <data android:host="group" />
+                <data android:host="tag" />
+            </intent-filter>
         </activity>
 
         <!-- Пуши FCM: приёмник сообщений. Сам Firebase запускается только
@@ -55,6 +68,10 @@
         </service>
         <meta-data
             android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <!-- Sentry запускается вручную и только с согласия (telemetry/TelemetrySetup.kt) -->
+        <meta-data
+            android:name="io.sentry.auto-init"
             android:value="false" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"

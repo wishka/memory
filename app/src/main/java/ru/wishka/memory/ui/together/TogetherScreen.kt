@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.together
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.data.InviteAction
 import ru.wishka.memory.data.Unlock
 import ru.wishka.memory.ui.components.shareInvite
@@ -490,7 +491,7 @@ private fun DealCard(vm: AppViewModel, state: UiState, deal: SkillDeal) {
             Box(
                 modifier = Modifier.size(40.dp).clip(CircleShape).glass(CircleShape).clickable { vm.writeTo(person.id) },
                 contentAlignment = Alignment.Center,
-            ) { Glyph(LineIcon.Chats, Palette.Lilac, size = 20.dp) }
+            ) { Glyph(LineIcon.Chats, Palette.Lilac, size = 20.dp, description = LineIcon.Chats.label) }
         }
     }
 }

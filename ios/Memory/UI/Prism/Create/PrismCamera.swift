@@ -423,6 +423,7 @@ struct PrismCamera: View {
                     Glyph(kind: .close, color: Palette.mist, size: 14).frame(width: 26, height: 26)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.close.label)
             }
         }
         .padding(.leading, 14)

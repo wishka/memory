@@ -89,6 +89,6 @@ fun NudgeBanner(nudge: Nudge, onOpen: () -> Unit, onDismiss: () -> Unit, modifie
         Box(
             modifier = Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
-        ) { Glyph(LineIcon.Close, Palette.Mist, size = 14.dp) }
+        ) { Glyph(LineIcon.Close, Palette.Mist, size = 14.dp, description = LineIcon.Close.label) }
     }
 }

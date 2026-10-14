@@ -12,6 +12,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import ru.wishka.memory.data.Activity
+import ru.wishka.memory.data.DemoLiveTransport
+import ru.wishka.memory.data.LiveComment
+import ru.wishka.memory.data.LiveStream
+import ru.wishka.memory.data.LiveTransport
+import ru.wishka.memory.data.Lives
+import ru.wishka.memory.data.ChatCrypto
+import ru.wishka.memory.data.ChatKeyPair
+import ru.wishka.memory.data.ChatKeys
+import ru.wishka.memory.data.Disappear
+import ru.wishka.memory.data.AppEvent
+import ru.wishka.memory.data.Telemetry
+import ru.wishka.memory.data.LinkTarget
+import ru.wishka.memory.data.Search
+import ru.wishka.memory.data.SearchResults
+import ru.wishka.memory.data.ActivityGroup
+import ru.wishka.memory.data.ActivityItem
+import ru.wishka.memory.data.ActivityKind
 import ru.wishka.memory.data.DAY_MS
 import ru.wishka.memory.data.Premium
 import ru.wishka.memory.data.PremiumFeature
@@ -268,7 +286,52 @@ data class UiState(
     val legalDoc: LegalDoc? = null,
     /** Открытый товар витрины: группа и товар; null — нет. */
     val openProduct: Pair<Int, Long>? = null,
+    /** Лента активности: «нравится», комментарии, упоминания, заявки — новые сверху. */
+    val activity: List<ActivityItem> = emptyList(),
+    /** Когда ленту активности открывали в последний раз (мс): что позже — «новое». */
+    val activitySeen: Long = 0,
+    /** Открыта лента активности. */
+    val activityOpen: Boolean = false,
+    /** Открыт поиск и что в нём набрано. */
+    val searchOpen: Boolean = false,
+    val searchQuery: String = "",
+    /** Недавние запросы — новые первыми. */
+    val searchHistory: List<String> = emptyList(),
+    /** Открытая по ссылке запись — отдельным экраном. */
+    val openPostId: Long? = null,
+    /** Своя запись, которую сейчас правят. */
+    val editingPostId: Long? = null,
+    /** Эфиры друзей, которые идут сейчас. */
+    val lives: List<LiveStream> = emptyList(),
+    /** Свой эфир, пока он идёт. */
+    val myLive: LiveStream? = null,
+    /** Какой эфир открыт на экране (свой или друга). */
+    val watchingLiveId: Long? = null,
+    /** Открыт запуск эфира: название и кто видит. */
+    val liveStarting: Boolean = false,
+    /** Итог только что закончившегося своего эфира. */
+    val liveSummary: LiveStream? = null,
+    /** Ведущий нажал «назад» — спросить, закончить ли эфир. */
+    val confirmEndLive: Boolean = false,
 ) {
+    /** Эфир на экране. */
+    val watchingLive: LiveStream? get() = watchingLiveId?.let { id -> myLive?.takeIf { it.id == id } ?: lives.firstOrNull { it.id == id } }
+
+    /** Эфиры, которые можно смотреть: без заблокированных. */
+    val visibleLives: List<LiveStream> get() = lives.filter { it.live && it.hostId !in blocked }
+
+    /** Люди, которых можно найти и упомянуть: все, кроме себя и заблокированных. */
+    val searchablePeople: List<User> get() = Demo.people.filter { it.id !in blocked }
+
+    /** Записи, которые можно найти: лента, свои и группы. */
+    val searchablePosts: List<Post> get() = (feed + groups.flatMap { it.posts }).filter { it.author.id !in blocked }.distinctBy { it.id }
+
+    /** Результаты текущего запроса. */
+    val searchResults: SearchResults get() = Search.all(searchQuery, searchablePeople, searchablePosts, groups)
+
+    /** Новых событий в ленте активности — точка на колокольчике. */
+    val activityUnread: Int get() = Activity.unread(activity, activitySeen, blocked)
+
     /** Полка — собирается сама из чек-инов и отметок. */
     val shelf: Shelf get() = Shelf.build(posts.datedCheckIns(me.id), shelfMarks)
     val myCheckIns: List<Dated> get() = posts.datedCheckIns(me.id)
@@ -617,14 +680,21 @@ class AppViewModel(
         val s = _state.value
         return when {
             s.creatingPrism -> { closePrismCreator(); true }
+            s.watchingLiveId != null && s.myLive?.id == s.watchingLiveId -> { _state.update { it.copy(confirmEndLive = true) }; true }
+            s.watchingLiveId != null -> { leaveLive(); true }
+            s.liveStarting -> { closeLiveStart(); true }
+            s.activityOpen -> { closeActivity(); true }
+            s.editingPostId != null -> { cancelEdit(); true }
             s.openProduct != null -> { closeProduct(); true }
             s.viewing != null -> { closeMedia(); true }
             s.commentsPostId != null || s.commentsPrismId != null -> { closeComments(); true }
+            s.openPostId != null -> { closePost(); true }
             s.openChatId != null -> { closeChat(); true }
             s.personSection != null && s.openPersonId != null -> { closePersonSection(); true }
             s.openPersonId != null -> { closePerson(); true }
             s.groupSettingsOpen -> { closeGroupSettings(); true }
             s.openGroupId != null -> { closeGroup(); true }
+            s.searchOpen -> { closeSearch(); true }
             s.settingsPage != null -> { settingsBack(); true }
             s.profileSection != null -> { closeProfileSection(); true }
             s.tab != Tab.Feed -> { selectTab(Tab.Feed); true }
@@ -632,7 +702,132 @@ class AppViewModel(
         }
     }
 
+    // ==================== АКТИВНОСТЬ ====================
+
+    /** Записать событие в ленту активности. person == null — несколько человек (голоса). */
+    fun record(kind: ActivityKind, person: User?, targetId: Long = 0, preview: String = "", count: Int = 1) {
+        val s = _state.value
+        if (person != null && (person.id == s.me.id || person.id in s.blocked)) return
+        val item = ActivityItem(
+            nextId++, kind, person?.id ?: 0, clock(), targetId, preview.trim().take(80), count,
+            actorName = if (person != null && Demo.person(person.id) == null) person.name else "",
+            actorHue = person?.hue ?: 0.5f,
+        )
+        _state.update { it.copy(activity = Activity.add(it.activity, item)) }
+    }
+
+    fun openActivity() {
+        Telemetry.track(AppEvent.ActivityOpened)
+        _state.update { it.copy(activityOpen = true, openPersonId = null, openGroupId = null, personSection = null) }
+    }
+
+    /** Закрыли ленту — всё в ней прочитано. */
+    fun closeActivity() {
+        _state.update { it.copy(activityOpen = false, activitySeen = clock()) }
+    }
+
+    /** Отметить всё прочитанным, не закрывая. */
+    fun markActivitySeen() {
+        _state.update { it.copy(activitySeen = clock()) }
+    }
+
+    /** Нажатие на событие: туда, о чём оно. */
+    fun openActivityItem(g: ActivityGroup) {
+        val s = _state.value
+        _state.update { it.copy(activityOpen = false, activitySeen = clock()) }
+        when (g.kind) {
+            ActivityKind.Like, ActivityKind.Comment, ActivityKind.Reply, ActivityKind.Mention,
+            ActivityKind.CommentLike, ActivityKind.PollVotes ->
+                if (s.findPost(g.targetId) != null) openComments(g.targetId) else g.actors.firstOrNull()?.let { openPerson(it.id) }
+            ActivityKind.PrismLike, ActivityKind.PrismComment -> {
+                selectTab(Tab.Prism)
+                if (s.prisms.any { it.id == g.targetId }) _state.update { it.copy(prismStartId = g.targetId) }
+            }
+            ActivityKind.FriendRequest -> openProfileSection(ProfileSection.Requests)
+            ActivityKind.FriendAccepted -> g.actors.firstOrNull()?.let { openPerson(it.id) }
+            ActivityKind.GroupJoin -> { selectTab(Tab.Groups); openGroup(g.targetId.toInt()) }
+            ActivityKind.Live ->
+                if (s.lives.any { it.id == g.targetId && it.live }) watchLive(g.targetId)
+                else g.actors.firstOrNull()?.let { openPerson(it.id) }
+        }
+    }
+
+    /** Демо: друг комментирует вашу запись; иногда — упоминает вас. */
+    private fun demoComment(post: Post, fan: User, random: Random) {
+        val me = _state.value.me
+        val lines = listOf("Как красиво!", "Это где?", "Хочу так же", "Сохранила себе", "Вот это да", "Отличный момент")
+        val mention = random.nextInt(3) == 0
+        val text = if (mention) tf("@%s, помнишь, мы туда собирались?", me.handle) else t(lines[random.nextInt(lines.size)])
+        val c = Comment(nextId++, fan, text, createdAt = clock())
+        _state.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) it.copy(comments = it.comments + 1, commentList = it.commentList + c) else it }) }
+        record(if (mention) ActivityKind.Mention else ActivityKind.Comment, fan, post.id, text)
+        notify(Nudges.commented(fan, post, text))
+    }
+
+    // ==================== ПОИСК ====================
+
+    /** Открыть поиск; query — сразу с запросом (нажали на #тег). */
+    fun openSearch(query: String = "") {
+        _state.update {
+            it.copy(
+                searchOpen = true, searchQuery = query, activityOpen = false,
+                openPersonId = null, personSection = null, openGroupId = null, groupSettingsOpen = false,
+                commentsPostId = null, commentsPrismId = null, openChatId = null,
+                searchHistory = if (query.isNotBlank()) Search.remember(it.searchHistory, query) else it.searchHistory,
+            )
+        }
+    }
+
+    fun closeSearch() {
+        _state.update { it.copy(searchOpen = false, searchQuery = "") }
+    }
+
+    fun setSearchQuery(query: String) {
+        _state.update { it.copy(searchQuery = query.take(80)) }
+    }
+
+    /** Запрос «состоялся» (нажали на результат или «Найти») — в историю. */
+    fun commitSearch(query: String = _state.value.searchQuery) {
+        Telemetry.track(AppEvent.SearchUsed)
+        _state.update { it.copy(searchHistory = Search.remember(it.searchHistory, query)) }
+    }
+
+    fun clearSearchHistory() {
+        _state.update { it.copy(searchHistory = emptyList()) }
+    }
+
+    /** Нажали на «#тег» в тексте — поиск по тегу. */
+    fun openTag(tag: String) {
+        Telemetry.track(AppEvent.TagOpened)
+        openSearch("#" + tag.removePrefix("#").lowercase())
+    }
+
+    /** Нажали на «@логин» — страница человека; незнакомый логин — поиск по нему. */
+    fun openHandle(handle: String) {
+        val h = handle.removePrefix("@").lowercase()
+        val s = _state.value
+        when {
+            h == s.me.handle.lowercase() -> { _state.update { it.copy(commentsPostId = null, commentsPrismId = null) }; selectTab(Tab.Profile) }
+            else -> {
+                val person = Demo.people.firstOrNull { it.handle.lowercase() == h }
+                if (person != null) {
+                    _state.update { it.copy(commentsPostId = null, commentsPrismId = null) }
+                    openPerson(person.id)
+                } else openSearch("@$h")
+            }
+        }
+    }
+
+    /** Кого подсказать после «@» в поле ввода. */
+    fun mentionCandidates(part: String): List<User> = _state.value.let { Search.mentionCandidates(part, it.searchablePeople, it.following) }
+
     // ==================== ЛЕНТА ====================
+
+    /** «Нравится» у записи, где бы она ни была: в ленте или в группе. */
+    fun likeAny(postId: Long) {
+        val group = _state.value.groups.firstOrNull { g -> g.posts.any { it.id == postId } }
+        if (group != null) toggleGroupPostLike(group.id, postId) else toggleLike(postId)
+    }
 
     fun toggleLike(postId: Long) {
         _state.update { s ->
@@ -645,6 +840,7 @@ class AppViewModel(
 
     /** Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем. */
     fun publish(text: String, media: List<Attachment> = emptyList(), checkIn: CheckIn? = null, poll: PollDraft? = null) {
+        Telemetry.track(AppEvent.PostPublished)
         val trimmed = text.trim()
         val built = poll?.build(nextId++)
         if (trimmed.isEmpty() && media.isEmpty() && checkIn == null && built == null) return
@@ -807,6 +1003,7 @@ class AppViewModel(
 
     /** Комментарий к записи в ленте или в группе. */
     fun addComment(postId: Long, text: String, replyTo: String = "", sticker: Attachment? = null) {
+        Telemetry.track(AppEvent.CommentSent)
         val trimmed = text.trim().take(1000)
         if (trimmed.isEmpty() && sticker == null) return
         _state.update { s ->
@@ -921,7 +1118,10 @@ class AppViewModel(
         _state.update {
             it.copy(sentRequests = it.sentRequests - userId, followRequests = it.followRequests - userId, following = it.following + userId)
         }
-        Demo.person(userId)?.let { notify(Nudges.requestAccepted(it)) }
+        Demo.person(userId)?.let {
+            record(ActivityKind.FriendAccepted, it)
+            notify(Nudges.requestAccepted(it))
+        }
     }
 
     /** Принять заявку в друзья: человек становится другом. */
@@ -949,6 +1149,7 @@ class AppViewModel(
             userId in s.following || userId in s.sentRequests
         ) return
         _state.update { it.copy(followRequests = listOf(userId) + it.followRequests) }
+        record(ActivityKind.FriendRequest, person)
         notify(Nudges.followRequest(person, person.interests.filter { it in s.me.interests }))
     }
 
@@ -989,9 +1190,17 @@ class AppViewModel(
      * чтобы переписку можно было почувствовать без сервера.
      */
     fun send(chatId: Int, text: String, attachments: List<Attachment> = emptyList(), replyTo: ReplyRef? = null, poll: PollDraft? = null, place: SharedPlace? = null) {
+        Telemetry.track(AppEvent.MessageSent)
         val trimmed = text.trim()
         val built = poll?.build(nextId++)
         if (trimmed.isEmpty() && attachments.isEmpty() && built == null && place == null) return
+        // Секретная переписка: на сервер ушёл бы только конверт; демо-собеседник его расшифровывает своим ключом
+        val secretChat = _state.value.chats.firstOrNull { it.id == chatId }?.takeIf { it.secret }
+        if (secretChat != null && trimmed.isNotEmpty()) {
+            val envelope = sealFor(secretChat, trimmed)
+            lastEnvelope = envelope
+            if (envelope == null || peerOpen(secretChat, envelope) != trimmed) return
+        }
         append(
             chatId,
             Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA), replyTo = replyTo, poll = built, place = place),
@@ -1011,10 +1220,236 @@ class AppViewModel(
             val reply = Demo.replies[replyIndex++ % Demo.replies.size]
             append(chatId, Message(nextId++, fromMe = false, text = reply, time = now()))
             _state.value.chats.firstOrNull { it.id == chatId }?.let { chat ->
-                // Открытая переписка — ответ и так на экране
-                if (!chat.muted && _state.value.openChatId != chatId) notify(Nudges.message(chat.peer, reply, chatId))
+                // Открытая переписка — ответ и так на экране; у секретной текст в уведомление не попадает
+                if (!chat.muted && _state.value.openChatId != chatId) notify(Nudges.message(chat.peer, if (chat.secret) t("Новое сообщение") else reply, chatId))
             }
         }
+    }
+
+    // ==================== ЭФИРЫ ====================
+
+    /** Видеосвязь эфиров: демо, пока нет сервера LiveKit. */
+    var liveTransport: LiveTransport = DemoLiveTransport
+
+    private var liveJob: Job? = null
+
+    fun openLiveStart() {
+        _state.update { it.copy(liveStarting = true) }
+    }
+
+    fun closeLiveStart() {
+        _state.update { it.copy(liveStarting = false) }
+    }
+
+    /** Начать свой эфир. Ответ — текст ошибки или null. */
+    fun startLive(title: String, friendsOnly: Boolean): String? {
+        if (_state.value.myLive != null) return t("Эфир уже идёт")
+        val clean = title.trim().take(Lives.MAX_TITLE)
+        if (clean.isEmpty()) return t("Назовите эфир — так друзья поймут, о чём он")
+        val live = LiveStream(nextId++, _state.value.me.id, clean, clock(), friendsOnly = friendsOnly, seed = Random.nextInt(1000))
+        Telemetry.track(AppEvent.LiveStarted)
+        liveTransport.publish(live.room, "")
+        _state.update { it.copy(myLive = live, watchingLiveId = live.id, liveStarting = false, liveSummary = null) }
+        ensureLiveTicker()
+        return null
+    }
+
+    /** Закончить свой эфир — итог на экране. */
+    fun endLive() {
+        val live = _state.value.myLive ?: return
+        liveTransport.leave()
+        val ended = live.copy(endedAt = clock(), viewers = 0)
+        _state.update { it.copy(myLive = null, watchingLiveId = null, liveSummary = ended, confirmEndLive = false) }
+    }
+
+    /** Вернуться на экран своего идущего эфира. */
+    fun returnToMyLive() {
+        val live = _state.value.myLive ?: return
+        _state.update { it.copy(watchingLiveId = live.id) }
+    }
+
+    fun cancelEndLive() {
+        _state.update { it.copy(confirmEndLive = false) }
+    }
+
+    fun dismissLiveSummary() {
+        _state.update { it.copy(liveSummary = null) }
+    }
+
+    /** Смотреть эфир друга. */
+    fun watchLive(liveId: Long) {
+        val live = _state.value.visibleLives.firstOrNull { it.id == liveId } ?: return
+        Telemetry.track(AppEvent.LiveWatched)
+        liveTransport.join(live.room, "")
+        _state.update { s ->
+            s.copy(
+                watchingLiveId = liveId, activityOpen = false, searchOpen = false,
+                lives = s.lives.map { if (it.id == liveId) Lives.viewers(it, 1) else it },
+            )
+        }
+        ensureLiveTicker()
+    }
+
+    /** Выйти из эфира друга. */
+    fun leaveLive() {
+        val id = _state.value.watchingLiveId ?: return
+        if (_state.value.myLive?.id == id) return
+        liveTransport.leave()
+        _state.update { s -> s.copy(watchingLiveId = null, lives = s.lives.map { if (it.id == id) Lives.viewers(it, -1) else it }) }
+    }
+
+    private fun updateLive(id: Long, change: (LiveStream) -> LiveStream) {
+        _state.update { s ->
+            s.copy(
+                myLive = s.myLive?.let { if (it.id == id) change(it) else it },
+                lives = s.lives.map { if (it.id == id) change(it) else it },
+            )
+        }
+    }
+
+    /** Комментарий в открытом эфире. */
+    fun sendLiveComment(text: String) {
+        val id = _state.value.watchingLiveId ?: return
+        val clean = text.trim().take(Lives.MAX_COMMENT)
+        if (clean.isEmpty()) return
+        val me = _state.value.me
+        updateLive(id) { Lives.addComment(it, LiveComment(nextId++, me.id, me.name, clean, clock(), me.hue)) }
+    }
+
+    /** Сердечко в открытом эфире. */
+    fun sendHeart() {
+        val id = _state.value.watchingLiveId ?: return
+        updateLive(id) { it.copy(hearts = it.hearts + 1) }
+    }
+
+    /** Друг начал эфир: в «Историях», в ленте активности и уведомлением. */
+    fun friendGoesLive(friend: User, random: Random) {
+        val s = _state.value
+        if (friend.id in s.blocked || s.lives.any { it.hostId == friend.id && it.live }) return
+        val title = Lives.demoTitle(random.nextInt(100))
+        val live = LiveStream(nextId++, friend.id, title, clock(), viewers = 3 + random.nextInt(20), seed = random.nextInt(1000))
+        _state.update { it.copy(lives = listOf(Lives.viewers(live, 0)) + it.lives) }
+        record(ActivityKind.Live, friend, live.id, title)
+        notify(Nudges.liveStarted(friend, title))
+        ensureLiveTicker()
+    }
+
+    /**
+     * Шаг демо-эфиров: в свой эфир приходят зрители, сердечки и
+     * комментарии; эфиры друзей живут и через несколько минут кончаются.
+     */
+    fun liveTick(random: Random) {
+        val now = clock()
+        val people = Demo.people.filter { it.id !in _state.value.blocked }
+        _state.update { s ->
+            var mine = s.myLive
+            if (mine != null) {
+                mine = Lives.viewers(mine, random.nextInt(-1, 4))
+                mine = mine.copy(hearts = mine.hearts + random.nextInt(0, 6))
+                if (people.isNotEmpty() && random.nextInt(3) == 0) {
+                    val p = people[random.nextInt(people.size)]
+                    mine = Lives.addComment(mine, LiveComment(nextId++, p.id, p.name, Lives.demoComment(random.nextInt(100)), now, p.hue))
+                }
+            }
+            val lives = s.lives.mapNotNull { l ->
+                if (!l.live) return@mapNotNull null
+                // Эфир друга идёт 3–10 минут; смотрите — не кончится, пока вы в нём
+                if (s.watchingLiveId != l.id && now - l.startedAt > 3 * 60_000 && random.nextInt(8) == 0) return@mapNotNull null
+                var x = Lives.viewers(l, random.nextInt(-2, 3)).copy(hearts = l.hearts + random.nextInt(0, 4))
+                if (people.isNotEmpty() && random.nextInt(2) == 0) {
+                    val p = people[random.nextInt(people.size)]
+                    if (p.id != l.hostId) x = Lives.addComment(x, LiveComment(nextId++, p.id, p.name, Lives.demoComment(random.nextInt(100)), now, p.hue))
+                }
+                x
+            }
+            s.copy(myLive = mine, lives = lives, watchingLiveId = s.watchingLiveId?.takeIf { id -> mine?.id == id || lives.any { it.id == id } })
+        }
+    }
+
+    private fun ensureLiveTicker() {
+        if (!demoReplies || liveJob?.isActive == true) return
+        liveJob = viewModelScope.launch {
+            while (_state.value.myLive != null || _state.value.lives.isNotEmpty()) {
+                delay(Random.nextLong(1_500, 3_000))
+                liveTick(Random.Default)
+            }
+        }
+    }
+
+    // ==================== СЕКРЕТНАЯ И ИСЧЕЗАЮЩАЯ ПЕРЕПИСКА ====================
+
+    /** Хранилище своего ключа шифрования (SecurePrefs); без него — в памяти, для тестов. */
+    private var keyStore: ru.wishka.memory.data.auth.KeyValueStore? = null
+    private var memoryKey: ChatKeyPair? = null
+
+    /** Последний конверт, который ушёл бы на сервер, — для проверки, что текста в нём нет. */
+    @Volatile
+    var lastEnvelope: String? = null
+        private set
+
+    fun attachKeys(store: ru.wishka.memory.data.auth.KeyValueStore) {
+        keyStore = store
+    }
+
+    /** Свой ключ: открытый показывается в коде безопасности, закрытый не покидает телефон. */
+    fun myKeys(): ChatKeyPair {
+        val store = keyStore
+        return if (store != null) ChatKeys(store).identity(_state.value.me.handle)
+        else memoryKey ?: ChatKeyPair.generate().also { memoryKey = it }
+    }
+
+    /** Открытый ключ собеседника. Пока сервера нет — его демо-ключ. */
+    private fun peerKeys(chat: Chat): ChatKeyPair = ChatCrypto.demoPeer(chat.peer.id)
+
+    private fun aad(chat: Chat) = "memory-chat:" + listOf(_state.value.me.handle, chat.peer.handle).sorted().joinToString("|")
+
+    private fun sealFor(chat: Chat, text: String): String? = runCatching {
+        ChatCrypto.seal(ChatCrypto.sessionKey(myKeys(), peerKeys(chat).publicKey), text, aad(chat))
+    }.getOrNull()
+
+    /** «Телефон собеседника» открывает конверт своим ключом. */
+    private fun peerOpen(chat: Chat, envelope: String): String? = runCatching {
+        ChatCrypto.open(ChatCrypto.sessionKey(peerKeys(chat), myKeys().publicKey), envelope, aad(chat))
+    }.getOrNull()
+
+    /** Включить или выключить сквозное шифрование переписки. */
+    fun setSecret(chatId: Int, on: Boolean) {
+        if (on) Telemetry.track(AppEvent.SecretChat)
+        updateChat(chatId) { it.copy(secret = on, verified = if (on) it.verified else false) }
+    }
+
+    /** Код безопасности переписки — 12 групп по 5 цифр. */
+    fun safetyNumber(chatId: Int): String? {
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
+        return ChatCrypto.safetyNumber(myKeys().publicKey, peerKeys(chat).publicKey)
+    }
+
+    /** Человек сверил код с собеседником — отметка «проверено». */
+    fun markVerified(chatId: Int, verified: Boolean = true) = updateChat(chatId) { it.copy(verified = verified) }
+
+    /** Исчезающие сообщения: новые исчезнут через ttl. Уже отправленные не меняются. */
+    fun setDisappearing(chatId: Int, ttl: Disappear) {
+        if (ttl != Disappear.Off) Telemetry.track(AppEvent.Disappearing)
+        updateChat(chatId) { it.copy(disappearMs = ttl.ms) }
+    }
+
+    /**
+     * Убрать исчезнувшие сообщения. Ответ — их вложения (файлы удаляет
+     * вызывающий: здесь нет доступа к диску).
+     */
+    fun sweepExpired(now: Long = clock()): List<Attachment> {
+        val gone = mutableListOf<Attachment>()
+        _state.update { s ->
+            if (s.chats.none { c -> c.messages.any { it.expiresAt in 1..now } }) return@update s
+            s.copy(chats = s.chats.map { c ->
+                val (dead, alive) = c.messages.partition { it.expiresAt in 1..now }
+                if (dead.isEmpty()) c else {
+                    dead.forEach { gone += it.attachments }
+                    c.copy(messages = alive, pinnedId = c.pinnedId?.takeIf { id -> alive.any { it.id == id } })
+                }
+            })
+        }
+        return gone
     }
 
     /**
@@ -1119,8 +1554,13 @@ class AppViewModel(
         _state.update { s ->
             val chat = s.chats.firstOrNull { it.id == chatId } ?: return@update s
             val reading = s.openChatId == chatId
+            // Настройки переписки — на каждое новое сообщение: шифрование и срок жизни
+            val stamped = message.copy(
+                secret = message.secret || chat.secret,
+                expiresAt = if (message.expiresAt == 0L && chat.disappearMs > 0) clock() + chat.disappearMs else message.expiresAt,
+            )
             val updated = chat.copy(
-                messages = chat.messages + message,
+                messages = chat.messages + stamped,
                 unread = if (message.fromMe || reading) chat.unread else chat.unread + 1,
             )
             // Чат с новым сообщением поднимается наверх списка
@@ -1185,6 +1625,7 @@ class AppViewModel(
      * подпись и что звучит. Ролик встаёт первым во вкладке PRISM.
      */
     fun publishPrism(video: Attachment, cover: Attachment?, caption: String, music: String, durationMs: Int) {
+        Telemetry.track(AppEvent.PrismPublished)
         _state.update { s ->
             val prism = Prism(
                 id = nextId++, author = s.me, caption = caption.trim().take(300),
@@ -1315,6 +1756,87 @@ class AppViewModel(
                 profilePins = s.profilePins - postId,
             )
         }
+    }
+
+    // ==================== ПРАВКА ЗАПИСИ ====================
+
+    /** Править можно только свою запись — в ленте или в группе. */
+    fun startEdit(postId: Long) {
+        val post = _state.value.findPost(postId) ?: return
+        if (post.author.id != _state.value.me.id) return
+        _state.update { it.copy(editingPostId = postId) }
+    }
+
+    fun cancelEdit() {
+        _state.update { it.copy(editingPostId = null) }
+    }
+
+    /**
+     * Сохранить правку: новый текст и оставшиеся вложения (убрать можно,
+     * добавить — новой записью). Пустая запись без вложений, чек-ина и
+     * опроса не сохраняется. Ответ — текст ошибки или null.
+     * Вложения, которые убрали, возвращаются — их файлы удаляет экран.
+     */
+    fun saveEdit(postId: Long, text: String, media: List<Attachment>): String? {
+        val s0 = _state.value
+        val post = s0.findPost(postId) ?: return t("Запись не найдена")
+        if (post.author.id != s0.me.id) return t("Править можно только свои записи")
+        val clean = text.trim().take(2000)
+        val kept = post.media.filter { a -> media.any { it.id == a.id } }
+        if (clean.isEmpty() && kept.isEmpty() && post.checkIn == null && post.poll == null) return t("Запись не может быть пустой")
+        if (clean == post.text && kept.size == post.media.size) {
+            cancelEdit()
+            return null
+        }
+        val edited = post.copy(text = clean, media = kept, editedAt = clock())
+        Telemetry.track(AppEvent.PostEdited)
+        _state.update { s ->
+            s.copy(
+                posts = s.posts.map { if (it.id == postId) edited else it },
+                groups = s.groups.map { g -> if (g.posts.none { it.id == postId }) g else g.copy(posts = g.posts.map { if (it.id == postId) edited else it }) },
+                editingPostId = null,
+            )
+        }
+        return null
+    }
+
+    // ==================== ССЫЛКИ ====================
+
+    /** Открыть ссылку Memory: запись, профиль, PRISM, группу или тег. false — такого на телефоне нет. */
+    fun openLink(target: LinkTarget): Boolean {
+        Telemetry.track(AppEvent.LinkOpened)
+        val s = _state.value
+        return when (target) {
+            is LinkTarget.PostLink -> {
+                val post = s.findPost(target.id) ?: return false
+                if (post.author.id in s.blocked || !s.canSee(post.author)) return false
+                _state.update { it.copy(openPostId = target.id, activityOpen = false, searchOpen = false, openChatId = null) }
+                true
+            }
+            is LinkTarget.Profile -> {
+                val h = target.handle.lowercase()
+                if (h != s.me.handle.lowercase() && Demo.people.none { it.handle.lowercase() == h }) return false
+                openHandle(h)
+                true
+            }
+            is LinkTarget.PrismLink -> {
+                if (s.prisms.none { it.id == target.id }) return false
+                selectTab(Tab.Prism)
+                _state.update { it.copy(prismStartId = target.id) }
+                true
+            }
+            is LinkTarget.GroupLink -> {
+                if (s.groups.none { it.id == target.id }) return false
+                selectTab(Tab.Groups)
+                openGroup(target.id)
+                true
+            }
+            is LinkTarget.TagLink -> { openTag(target.tag); true }
+        }
+    }
+
+    fun closePost() {
+        _state.update { it.copy(openPostId = null) }
     }
 
     // ==================== ГРУППЫ ====================
@@ -1771,6 +2293,7 @@ class AppViewModel(
                 val added = 1 + random.nextInt(4)
                 val votes = (0 until added).groupingBy { random.nextInt(poll.options.size) }.eachCount()
                 updatePostPoll(post.id) { it.addVotes(votes) }
+                record(ActivityKind.PollVotes, null, post.id, poll.question, count = added)
                 notify(Nudges.pollVotes(poll.question, added, post.id, s.groups.firstOrNull { g -> g.posts.any { it.id == post.id } }?.id))
             }
             1 -> {
@@ -1822,6 +2345,9 @@ class AppViewModel(
     fun reset() {
         lifeJob?.cancel()
         lifeJob = null
+        liveJob?.cancel()
+        liveJob = null
+        if (_state.value.myLive != null || _state.value.watchingLiveId != null) liveTransport.leave()
         acceptJobs.values.forEach { it.cancel() }
         acceptJobs.clear()
         _state.value = UiState()
@@ -1919,7 +2445,11 @@ class AppViewModel(
                 else selectTab(Tab.Feed)
             }
             NudgeTarget.Group -> { selectTab(Tab.Groups); openGroup(nudge.targetId.toInt()) }
-            NudgeTarget.Person -> openPerson(nudge.targetId.toInt())
+            NudgeTarget.Person -> {
+                // Друг в эфире — сразу в эфир
+                val live = _state.value.visibleLives.firstOrNull { it.hostId == nudge.targetId.toInt() }
+                if (live != null) watchLive(live.id) else openPerson(nudge.targetId.toInt())
+            }
             NudgeTarget.Chat -> if (_state.value.chats.any { it.id == nudge.targetId.toInt() }) openChat(nudge.targetId.toInt()) else selectTab(Tab.Chats)
             NudgeTarget.Recap -> {
                 // targetId — год × 100 + месяц; месяц 0 — итоги года
@@ -2038,6 +2568,7 @@ class AppViewModel(
             if (joined.isNotEmpty()) repeat(2) { add(1) }
             if (mine.isNotEmpty()) repeat(2) { add(2) }
             if (requesters.isNotEmpty()) add(3)
+            if (friends.isNotEmpty()) add(4)
         }
         if (options.isEmpty()) return
         when (options[random.nextInt(options.size)]) {
@@ -2047,16 +2578,24 @@ class AppViewModel(
                 val name = Demo.newcomers[random.nextInt(Demo.newcomers.size)]
                 val person = User(500 + random.nextInt(1000), name, name.lowercase().replace(' ', '.'), hue = random.nextFloat())
                 _state.update { st -> st.copy(groups = st.groups.map { if (it.id == group.id) it.copy(members = it.members + 1) else it }) }
+                if (group.mine) record(ActivityKind.GroupJoin, person, group.id.toLong(), group.name)
                 notify(Nudges.groupMember(group, person))
             }
             2 -> {
                 val post = mine[random.nextInt(mine.size)]
                 val fans = Demo.people.filter { it.id !in s.blocked }
                 val fan = fans[random.nextInt(fans.size)]
-                _state.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) it.copy(likes = it.likes + 1) else it }) }
-                notify(Nudges.liked(fan, post))
+                if (random.nextInt(3) == 0) {
+                    // Иногда — не «нравится», а комментарий, порой с упоминанием
+                    demoComment(post, fan, random)
+                } else {
+                    _state.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) it.copy(likes = it.likes + 1) else it }) }
+                    record(ActivityKind.Like, fan, post.id, post.text)
+                    notify(Nudges.liked(fan, post))
+                }
             }
-            else -> receiveFriendRequest(requesters[random.nextInt(requesters.size)].id)
+            3 -> receiveFriendRequest(requesters[random.nextInt(requesters.size)].id)
+            else -> friendGoesLive(friends[random.nextInt(friends.size)], random)
         }
     }
 
@@ -2379,6 +2918,8 @@ class AppViewModel(
             it.together, it.shelfMarks, it.dismissedRecs, it.growth, it.invitedBy, it.memorySeen,
             it.stickerPacks, it.backdrop, it.recentGifs, it.reports,
             it.guideRead, it.guideHidden, it.subscription,
+            activity = it.activity, activitySeen = it.activitySeen,
+            searchHistory = it.searchHistory,
         )
     }
 
@@ -2428,6 +2969,9 @@ class AppViewModel(
                 guideRead = snapshot.guideRead intersect Guide.keys,
                 guideHidden = snapshot.guideHidden,
                 subscription = snapshot.subscription,
+                activity = snapshot.activity,
+                activitySeen = snapshot.activitySeen,
+                searchHistory = snapshot.searchHistory,
             ).withMe(s.me)
         }
         refreshPlan()
@@ -2503,6 +3047,9 @@ data class Snapshot(
     val guideRead: Set<String> = emptySet(),
     val guideHidden: Boolean = false,
     val subscription: Subscription = Subscription(),
+    val activity: List<ActivityItem> = emptyList(),
+    val activitySeen: Long = 0,
+    val searchHistory: List<String> = emptyList(),
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

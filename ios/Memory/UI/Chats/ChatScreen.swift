@@ -36,6 +36,10 @@ struct ChatScreen: View {
     @State private var notice: String?
     @State private var micDenied = false
     @State private var tooShort = false
+    /// Код безопасности секретной переписки.
+    @State private var showingSafety = false
+    /// Выбор срока исчезающих сообщений.
+    @State private var choosingDisappear = false
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pending.isEmpty
@@ -45,6 +49,7 @@ struct ChatScreen: View {
         VStack(spacing: 0) {
             header
             FadeLine()
+            SecretBanner(chat: chat) { showingSafety = true }
             if let pin = chat.pinned {
                 PinnedBar(
                     message: pin,
@@ -133,9 +138,27 @@ struct ChatScreen: View {
         .fullScreenCover(item: $viewingPlace) { place in
             PlaceViewer(place: place) { viewingPlace = nil }
         }
-        .glassActions($headerMenu, actions: [
-            GlassAction(icon: .image, title: t("Фон переписки")) { choosingBackdrop = true },
-        ])
+        .glassActions($headerMenu, actions: headerActions)
+        // Код безопасности и срок исчезающих — окном посреди экрана
+        .overlay {
+            if showingSafety, let number = model.safetyNumber(chat.id) {
+                SafetyNumberDialog(
+                    chat: chat, number: number,
+                    onVerify: { model.markVerified(chat.id, $0) },
+                    onDismiss: { showingSafety = false }
+                )
+                .transition(.opacity)
+            } else if choosingDisappear {
+                DisappearDialog(
+                    current: Disappear.of(chat.disappearMs),
+                    onPick: { model.setDisappearing(chat.id, $0) },
+                    onDismiss: { choosingDisappear = false }
+                )
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: showingSafety)
+        .animation(.easeOut(duration: 0.2), value: choosingDisappear)
         .toast($notice)
         .glassActions($micDenied, title: t("Разрешите доступ к микрофону, чтобы записывать голосовые"),
                       actions: [GlassAction(icon: .check, title: t("Понятно")) {}])
@@ -151,6 +174,23 @@ struct ChatScreen: View {
                 }
             }
         }
+    }
+
+    /// Меню «⋯» в шапке: фон, сквозное шифрование, код безопасности, исчезающие.
+    private var headerActions: [GlassAction] {
+        var list = [
+            GlassAction(icon: .image, title: t("Фон переписки")) { choosingBackdrop = true },
+            GlassAction(icon: .lock, title: chat.secret ? t("Выключить шифрование") : t("Сквозное шифрование")) {
+                model.setSecret(chat.id, !chat.secret)
+            },
+        ]
+        if chat.secret {
+            list.append(GlassAction(icon: .shield, title: t("Код безопасности")) { showingSafety = true })
+        }
+        list.append(GlassAction(icon: .calendar, title: tf("Исчезающие: %s", Disappear.of(chat.disappearMs).title)) {
+            choosingDisappear = true
+        })
+        return list
     }
 
     /// Стикеры и гифки — один выбор; из «GIF» он открывается сразу на гифках.
@@ -202,13 +242,15 @@ struct ChatScreen: View {
                 Glyph(kind: .back, color: Palette.ink).frame(width: 44, height: 44).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(LineIcon.back.label)
             Button { model.openPerson(chat.peer.id) } label: {
                 HStack(spacing: 12) {
                     Avatar(user: chat.peer, size: 40, showOnline: true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(chat.peer.name).textStyle(.title).lineLimit(1)
-                        Text(chat.typing ? t("печатает…") : chat.peer.online ? t("в сети") : "@\(chat.peer.handle)")
+                        Text(subtitle)
                             .textStyle(.bodySmall, chat.typing || chat.peer.online ? Palette.lilac : Palette.mist)
+                            .lineLimit(1)
                     }
                 }
             }
@@ -218,10 +260,18 @@ struct ChatScreen: View {
                 Glyph(kind: .more, color: Palette.ink).frame(width: 44, height: 44).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(t("Фон переписки"))
+            .accessibilityLabel(LineIcon.more.label)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
+    }
+
+    /// Под именем: печатает, шифрование и исчезающие, «в сети» или логин.
+    private var subtitle: String {
+        if chat.typing { return t("печатает…") }
+        let secret = secretStatus(chat)
+        if !secret.isEmpty { return secret }
+        return chat.peer.online ? t("в сети") : "@\(chat.peer.handle)"
     }
 
     @ViewBuilder
@@ -401,7 +451,9 @@ private struct Bubble: View {
                             .textStyle(.body)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(message.time).textStyle(.label, Palette.inkRGB.opacity(0.6))
+                    // 🔒 — ушло зашифрованным, ⏱ — исчезнет
+                    Text(([message.expiresAt != nil ? "⏱" : nil, message.secret ? "🔒" : nil, message.time] as [String?]).compactMap { $0 }.joined(separator: " "))
+                        .textStyle(.label, Palette.inkRGB.opacity(0.6))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -549,6 +601,7 @@ private struct ReplyBar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(LineIcon.close.label)
         }
         .padding(.leading, 12)
         .padding(.vertical, 6)

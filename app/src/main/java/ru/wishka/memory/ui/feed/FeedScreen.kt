@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.feed
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -30,6 +31,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -98,8 +102,13 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ScreenTitle(t("Лента"), t("Моменты, которые остаются"), Modifier.weight(1f))
+                // Поиск людей, записей и #тегов; колокольчик — лента активности
+                ru.wishka.memory.ui.profile.RoundIconButton(ru.wishka.memory.ui.components.LineIcon.Search, Palette.Lilac) { vm.openSearch() }
+                Spacer(Modifier.width(8.dp))
+                ru.wishka.memory.ui.activity.ActivityBell(state.activityUnread) { vm.openActivity() }
+                Spacer(Modifier.width(6.dp))
                 // Знак Memory: кристалл со стеклом, как слово MEMORY на заставке
-                CrystalLogo(size = 56.dp)
+                CrystalLogo(size = 44.dp)
             }
         }
         item {
@@ -222,6 +231,8 @@ fun PostCard(
     onReport: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // Ссылка на запись и правка своей — в меню любой карточки, где бы она ни была
+    val links = ru.wishka.memory.ui.components.LocalLinkActions.current
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -237,21 +248,31 @@ fun PostCard(
                 Column(Modifier.weight(1f)) {
                     Text(post.author.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
                     Text(
-                        "@${post.author.handle} · ${agoTitle(minutesSince(post.createdAt, post.minutesAgo))}",
+                        "@${post.author.handle} · ${agoTitle(minutesSince(post.createdAt, post.minutesAgo))}" +
+                            if (post.editedAt > 0) " · " + t("изменено") else "",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Mist,
                     )
                 }
                 }
                 if (friend != null) FriendButton(friend, post.author.name, onFriend)
-                if (menu != null || onReport != null) {
+                if (menu != null || onReport != null || links != null) {
                     Box {
                         Box(
-                            modifier = Modifier.size(36.dp).clip(CircleShape).clickable { menuOpen = true },
+                            modifier = Modifier.size(36.dp).clip(CircleShape)
+                                .clickable(onClickLabel = t("Действия с записью"), role = androidx.compose.ui.semantics.Role.Button) { menuOpen = true }
+                                .semantics { contentDescription = t("Ещё") },
                             contentAlignment = Alignment.Center,
-                        ) { Glyph(LineIcon.More, Palette.Mist, size = 20.dp) }
+                        ) { Glyph(LineIcon.More, Palette.Mist, size = 20.dp, description = LineIcon.More.label) }
                         MemoryMenu(expanded = menuOpen, onDismiss = { menuOpen = false }) {
+                            if (links != null && post.author.id == links.meId && post.artSeed == null) {
+                                MenuRow(LineIcon.Edit, t("Изменить")) { menuOpen = false; links.onEdit(post) }
+                            }
                             menu?.invoke(this) { menuOpen = false }
+                            if (links != null) {
+                                MenuRow(LineIcon.Share, t("Поделиться ссылкой")) { menuOpen = false; links.onShareLink(post) }
+                                MenuRow(LineIcon.Link, t("Скопировать ссылку")) { menuOpen = false; links.onCopyLink(post) }
+                            }
                             if (onReport != null) MenuRow(LineIcon.Flag, t("Пожаловаться"), color = Palette.PearlPink) { menuOpen = false; onReport() }
                         }
                     }
@@ -266,7 +287,7 @@ fun PostCard(
             }
             post.checkIn?.let { CheckInBadge(it) }
             if (post.text.isNotEmpty()) {
-                Text(post.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+                ru.wishka.memory.ui.components.RichText(post.text)
             }
             post.poll?.let { poll -> PollCard(poll, onVote = { onVote?.invoke(it) }, modifier = Modifier.fillMaxWidth(), onClose = onClosePoll) }
             PostMedia(post.media.filter { it.kind != MediaKind.Document && !it.sticker }, onOpen = onOpenMedia)
@@ -285,7 +306,11 @@ fun PostCard(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .clickable(onClick = onLike)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onLike)
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = tf("Нравится: %s", post.likes)
+                            stateDescription = if (post.liked) t("отмечено") else t("не отмечено")
+                        }
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -301,7 +326,8 @@ fun PostCard(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .then(if (onComments != null) Modifier.clickable(onClick = onComments) else Modifier)
+                        .then(if (onComments != null) Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onComments) else Modifier)
+                        .semantics(mergeDescendants = true) { contentDescription = tf("Комментарии: %s", post.comments) }
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

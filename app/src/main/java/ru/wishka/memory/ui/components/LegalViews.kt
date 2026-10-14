@@ -92,7 +92,7 @@ fun LegalDocViewer(doc: LegalDoc, onClose: () -> Unit) {
                 Box(
                     Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onClose),
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Close, Palette.Ink) }
+                ) { Glyph(LineIcon.Close, Palette.Ink, description = LineIcon.Close.label) }
                 Spacer(Modifier.width(8.dp))
                 Text(doc.title, style = MaterialTheme.typography.titleMedium, color = Palette.Ink, maxLines = 2)
             }

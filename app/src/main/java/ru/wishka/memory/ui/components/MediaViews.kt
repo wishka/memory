@@ -43,6 +43,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -81,7 +83,14 @@ fun MediaTile(attachment: Attachment, modifier: Modifier = Modifier, maxSide: In
     Box(
         modifier = modifier
             .background(Palette.Plum.copy(alpha = 0.6f))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(if (onClick != null) Modifier.clickable(onClickLabel = t("Открыть на весь экран"), role = androidx.compose.ui.semantics.Role.Image, onClick = onClick) else Modifier)
+            .semantics {
+                contentDescription = when {
+                    attachment.isGif -> t("Гифка")
+                    attachment.kind == MediaKind.Video -> t("Видео")
+                    else -> t("Фото")
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         if (attachment.isGif) {
@@ -218,7 +227,7 @@ fun MediaViewer(attachment: Attachment, onClose: () -> Unit) {
                     .background(Palette.Void.copy(alpha = 0.6f))
                     .clickable(onClick = onClose),
                 contentAlignment = Alignment.Center,
-            ) { Glyph(LineIcon.Close, Palette.Ink) }
+            ) { Glyph(LineIcon.Close, Palette.Ink, description = LineIcon.Close.label) }
         }
     }
 }
@@ -324,7 +333,7 @@ fun AttachButton(
                 .glass(CircleShape)
                 .clickable { open = true },
             contentAlignment = Alignment.Center,
-        ) { Glyph(LineIcon.Attach, Palette.Lilac, size = 22.dp) }
+        ) { Glyph(LineIcon.Attach, Palette.Lilac, size = 22.dp, description = LineIcon.Attach.label) }
         MemoryMenu(expanded = open, onDismiss = { open = false }) {
             MenuRow(LineIcon.Image, t("Фото или видео из галереи")) { open = false; picker.pickMedia() }
             MenuRow(LineIcon.Camera, t("Снять фото")) { open = false; picker.takePhoto() }
@@ -381,7 +390,7 @@ fun PendingAttachments(items: List<Attachment>, onRemove: (Attachment) -> Unit, 
                         .background(Palette.Void.copy(alpha = 0.75f))
                         .clickable { onRemove(item) },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Close, Palette.Ink, size = 14.dp) }
+                ) { Glyph(LineIcon.Close, Palette.Ink, size = 14.dp, description = LineIcon.Close.label) }
             }
         }
     }

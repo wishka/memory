@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.groups
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -99,7 +100,7 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
                             .glass(CircleShape)
                             .clickable { creating = true },
                         contentAlignment = Alignment.Center,
-                    ) { Glyph(LineIcon.Plus, Palette.Lilac, size = 22.dp) }
+                    ) { Glyph(LineIcon.Plus, Palette.Lilac, size = 22.dp, description = LineIcon.Plus.label) }
                 }
             }
         }

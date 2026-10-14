@@ -104,7 +104,7 @@ fun PlaceViewer(place: SharedPlace, onClose: () -> Unit, me: LatLon? = null) {
                 Box(
                     Modifier.size(44.dp).clip(CircleShape).background(Palette.Void.copy(alpha = 0.7f)).clickable(onClick = onClose),
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Close, Palette.Ink) }
+                ) { Glyph(LineIcon.Close, Palette.Ink, description = LineIcon.Close.label) }
                 Spacer(Modifier.width(10.dp))
                 Column(
                     Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Palette.Void.copy(alpha = 0.7f)).padding(horizontal = 12.dp, vertical = 6.dp),

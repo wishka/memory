@@ -29,6 +29,14 @@ val giphyApiKey: String = (env("GIPHY_API_KEY") ?: localProperties.getProperty("
 // секретов) или firebase.appId / apiKey / projectId / senderId в
 // local.properties. Без них пуши с сервера выключены, локальные
 // уведомления работают. Подробности — docs/PUSH.md.
+// Отчёты о сбоях (Sentry): ключ проекта — local.properties (sentry.dsn=…) или переменная SENTRY_DSN.
+// Нет ключа — отправка выключена, отчёты остаются на телефоне.
+val sentryDsn: String = (env("SENTRY_DSN") ?: localProperties.getProperty("sentry.dsn").orEmpty()).replace("\"", "")
+
+// Прямые эфиры (LiveKit): адрес сервера — local.properties (livekit.url=wss://…) или LIVEKIT_URL.
+// Нет адреса — эфиры в демо-режиме (docs/LIVE.md).
+val livekitUrl: String = (env("LIVEKIT_URL") ?: localProperties.getProperty("livekit.url").orEmpty()).replace("\"", "")
+
 fun firebase(envName: String, property: String): String =
     (env(envName) ?: localProperties.getProperty(property).orEmpty()).replace("\"", "")
 
@@ -50,6 +58,8 @@ android {
         buildConfigField("String", "FIREBASE_API_KEY", "\"${firebase("FIREBASE_API_KEY", "firebase.apiKey")}\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebase("FIREBASE_PROJECT_ID", "firebase.projectId")}\"")
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebase("FIREBASE_SENDER_ID", "firebase.senderId")}\"")
+        buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")
+        buildConfigField("String", "LIVEKIT_URL", "\"$livekitUrl\"")
     }
 
     signingConfigs {
@@ -156,6 +166,9 @@ dependencies {
     // проекта приходят через BuildConfig, Firebase запускается вручную
     implementation(platform("com.google.firebase:firebase-bom:34.0.0"))
     implementation("com.google.firebase:firebase-messaging")
+
+    // Отчёты о сбоях и статистика — только с согласия (telemetry/TelemetrySetup.kt)
+    implementation("io.sentry:sentry-android:8.58.0")
 
     testImplementation("junit:junit:4.13.2")
 }

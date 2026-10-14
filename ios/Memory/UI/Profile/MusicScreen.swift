@@ -224,6 +224,7 @@ private struct TrackLine: View {
                     Glyph(kind: .more, color: Palette.mist, size: 20).frame(width: 36, height: 36).contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.more.label)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -269,6 +270,7 @@ private struct PlaylistLine: View {
                     Glyph(kind: .more, color: Palette.mist, size: 20).frame(width: 36, height: 36).contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.more.label)
             }
             .padding(12)
         }
@@ -300,18 +302,21 @@ private struct MiniPlayer: View {
                     Glyph(kind: .back, color: Palette.lilac, size: 20).frame(width: 36, height: 36)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.back.label)
                 Button(action: onToggle) {
                     Glyph(kind: playing ? .pause : .play, color: Palette.ink, size: 22)
                         .frame(width: 42, height: 42)
                         .background(Circle().fill(LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(playing ? LineIcon.pause.label : LineIcon.play.label)
                 Button(action: onNext) {
                     Glyph(kind: .back, color: Palette.lilac, size: 20)
                         .scaleEffect(x: -1, y: 1)
                         .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.forward.label)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {

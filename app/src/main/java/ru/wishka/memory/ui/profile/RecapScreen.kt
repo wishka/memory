@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.profile
 
+import ru.wishka.memory.ui.components.label
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -126,7 +127,7 @@ fun RecapScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
                     Box(
                         modifier = Modifier.size(44.dp).clip(CircleShape).glass(CircleShape).clickable { vm.setRecapBack(back - 1) }.graphicsLayer { rotationZ = 180f },
                         contentAlignment = Alignment.Center,
-                    ) { Glyph(LineIcon.Back, Palette.Lilac) }
+                    ) { Glyph(LineIcon.Back, Palette.Lilac, description = LineIcon.Back.label) }
                 }
             }
         }

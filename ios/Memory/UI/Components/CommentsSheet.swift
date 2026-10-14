@@ -76,11 +76,15 @@ struct CommentsSheet: View {
                         Glyph(kind: .close, color: Palette.mist, size: 16).frame(width: 32, height: 32)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(LineIcon.close.label)
                 }
                 .padding(.leading, 20)
                 .padding(.trailing, 8)
                 .padding(.top, 6)
             }
+            // «@ве…» — подсказки, кого упомянуть
+            MentionSuggestions(text: $text)
+                .padding(.horizontal, 12)
             HStack(alignment: .bottom, spacing: 10) {
                 Button { choosingSticker = true } label: {
                     Glyph(kind: .sticker, color: Palette.lilac, size: 22)
@@ -109,6 +113,7 @@ struct CommentsSheet: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
+                .accessibilityLabel(LineIcon.send.label)
             }
             .padding(12)
         }
@@ -163,6 +168,7 @@ struct CommentsSheet: View {
                 Avatar(user: c.author, size: 34)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(c.author.name)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text(c.author.name).textStyle(.title).lineLimit(1)
@@ -172,7 +178,7 @@ struct CommentsSheet: View {
                     Text(tf("ответ для %s", to)).textStyle(.label, Palette.lilac)
                 }
                 if !c.text.isEmpty {
-                    Text(c.text).textStyle(.body).fixedSize(horizontal: false, vertical: true)
+                    RichText(text: c.text).fixedSize(horizontal: false, vertical: true)
                 }
                 if let sticker = c.sticker {
                     StickerView(attachment: sticker, size: 110)
@@ -199,6 +205,8 @@ struct CommentsSheet: View {
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.selection, trigger: c.liked)
+            .accessibilityLabel(tf("Нравится: %s", c.likes))
+            .accessibilityAddTraits(c.liked ? .isSelected : [])
         }
     }
 }

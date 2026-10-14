@@ -111,7 +111,7 @@ fun AudioRow(file: Attachment, modifier: Modifier = Modifier) {
                 .background(Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean)))
                 .clickable { if (player.isPlaying) player.pause() else player.play() },
             contentAlignment = Alignment.Center,
-        ) { Glyph(if (playing) LineIcon.Pause else LineIcon.Play, Palette.Ink, size = 18.dp) }
+        ) { Glyph(if (playing) LineIcon.Pause else LineIcon.Play, Palette.Ink, size = 18.dp, description = (if (playing) LineIcon.Pause else LineIcon.Play).label) }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(

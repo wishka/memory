@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.chats
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.t
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -132,6 +133,8 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
     var editingPoll by remember { mutableStateOf(false) }
     var headerMenu by remember { mutableStateOf(false) }
     var choosingBackdrop by remember { mutableStateOf(false) }
+    var showingSafety by remember { mutableStateOf(false) }
+    var choosingDisappear by remember { mutableStateOf(false) }
     var viewingPlace by remember { mutableStateOf<SharedPlace?>(null) }
     val locate = rememberLocate()
 
@@ -200,7 +203,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     .clip(CircleShape)
                     .clickable { vm.closeChat() },
                 contentAlignment = Alignment.Center,
-            ) { Glyph(LineIcon.Back, Palette.Ink) }
+            ) { Glyph(LineIcon.Back, Palette.Ink, description = LineIcon.Back.label) }
             Row(
                 modifier = Modifier
                     .weight(1f)
@@ -215,6 +218,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                     Text(
                         when {
                             chat.typing -> t("печатает…")
+                            secretStatus(chat).isNotEmpty() -> secretStatus(chat)
                             chat.peer.online -> t("в сети")
                             else -> "@${chat.peer.handle}"
                         },
@@ -227,13 +231,23 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                 Box(
                     modifier = Modifier.size(44.dp).clip(CircleShape).clickable { headerMenu = true },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.More, Palette.Ink) }
+                ) { Glyph(LineIcon.More, Palette.Ink, description = LineIcon.More.label) }
                 MemoryMenu(expanded = headerMenu, onDismiss = { headerMenu = false }) {
                     MenuRow(LineIcon.Image, t("Фон переписки")) { headerMenu = false; choosingBackdrop = true }
+                    MenuRow(LineIcon.Lock, if (chat.secret) t("Выключить шифрование") else t("Сквозное шифрование")) {
+                        headerMenu = false
+                        vm.setSecret(chat.id, !chat.secret)
+                    }
+                    if (chat.secret) MenuRow(LineIcon.Shield, t("Код безопасности")) { headerMenu = false; showingSafety = true }
+                    MenuRow(LineIcon.Calendar, tf("Исчезающие: %s", ru.wishka.memory.data.Disappear.of(chat.disappearMs).title)) {
+                        headerMenu = false
+                        choosingDisappear = true
+                    }
                 }
             }
         }
         FadeLine()
+        SecretBanner(chat) { showingSafety = true }
 
         chat.pinned?.let { pin ->
             PinnedBar(
@@ -414,6 +428,14 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
         )
     }
     viewingPlace?.let { place -> PlaceViewer(place, onClose = { viewingPlace = null }) }
+    if (showingSafety) {
+        vm.safetyNumber(chat.id)?.let { number ->
+            SafetyNumberDialog(chat, number, onVerify = { vm.markVerified(chat.id, it) }, onDismiss = { showingSafety = false })
+        }
+    }
+    if (choosingDisappear) {
+        DisappearDialog(ru.wishka.memory.data.Disappear.of(chat.disappearMs), onPick = { vm.setDisappearing(chat.id, it) }, onDismiss = { choosingDisappear = false })
+    }
 
     forwarding?.let { message ->
         ForwardDialog(
@@ -446,7 +468,7 @@ private fun PinnedBar(message: Message, onOpen: () -> Unit, onUnpin: () -> Unit)
         Box(
             modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onUnpin),
             contentAlignment = Alignment.Center,
-        ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp) }
+        ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp, description = LineIcon.Close.label) }
     }
     FadeLine()
 }
@@ -471,7 +493,7 @@ private fun ReplyBar(ref: ReplyRef, onCancel: () -> Unit) {
         Box(
             modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onCancel),
             contentAlignment = Alignment.Center,
-        ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp) }
+        ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp, description = LineIcon.Close.label) }
     }
 }
 
@@ -612,7 +634,8 @@ private fun Bubble(
                         Text(message.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
                     }
                     Text(
-                        message.time,
+                        // 🔒 — ушло зашифрованным, ⏱ — исчезнет
+                        listOfNotNull(if (message.expiresAt > 0) "⏱" else null, if (message.secret) "🔒" else null, message.time).joinToString(" "),
                         style = MaterialTheme.typography.labelSmall,
                         color = Palette.Ink.copy(alpha = 0.6f),
                         modifier = Modifier.align(Alignment.End),

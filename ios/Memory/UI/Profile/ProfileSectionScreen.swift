@@ -238,6 +238,7 @@ private struct FriendActions: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(LineIcon.more.label)
             .glassActions($menu, title: person.name, actions: [
                 GlassAction(icon: .trash, title: t("Удалить из друзей"), destructive: true) { confirm = true },
             ])

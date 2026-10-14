@@ -127,6 +127,7 @@ struct PollEditorSheet: View {
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel(LineIcon.trash.label)
                             }
                         }
                     }
@@ -189,6 +190,7 @@ struct PendingPoll: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(LineIcon.trash.label)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

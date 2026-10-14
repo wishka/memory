@@ -25,6 +25,8 @@ struct BottomBar: View {
         )
         .glass(RoundedRectangle(cornerRadius: 28, style: .continuous), strong: true)
         .padding(.horizontal, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isTabBar)
     }
 
     private func icon(_ tab: AppTab) -> LineIcon {
@@ -85,6 +87,8 @@ struct BottomBar: View {
             .animation(.easeOut(duration: 0.2), value: active)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(tab.title)
+        // Вкладка: название, у «Чатов» — сколько непрочитанных; выбранная отмечена
+        .accessibilityLabel(tab == .chats && unread > 0 ? tf("%s, непрочитанных: %s", tab.title, unread) : tab.title)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 }

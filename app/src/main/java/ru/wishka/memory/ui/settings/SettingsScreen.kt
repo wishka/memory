@@ -8,6 +8,7 @@ import ru.wishka.memory.ui.guide.GuideUi
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -94,6 +95,10 @@ class AccountActions(
     val changePassword: suspend (current: String, new: String, repeat: String) -> String?,
     /** Ответ — текст ошибки или null (аккаунт удалён, выполнен выход). */
     val deleteAccount: suspend (password: String) -> String?,
+    /** Коды восстановления и почта; null — недоступно (в тестах). */
+    val recovery: ru.wishka.memory.ui.auth.RecoveryActions? = null,
+    /** «Скачать мои данные»; null — недоступно (в тестах). */
+    val data: DataActions? = null,
 )
 
 /**
@@ -149,7 +154,13 @@ fun SettingsScreen(
         when (page) {
             SettingsPage.Main -> mainPage(vm, state, version, account)
             SettingsPage.Security -> item { SecurityPage(account) }
-            SettingsPage.Privacy -> item { PrivacyPage(state.privacy, vm::setPrivacy) { vm.openLegal(LegalDoc.Recommendations) } }
+            SettingsPage.Privacy -> {
+                item { PrivacyPage(state.privacy, vm::setPrivacy) { vm.openLegal(LegalDoc.Recommendations) } }
+                // Право на доступ к своим данным: архив со всем, что хранится
+                account.data?.let { d -> item { MyDataCard(d) } }
+                // Отчёты о сбоях и статистика — только с согласия
+                item { TelemetryCard() }
+            }
             SettingsPage.Legal -> item { LegalPage(vm) }
             SettingsPage.Guide -> guidePage(vm, state, guide)
             SettingsPage.Blacklist -> blacklistPage(vm, state.blockedPeople)
@@ -298,6 +309,7 @@ private fun SecurityPage(account: AccountActions) {
                 )
             }
         }
+        account.recovery?.let { r -> Card { ru.wishka.memory.ui.auth.RecoverySettings(r) { Caption(it) } } }
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Caption(t("Как защищён аккаунт"))
@@ -794,6 +806,8 @@ private fun SwitchRow(title: String, checked: Boolean, enabled: Boolean = true, 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Вся строка — один переключатель: диктор читает название и «вкл/выкл»
+            .toggleable(value = checked, enabled = enabled, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -803,12 +817,12 @@ private fun SwitchRow(title: String, checked: Boolean, enabled: Boolean = true, 
             color = if (enabled) Palette.Ink else Palette.Mist,
             modifier = Modifier.weight(1f),
         )
-        MemorySwitch(checked, enabled, onChange)
+        MemorySwitch(checked, enabled, onChange = null)
     }
 }
 
 @Composable
-fun MemorySwitch(checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+fun MemorySwitch(checked: Boolean, enabled: Boolean = true, onChange: ((Boolean) -> Unit)?) {
     Switch(
         checked = checked,
         onCheckedChange = onChange,

@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.person
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.clickable
@@ -89,7 +90,7 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                         .glass(CircleShape)
                         .clickable { vm.closePerson() },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Back, Palette.Ink) }
+                ) { Glyph(LineIcon.Back, Palette.Ink, description = LineIcon.Back.label) }
                 Spacer(Modifier.size(12.dp))
                 Text("@${person.handle}", style = MaterialTheme.typography.titleMedium, color = Palette.Ink, modifier = Modifier.weight(1f))
                 // «⋯»: заблокировать или разблокировать
@@ -99,10 +100,19 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
                             .size(44.dp)
                             .clip(CircleShape)
                             .glass(CircleShape)
-                            .clickable { menu = true },
+                            .clickable(onClickLabel = t("Действия"), role = androidx.compose.ui.semantics.Role.Button) { menu = true },
                         contentAlignment = Alignment.Center,
-                    ) { Glyph(LineIcon.More, Palette.Ink) }
+                    ) { Glyph(LineIcon.More, Palette.Ink, description = LineIcon.More.label) }
+                    val shareContext = androidx.compose.ui.platform.LocalContext.current
                     MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
+                        MenuRow(LineIcon.Share, t("Поделиться профилем")) {
+                            menu = false
+                            ru.wishka.memory.data.MediaFiles.share(shareContext, person.name + "\n" + ru.wishka.memory.data.Links.profile(person.handle), emptyList())
+                        }
+                        MenuRow(LineIcon.Link, t("Скопировать ссылку")) {
+                            menu = false
+                            ru.wishka.memory.ui.auth.copyText(shareContext, "Memory", ru.wishka.memory.data.Links.profile(person.handle), t("Ссылка скопирована"))
+                        }
                         if (blocked) {
                             MenuRow(LineIcon.Block, t("Разблокировать")) { menu = false; vm.unblock(person.id) }
                         } else {

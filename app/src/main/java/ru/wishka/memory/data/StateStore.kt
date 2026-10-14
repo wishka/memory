@@ -81,6 +81,13 @@ class StateStore(private val context: Context) {
             .put("reports", JSONArray(s.reports.map { report(it) }))
             .put("guideRead", JSONArray(s.guideRead.toList()))
             .put("guideHidden", s.guideHidden)
+            .put("activity", JSONArray(s.activity.map { a ->
+                JSONObject().put("id", a.id).put("kind", a.kind.id).put("actor", a.actorId).put("at", a.at)
+                    .put("target", a.targetId).put("preview", a.preview).put("count", a.count)
+                    .put("name", a.actorName).put("hue", a.actorHue.toDouble())
+            }))
+            .put("activitySeen", s.activitySeen)
+            .put("searchHistory", JSONArray(s.searchHistory))
             .put("subscription", JSONObject()
                 .put("tier", s.subscription.tier.id).put("period", s.subscription.period.id)
                 .put("until", s.subscription.until).put("trial", s.subscription.trial)
@@ -127,6 +134,16 @@ class StateStore(private val context: Context) {
             reports = o.optJSONArray("reports").objects().map { report(it) },
             guideRead = o.optJSONArray("guideRead")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
             guideHidden = o.optBoolean("guideHidden", false),
+            activity = o.optJSONArray("activity").objects().mapNotNull { a ->
+                ActivityKind.of(a.optString("kind"))?.let { kind ->
+                    ActivityItem(
+                        a.optLong("id"), kind, a.optInt("actor"), a.optLong("at"), a.optLong("target"),
+                        a.optString("preview"), a.optInt("count", 1), a.optString("name"), a.optDouble("hue", 0.5).toFloat(),
+                    )
+                }
+            },
+            activitySeen = o.optLong("activitySeen"),
+            searchHistory = o.optJSONArray("searchHistory").strs(),
             subscription = o.optJSONObject("subscription")?.let { p ->
                 Subscription(
                     PlanTier.of(p.optString("tier")), BillingPeriod.of(p.optString("period")), p.optLong("until"),
@@ -426,7 +443,7 @@ class StateStore(private val context: Context) {
             .put("id", p.id).put("author", p.author.id).put("text", p.text)
             .put("minutesAgo", p.minutesAgo).put("artSeed", p.artSeed ?: JSONObject.NULL)
             .put("likes", p.likes).put("liked", p.liked).put("comments", p.comments)
-            .put("createdAt", p.createdAt)
+            .put("createdAt", p.createdAt).put("editedAt", p.editedAt)
             .put("checkIn", p.checkIn?.let { checkIn(it) } ?: JSONObject.NULL)
             .put("poll", p.poll?.let { poll(it) } ?: JSONObject.NULL)
             .put("media", JSONArray(p.media.map { attachment(it) }))
@@ -446,6 +463,7 @@ class StateStore(private val context: Context) {
             createdAt = o.optLong("createdAt"),
             checkIn = o.optJSONObject("checkIn")?.let { checkIn(it) },
             poll = o.optJSONObject("poll")?.let { poll(it) },
+            editedAt = o.optLong("editedAt"),
         )
 
         private fun message(m: Message) = JSONObject()
@@ -459,6 +477,7 @@ class StateStore(private val context: Context) {
                 JSONObject().put("groupId", it.groupId).put("productId", it.productId).put("title", it.title)
                     .put("price", it.price).put("photo", it.photo).put("seed", it.seed)
             } ?: JSONObject.NULL)
+            .put("secret", m.secret).put("expiresAt", m.expiresAt)
 
         private fun message(o: JSONObject) = Message(
             o.getLong("id"), o.getBoolean("fromMe"), o.getString("text"), o.getString("time"),
@@ -470,6 +489,8 @@ class StateStore(private val context: Context) {
             product = o.optJSONObject("product")?.let {
                 ProductRef(it.optInt("groupId"), it.optLong("productId"), it.optString("title"), it.optLong("price"), it.optString("photo"), it.optInt("seed"))
             },
+            secret = o.optBoolean("secret"),
+            expiresAt = o.optLong("expiresAt"),
         )
 
         private fun poll(p: Poll) = JSONObject()
@@ -491,6 +512,7 @@ class StateStore(private val context: Context) {
             .put("id", c.id).put("peer", c.peer.id).put("unread", c.unread)
             .put("pinnedId", c.pinnedId ?: JSONObject.NULL)
             .put("onTop", c.onTop).put("muted", c.muted)
+            .put("secret", c.secret).put("verified", c.verified).put("disappearMs", c.disappearMs)
             .put("backdrop", c.backdrop?.let { backdrop(it) } ?: JSONObject.NULL)
             .put("messages", JSONArray(c.messages.map { message(it) }))
 
@@ -502,6 +524,9 @@ class StateStore(private val context: Context) {
             onTop = o.optBoolean("onTop"),
             muted = o.optBoolean("muted"),
             backdrop = o.optJSONObject("backdrop")?.let { backdrop(it) },
+            secret = o.optBoolean("secret"),
+            verified = o.optBoolean("verified"),
+            disappearMs = o.optLong("disappearMs"),
         )
 
         private fun group(g: Group) = JSONObject()
@@ -573,8 +598,11 @@ class StateStore(private val context: Context) {
             if (this == null) emptyList() else (0 until length()).map { getJSONObject(it) }
     }
 
-    private companion object {
+    companion object {
         /** Меняется, когда меняется устройство файла: старый файл тогда не читается. */
-        const val VERSION = 1
+        private const val VERSION = 1
+
+        /** То же, что в файле состояния, — для «Скачать мои данные» (с отступами, чтобы читалось). */
+        fun exportJson(snapshot: Snapshot, me: User): String = Codec(me).json(snapshot).toString(2)
     }
 }

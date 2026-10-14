@@ -118,6 +118,7 @@ struct MusicPicker: View {
                         .background(Circle().fill(LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.search.label)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {

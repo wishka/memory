@@ -41,14 +41,12 @@ struct RecapScreen: View {
                     }
                     .padding(.horizontal, 20)
                     HStack(spacing: 12) {
-                        RoundGlyphButton(icon: .back, color: Palette.lilac) { model.setRecapBack(back + 1) }
-                            .accessibilityLabel(t("Раньше"))
+                        RoundGlyphButton(icon: .back, color: Palette.lilac, label: t("Раньше")) { model.setRecapBack(back + 1) }
                         Text(recap.title + (back == 0 ? " · " + t("пока идёт") : "")).textStyle(.title)
                         Spacer()
                         if back > 0 {
-                            RoundGlyphButton(icon: .back, color: Palette.lilac) { model.setRecapBack(back - 1) }
+                            RoundGlyphButton(icon: .back, color: Palette.lilac, label: t("Позже")) { model.setRecapBack(back - 1) }
                                 .scaleEffect(x: -1, y: 1)
-                                .accessibilityLabel(t("Позже"))
                         }
                     }
                     .padding(.horizontal, 16)

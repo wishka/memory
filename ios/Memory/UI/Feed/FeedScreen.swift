@@ -32,9 +32,14 @@ struct FeedScreen: View {
             LazyVStack(spacing: 14) {
                 HStack(alignment: .center) {
                     ScreenTitle(title: t("Лента"), subtitle: t("Моменты, которые остаются"))
-                    Spacer()
+                    Spacer(minLength: 8)
+                    // Поиск людей, записей и #тегов; колокольчик — лента активности
+                    RoundGlyphButton(icon: .search, color: Palette.lilac) { model.openSearch() }
+                    ActivityBell(unread: state.activityUnread) { model.openActivity() }
+                        .padding(.leading, 4)
                     // Знак Memory: кристалл со стеклом, как слово MEMORY на заставке
-                    CrystalLogo(size: 56)
+                    CrystalLogo(size: 44)
+                        .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
@@ -150,11 +155,25 @@ struct PostCard: View {
     var onReport: (() -> Void)? = nil
 
     @State private var showMenu = false
+    /// Ссылка на запись и правка своей — в меню любой карточки, где бы она ни была.
+    @Environment(\.linkActions) private var links
 
-    /// Меню «⋯»: свои пункты и «Пожаловаться» для чужой записи.
+    /// Меню «⋯»: «Изменить» своё, свои пункты, ссылка на запись и «Пожаловаться» для чужой записи.
     private var menuItems: [GlassAction] {
-        guard let onReport else { return menu }
-        return menu + [GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true, action: onReport)]
+        var list: [GlassAction] = []
+        let post = self.post
+        if let links, post.author.id == links.meId, post.artSeed == nil {
+            list.append(GlassAction(icon: .edit, title: t("Изменить")) { links.onEdit(post) })
+        }
+        list += menu
+        if let links {
+            list.append(GlassAction(icon: .share, title: t("Поделиться ссылкой")) { links.onShareLink(post) })
+            list.append(GlassAction(icon: .link, title: t("Скопировать ссылку")) { links.onCopyLink(post) })
+        }
+        if let onReport {
+            list.append(GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true, action: onReport))
+        }
+        return list
     }
 
     var body: some View {
@@ -166,13 +185,15 @@ struct PostCard: View {
                     if let friend {
                         FriendButton(state: friend, name: post.author.name, onToggle: onFriend)
                     }
-                    if !menu.isEmpty || onReport != nil {
+                    if !menu.isEmpty || onReport != nil || links != nil {
                         Button { showMenu = true } label: {
                             Glyph(kind: .more, color: Palette.mist, size: 20)
                                 .frame(width: 36, height: 36)
                                 .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(LineIcon.more.label)
+                        .accessibilityHint(t("Действия с записью"))
                     }
                 }
                 if pinned {
@@ -185,8 +206,7 @@ struct PostCard: View {
                     CheckInBadge(checkIn: checkIn)
                 }
                 if !post.text.isEmpty {
-                    Text(post.text)
-                        .textStyle(.body)
+                    RichText(text: post.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let poll = post.poll {
@@ -213,6 +233,9 @@ struct PostCard: View {
                     }
                     .buttonStyle(.plain)
                     .sensoryFeedback(.selection, trigger: post.liked)
+                    .accessibilityLabel(tf("Нравится: %s", post.likes))
+                    .accessibilityValue(post.liked ? t("отмечено") : t("не отмечено"))
+                    .accessibilityAddTraits(post.liked ? .isSelected : [])
                     Button { onComments?() } label: {
                         HStack(spacing: 6) {
                             Glyph(kind: .comment, color: Palette.mist, size: 22)
@@ -224,6 +247,7 @@ struct PostCard: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(onComments == nil)
+                    .accessibilityLabel(tf("Комментарии: %s", post.comments))
                 }
             }
             .padding(16)
@@ -238,7 +262,7 @@ struct PostCard: View {
             Avatar(user: post.author, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(post.author.name).textStyle(.title).lineLimit(1)
-                Text("@\(post.author.handle) · \(agoTitle(minutesSince(post.createdAt, post.minutesAgo)))")
+                Text("@\(post.author.handle) · \(agoTitle(minutesSince(post.createdAt, post.minutesAgo)))" + (post.editedAt != nil ? " · " + t("изменено") : ""))
                     .textStyle(.bodySmall, Palette.mist)
                     .lineLimit(1)
             }

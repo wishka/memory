@@ -10,18 +10,20 @@ This policy applies to the Memory app on Android and iPhone and to the website [
 
 ## 2. What data we process and why
 
-- **Account**: username, name, password (only its hash is stored, using PBKDF2), and, once the server is connected, a phone number for sign-in. Why: to create your account and protect sign-in.
+- **Account**: username, name, password (only its hash is stored, using PBKDF2), and, once the server is connected, a phone number for sign-in. Email, if you added it in Security; recovery codes are stored only as hashes. Why: to create your account, protect sign-in and restore access if you forget your password.
 - **Profile**: photo, bio, city, birthday, website, interests, whatever you fill in yourself. Why: to show your profile to others according to your privacy settings.
-- **Content**: posts, photos, videos, voice messages, PRISM, stickers, comments, polls, messages, check-ins, shelf entries, showcase products. Why: to show them to the people you addressed them to.
+- **Content**: posts, photos, videos, voice messages, PRISM, stickers, comments, polls, messages, check-ins, shelf entries, showcase products, #tags and @mentions. Why: to show them to the people you addressed them to.
+- **Live streams**: video, audio and the stream chat are delivered to viewers while the stream is on and are not stored after it ends.
 - **Geolocation**: only when you send a location yourself, or mark a treasure, a find or an outing in Together. There is no background geolocation.
-- **Technical data**: device model and OS version, language, push notification token, error log. Why: to deliver notifications and fix crashes.
-- **Actions in the app** (invitations, posts, check-ins): to improve the app and build personal suggestions.
+- **Technical data**: device model and OS version, language, push notification token. Why: to deliver notifications.
+- **Crash reports and usage statistics**: only if you separately turn them on in Settings → Privacy → Crashes and statistics (off by default). A crash report contains the error type and the place in the code, without your posts or chats; emails, usernames and long numbers are removed from it. Statistics are daily event counters ("posts published: 3") without any texts. Why: to fix crashes and understand which features are used.
+- **Actions in the app** (invitations, posts, check-ins): to build personal suggestions.
 
 The legal basis is the consent you give when you register, and the performance of the Terms of Use. We do not process biometric or genetic data: cutting out objects for stickers runs on your phone and does not identify people. We do not sell data and do not show ads based on it.
 
 ## 3. Where data is stored
 
-Currently (before the server launches), your account, posts and conversations are stored only on your phone. After the server launches, data will be stored on servers in [country and cloud provider name]. If that country is not on the list of countries with adequate data protection maintained by the Personal Data Protection Agency, the transfer is based on your explicit consent or on standard contractual clauses registered with the Agency.
+Currently (before the server launches), your account, posts and conversations are stored only on your phone. Messages in chats where you turned on end-to-end encryption are encrypted on the phone with a key known only to the two phones: the server will store and relay them only in encrypted form and cannot read them. Disappearing messages are deleted for both participants when the chosen period ends. After the server launches, data will be stored on servers in [country and cloud provider name]. If that country is not on the list of countries with adequate data protection maintained by the Personal Data Protection Agency, the transfer is based on your explicit consent or on standard contractual clauses registered with the Agency.
 
 ## 4. Who data is shared with
 
@@ -31,7 +33,9 @@ Currently (before the server launches), your account, posts and conversations ar
   - Apple Push Notification service (USA): device token for push notifications on iPhone;
   - GIPHY (USA): GIF search text and IP address when you search for a GIF;
   - Jamendo (Luxembourg) and Openverse (USA): search queries in the media library;
-  - OpenStreetMap (United Kingdom): map tile requests on Android.
+  - OpenStreetMap (United Kingdom): map tile requests on Android;
+  - Sentry (Functional Software, Inc., USA): crash reports and usage statistics, **only with your separate consent** in Settings → Privacy;
+  - [LiveKit live streaming server: country]: video and audio of live streams, once the server is connected.
 - **Government authorities**: only in the cases and in the manner expressly established by the law of the Republic of Armenia.
 
 ## 5. How long we keep data
@@ -40,7 +44,7 @@ For as long as the account exists. After the account is deleted, data is deleted
 
 ## 6. Your rights
 
-You can find out what data we process and who it has been shared with, correct it, request its deletion or the end of its processing, withdraw your consent and delete your account: Settings → Security → Delete account, or by email to [privacy@domain]. We will respond within 5 business days. If personal suggestions affect you, you can ask for them to be reviewed by a human (see "How recommendations work"). You can file a complaint with the Personal Data Protection Agency of the Ministry of Justice of the Republic of Armenia.
+You can download a copy of your data at any time: Settings → Privacy → Download my data, an archive with your profile, posts, chats, groups and settings. You can find out what data we process and who it has been shared with, correct it, request its deletion or the end of its processing, withdraw your consent and delete your account: Settings → Security → Delete account, or by email to [privacy@domain]. We will respond within 5 business days. If personal suggestions affect you, you can ask for them to be reviewed by a human (see "How recommendations work"). You can file a complaint with the Personal Data Protection Agency of the Ministry of Justice of the Republic of Armenia.
 
 ## 7. Age
 
@@ -48,7 +52,7 @@ Memory is for people aged 16 and over. If you learn that an account was created 
 
 ## 8. Security and breaches
 
-Passwords are stored only as a hash, the session is encrypted with a key from the system keystore (Android Keystore, iOS Keychain), and connections to the server use TLS. If a breach may affect your rights, we will notify the Personal Data Protection Agency within 72 hours, and, if the risk is high, we will notify you immediately as well.
+Passwords and recovery codes are stored only as hashes, the session and the chat encryption key are kept in the system keystore (Android Keystore, iOS Keychain), and connections to the server use TLS. In case of a leak from the information system, we will immediately notify the Personal Data Protection Agency and the police, as the law requires, publish a notice about it and, if the risk is high, notify you right away.
 
 ## 9. Changes
 

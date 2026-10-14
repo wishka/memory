@@ -61,18 +61,34 @@ final class LocalAuth {
     static let sessionUser = "session.user"
     static let sessionToken = "session.token"
 
+    /// Сколько кодов восстановления выдаётся за раз.
+    static let recoveryCodes = 10
+    /// Сколько живёт код из письма, мс.
+    static let codeTtlMs: Int64 = 15 * 60_000
+    /// Сколько раз можно ошибиться в коде из письма.
+    static let codeTries = 5
+
+    private static let recoveryFields = [
+        "rc", "rc.salt", "email", "email.ok",
+        "code.email", "code.email.until", "code.email.tries", "code.reset", "code.reset.until", "code.reset.tries",
+    ]
+
     private let store: KeyValueStore
     private let clock: () -> Int64
     private let iterations: Int
+    /// Кто отправляет письма с кодом. Пока сервера нет — демо: код показывается на экране.
+    private let mail: MailSender
 
     init(
         store: KeyValueStore,
         clock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
-        iterations: Int = PasswordHasher.iterations
+        iterations: Int = PasswordHasher.iterations,
+        mail: MailSender = DemoMail.shared
     ) {
         self.store = store
         self.clock = clock
         self.iterations = iterations
+        self.mail = mail
     }
 
     /// Текущий вошедший пользователь или nil. Сессия переживает перезапуск.
@@ -174,11 +190,198 @@ final class LocalAuth {
         if password.isEmpty { return t("Введите пароль") }
         if !checkPassword(login, password) { return t("Пароль не подходит") }
         for field in ["salt", "hash", "iter", "name", "fails", "locked",
-                      "p.bio", "p.city", "p.birthday", "p.website", "p.interests", "p.avatar"] {
+                      "p.bio", "p.city", "p.birthday", "p.website", "p.interests", "p.avatar"] + Self.recoveryFields {
             store.remove(key(login, field))
         }
         if store.get(Self.sessionUser) == login { logout() }
         return nil
+    }
+
+    // MARK: - Восстановление доступа
+
+    /// Десять новых одноразовых кодов восстановления; прежние перестают
+    /// работать. Сами коды не хранятся — только их хеши, как у пароля:
+    /// показать их можно один раз, сразу после создания.
+    func newRecoveryCodes(_ username: String) -> [String] {
+        let login = Self.normalize(username)
+        guard store.get(key(login, "hash")) != nil else { return [] }
+        let salt = PasswordHasher.newSalt()
+        let codes = (0..<Self.recoveryCodes).map { _ in RecoveryCodes.generate() }
+        store.put(key(login, "rc.salt"), salt.hex)
+        store.put(key(login, "rc"), codes.map {
+            PasswordHasher.hash(RecoveryCodes.normalize($0), salt: salt, iterations: recoveryIterations).hex
+        }.joined(separator: ","))
+        return codes
+    }
+
+    /// Сколько неиспользованных кодов осталось.
+    func recoveryLeft(_ username: String) -> Int {
+        (store.get(key(Self.normalize(username), "rc")) ?? "").split(separator: ",").filter { !$0.isEmpty }.count
+    }
+
+    /// Вход по коду восстановления с новым паролем. Код одноразовый: после
+    /// входа он больше не подходит. Неверный код считается неудачной
+    /// попыткой входа — подбор упирается в ту же блокировку.
+    func recoverWithCode(username: String, code: String, new: String, repeatPassword repeated: String) -> AuthResult {
+        let login = Self.normalize(username)
+        if login.isEmpty || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .error(t("Введите логин и код")) }
+        if let error = locked(login) { return .error(error) }
+        if let error = Self.validatePassword(new) { return .error(error) }
+        if new != repeated { return .error(t("Пароли не совпадают")) }
+        let salt = store.get(key(login, "rc.salt")).flatMap { [UInt8](hex: $0) }
+        let hashes = (store.get(key(login, "rc")) ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        let normalized = RecoveryCodes.normalize(code)
+        var hit = -1
+        if let salt, normalized.count == RecoveryCodes.length {
+            let h = PasswordHasher.hash(normalized, salt: salt, iterations: recoveryIterations).hex
+            hit = hashes.firstIndex { Self.sameText($0, h) } ?? -1
+        }
+        if hit < 0 {
+            if store.get(key(login, "hash")) != nil { registerFailure(login, now: clock()) }
+            return .error(t("Неверный логин или код"))
+        }
+        store.put(key(login, "rc"), hashes.enumerated().filter { $0.offset != hit }.map { $0.element }.joined(separator: ","))
+        setPassword(login, new)
+        return startSession(login)
+    }
+
+    /// Почта аккаунта ("" — не указана).
+    func email(_ username: String) -> String { store.get(key(Self.normalize(username), "email")) ?? "" }
+
+    /// Подтверждена ли почта.
+    func emailConfirmed(_ username: String) -> Bool { store.get(key(Self.normalize(username), "email.ok")) == "1" }
+
+    /// Указать почту: на неё уходит шестизначный код подтверждения. До
+    /// подтверждения почта не годится для восстановления. nil — письмо
+    /// отправлено, иначе текст ошибки.
+    func setEmail(_ username: String, _ email: String) -> String? {
+        let login = Self.normalize(username)
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !Self.matches(Self.emailPattern, address) { return t("Похоже, в адресе почты ошибка") }
+        store.put(key(login, "email"), address)
+        store.remove(key(login, "email.ok"))
+        sendCode(login, address, "email")
+        return nil
+    }
+
+    /// Код из письма подтверждает почту. nil — подтверждена.
+    func confirmEmail(_ username: String, _ code: String) -> String? {
+        let login = Self.normalize(username)
+        if let error = checkCode(login, "email", code) { return error }
+        store.put(key(login, "email.ok"), "1")
+        return nil
+    }
+
+    /// Убрать почту из аккаунта.
+    func removeEmail(_ username: String) {
+        let login = Self.normalize(username)
+        for field in ["email", "email.ok", "code.email", "code.email.until", "code.email.tries"] {
+            store.remove(key(login, field))
+        }
+    }
+
+    /// «Забыли пароль?» по почте: если у логина есть подтверждённая почта,
+    /// на неё уходит код. Ответ одинаковый, есть почта или нет, — иначе по
+    /// нему можно было бы узнать, какие логины существуют.
+    func startEmailRecovery(_ username: String) -> String {
+        let login = Self.normalize(username)
+        if emailConfirmed(login) && !email(login).isEmpty { sendCode(login, email(login), "reset") }
+        return t("Если у этого логина есть подтверждённая почта, на неё пришло письмо с кодом.")
+    }
+
+    /// Код из письма + новый пароль: вход с новым паролем.
+    func recoverWithEmail(username: String, code: String, new: String, repeatPassword repeated: String) -> AuthResult {
+        let login = Self.normalize(username)
+        if let error = locked(login) { return .error(error) }
+        if let error = Self.validatePassword(new) { return .error(error) }
+        if new != repeated { return .error(t("Пароли не совпадают")) }
+        if let error = checkCode(login, "reset", code) {
+            if store.get(key(login, "hash")) != nil { registerFailure(login, now: clock()) }
+            return .error(error)
+        }
+        setPassword(login, new)
+        return startSession(login)
+    }
+
+    /// Почта в виде «a•••@mail.ru» — для подсказок, без раскрытия адреса целиком.
+    func maskedEmail(_ username: String) -> String { Self.maskEmail(email(username)) }
+
+    /// «anna@mail.ru» → «a•••@mail.ru».
+    static func maskEmail(_ email: String) -> String {
+        guard let at = email.firstIndex(of: "@") else { return email }
+        let name = email[..<at]
+        return String(name.prefix(1)) + "•••@" + String(email[email.index(after: at)...])
+    }
+
+    /// Пароль подходит — для действий, которые просят подтверждения (новые коды).
+    func checkPasswordOf(_ username: String, _ password: String) -> Bool {
+        checkPassword(Self.normalize(username), password)
+    }
+
+    private func sendCode(_ login: String, _ address: String, _ purpose: String) {
+        let code = RecoveryCodes.digits()
+        store.put(key(login, "code.\(purpose)"), PasswordHasher.hash(code, salt: Array(login.utf8), iterations: 1_000).hex)
+        store.put(key(login, "code.\(purpose).until"), String(clock() + Self.codeTtlMs))
+        store.remove(key(login, "code.\(purpose).tries"))
+        mail.send(email: address, code: code)
+    }
+
+    private func checkCode(_ login: String, _ purpose: String, _ code: String) -> String? {
+        guard let saved = store.get(key(login, "code.\(purpose)")) else { return t("Код устарел — запросите новый") }
+        let until = store.get(key(login, "code.\(purpose).until")).flatMap { Int64($0) } ?? 0
+        if clock() > until { return t("Код устарел — запросите новый") }
+        let tries = (store.get(key(login, "code.\(purpose).tries")).flatMap { Int($0) } ?? 0) + 1
+        let digits = code.filter { $0.isASCII && $0.isNumber }
+        let ok = Self.sameText(PasswordHasher.hash(digits, salt: Array(login.utf8), iterations: 1_000).hex, saved)
+        if !ok {
+            if tries >= Self.codeTries {
+                store.remove(key(login, "code.\(purpose)"))
+                return t("Слишком много попыток — запросите новый код")
+            }
+            store.put(key(login, "code.\(purpose).tries"), String(tries))
+            return t("Код не подходит")
+        }
+        for field in ["code.\(purpose)", "code.\(purpose).until", "code.\(purpose).tries"] {
+            store.remove(key(login, field))
+        }
+        return nil
+    }
+
+    /// Вход закрыт после неудачных попыток — текст ошибки; nil — открыт.
+    private func locked(_ login: String) -> String? {
+        let lockedUntil = store.get(key(login, "locked")).flatMap { Int64($0) } ?? 0
+        let now = clock()
+        if now >= lockedUntil { return nil }
+        let sec = max(1, (lockedUntil - now) / 1000)
+        return tf("Слишком много попыток. Попробуйте через %s с", sec)
+    }
+
+    private func setPassword(_ login: String, _ password: String) {
+        let salt = PasswordHasher.newSalt()
+        store.put(key(login, "salt"), salt.hex)
+        store.put(key(login, "hash"), PasswordHasher.hash(password, salt: salt, iterations: iterations).hex)
+        store.put(key(login, "iter"), String(iterations))
+        store.remove(key(login, "fails"))
+        store.remove(key(login, "locked"))
+    }
+
+    private var recoveryIterations: Int { max(1, iterations / 12) }
+
+    /// Сравнение за постоянное время.
+    private static func sameText(_ a: String, _ b: String) -> Bool {
+        let x = Array(a.utf8), y = Array(b.utf8)
+        guard x.count == y.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<x.count { diff |= x[i] ^ y[i] }
+        return diff == 0
+    }
+
+    private static let emailPattern = "^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$"
+
+    private static func matches(_ pattern: String, _ s: String) -> Bool {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return false }
+        let range = NSRange(s.startIndex..<s.endIndex, in: s)
+        return re.firstMatch(in: s, range: range) != nil
     }
 
     private func checkPassword(_ login: String, _ password: String) -> Bool {
@@ -264,5 +467,55 @@ final class LocalAuth {
             return t("В пароле нужны буквы и цифры")
         }
         return nil
+    }
+}
+
+/// Отправка письма с кодом. Когда появится сервер — письмо уйдёт с него.
+protocol MailSender: AnyObject {
+    func send(email: String, code: String)
+}
+
+/// Демо-почта: сервера нет, письмо не отправить — последний код виден на
+/// экране подтверждения («Демо: код 123456»). Заменить на сетевую
+/// отправку — передать в LocalAuth свой MailSender.
+final class DemoMail: MailSender {
+    static let shared = DemoMail()
+
+    private static let lock = NSLock()
+    private static var lastSent: (email: String, code: String)?
+
+    /// Последнее «письмо»: адрес и код.
+    static var last: (email: String, code: String)? {
+        lock.lock(); defer { lock.unlock() }
+        return lastSent
+    }
+
+    func send(email: String, code: String) {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        Self.lastSent = (email, code)
+    }
+}
+
+/// Коды восстановления: «K7QF-2MXP» — 8 знаков без похожих букв и цифр.
+enum RecoveryCodes {
+    static let length = 8
+    private static let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+    private static let alphabetSet = Set(alphabet)
+
+    static func generate() -> String {
+        var rng = SystemRandomNumberGenerator()
+        let raw = String((0..<length).map { _ in alphabet[Int.random(in: 0..<alphabet.count, using: &rng)] })
+        return String(raw.prefix(4)) + "-" + String(raw.dropFirst(4))
+    }
+
+    /// Шестизначный код для письма.
+    static func digits() -> String {
+        var rng = SystemRandomNumberGenerator()
+        return (0..<6).map { _ in String(Int.random(in: 0..<10, using: &rng)) }.joined()
+    }
+
+    /// Как человек ни ввёл — «k7qf 2mxp», «K7QF-2MXP» — одно и то же.
+    static func normalize(_ code: String) -> String {
+        String(code.uppercased().filter { alphabetSet.contains($0) })
     }
 }

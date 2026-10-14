@@ -137,6 +137,7 @@ struct ScreenTitle: View {
                 .textStyle(.display)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .accessibilityAddTraits(.isHeader)
             if let subtitle {
                 Text(subtitle.uppercased()).textStyle(.label, Palette.mist)
             }
@@ -166,6 +167,7 @@ struct SectionTitle: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -175,6 +177,8 @@ struct RoundGlyphButton: View {
     var color: Color = Palette.ink
     var iconSize: CGFloat = 24
     var strong: Bool = false
+    /// Что прочитает VoiceOver; nil — название значка.
+    var label: String? = nil
     let action: () -> Void
 
     var body: some View {
@@ -184,5 +188,6 @@ struct RoundGlyphButton: View {
                 .glass(Circle(), strong: strong)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label ?? icon.label)
     }
 }

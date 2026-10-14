@@ -479,9 +479,11 @@ struct ProductEditor: View {
                         .glass(radius: 16)
                     HStack {
                         Text(t("В наличии")).textStyle(.body)
+                            .accessibilityHidden(true)
                         Spacer()
                         Toggle("", isOn: $inStock)
                             .labelsHidden()
+                            .accessibilityLabel(t("В наличии"))
                             .tint(accent.color)
                     }
                     field(t("Ссылка на товар на сайте — необязательно"), $url, limit: 300, keyboard: .URL, plain: true)

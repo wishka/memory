@@ -95,6 +95,12 @@ import ru.wishka.memory.ui.components.InviteDialog
 import ru.wishka.memory.ui.auth.OnboardingScreen
 import ru.wishka.memory.data.Invite
 import ru.wishka.memory.data.Invites
+import ru.wishka.memory.data.LinkTarget
+import ru.wishka.memory.data.Links
+import ru.wishka.memory.data.MediaFiles
+import ru.wishka.memory.ui.components.LinkActions
+import ru.wishka.memory.ui.components.LocalLinkActions
+import androidx.compose.runtime.CompositionLocalProvider
 
 class MainActivity : ComponentActivity() {
     override fun onStart() {
@@ -105,6 +111,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         AppVisibility.foreground = false
+        ru.wishka.memory.telemetry.TelemetrySetup.flush()
     }
 
     /** Нажали на уведомление, когда приложение уже открыто. */
@@ -112,6 +119,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         MemoryNotifications.fromIntent(intent)?.let { openedNudge.value = it }
         intent.data?.toString()?.let(Invites::parse)?.let { openedInvite.value = it }
+        intent.data?.toString()?.let(Links::parse)?.let { openedLink.value = it }
     }
 
     companion object {
@@ -120,6 +128,9 @@ class MainActivity : ComponentActivity() {
 
         /** Ссылка-приглашение, по которой открыли приложение: её разберёт MainScreen после входа. */
         val openedInvite = MutableStateFlow<Invite?>(null)
+
+        /** Ссылка на запись, профиль, PRISM, группу или тег — откроется после входа. */
+        val openedLink = MutableStateFlow<LinkTarget?>(null)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,6 +139,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && !fromHistory) {
             MemoryNotifications.fromIntent(intent)?.let { openedNudge.value = it }
             intent?.data?.toString()?.let(Invites::parse)?.let { openedInvite.value = it }
+            intent?.data?.toString()?.let(Links::parse)?.let { openedLink.value = it }
         }
         // Рисуем под системными панелями; значки панелей — светлые
         enableEdgeToEdge(
@@ -166,6 +178,8 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
     LaunchedEffect(account) {
         loadedFor = null
         if (account != null) {
+            // Ключ сквозного шифрования — в зашифрованном хранилище телефона
+            vm.attachKeys(ru.wishka.memory.data.auth.SecurePrefs(context.applicationContext))
             vm.setAccount(account.username, account.displayName, account.info)
             val me = vm.state.value.me
             val saved = withContext(Dispatchers.IO) { store.load(account.username, me) }
@@ -201,6 +215,15 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
     // Только когда сохранённое уже на месте: иначе у старого аккаунта без
     // записей (до restore) приглашение сочли бы регистрацией по ссылке.
     // Пока не вошли — ссылка ждёт в openedInvite.
+    LaunchedEffect(loadedFor) {
+        if (loadedFor == null) return@LaunchedEffect
+        MainActivity.openedLink.collect { link ->
+            if (link != null) {
+                MainActivity.openedLink.value = null
+                if (!vm.openLink(link)) Toast.makeText(context, t("Это недоступно на этом телефоне — возможно, запись удалили или профиль закрыт."), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     LaunchedEffect(loadedFor) {
         if (loadedFor == null) return@LaunchedEffect
         MainActivity.openedInvite.collect { invite ->
@@ -251,13 +274,55 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
                         val error = authVm.deleteAccount(password)
                         if (error == null && login != null) {
                             withContext(Dispatchers.IO) { store.delete(login) }
+                            ru.wishka.memory.data.ChatKeys(ru.wishka.memory.data.auth.SecurePrefs(context.applicationContext)).forget(login)
                         }
                         error
                     },
+                    data = ru.wishka.memory.ui.settings.DataActions(
+                        fileName = { ru.wishka.memory.ui.settings.exportFileName(account?.username.orEmpty()) },
+                        mediaBytes = {
+                            withContext(Dispatchers.IO) {
+                                ru.wishka.memory.data.DataExport.mediaBytes(ru.wishka.memory.data.DataExport.files(vm.snapshot(), vm.state.value.me.avatar))
+                            }
+                        },
+                        export = { uri, withMedia ->
+                            val acc = account
+                            if (acc == null) null else withContext(Dispatchers.IO) {
+                                runCatching {
+                                    val snap = vm.snapshot()
+                                    val me = vm.state.value.me
+                                    val (version, at) = authVm.consentInfo()
+                                    val info = ru.wishka.memory.data.AccountExport(
+                                        acc.username, me.name, vm.profileInfo(), authVm.email(), authVm.emailConfirmed(),
+                                        version, at, authVm.recoveryLeft(),
+                                    )
+                                    ru.wishka.memory.data.Telemetry.track(ru.wishka.memory.data.AppEvent.DataExported)
+                                    context.contentResolver.openOutputStream(uri)!!.use { out ->
+                                        ru.wishka.memory.data.DataExport.write(
+                                            out, info, StateStore.exportJson(snap, me),
+                                            ru.wishka.memory.data.DataExport.files(snap, me.avatar), withMedia, System.currentTimeMillis(),
+                                        )
+                                    }
+                                }.getOrNull()
+                            }
+                        },
+                    ),
+                    recovery = ru.wishka.memory.ui.auth.RecoveryActions(
+                        left = authVm::recoveryLeft,
+                        regenerate = authVm::regenerateRecoveryCodes,
+                        email = authVm::email,
+                        emailConfirmed = authVm::emailConfirmed,
+                        setEmail = authVm::setEmail,
+                        confirmEmail = authVm::confirmEmail,
+                        removeEmail = authVm::removeEmail,
+                        demoCode = authVm::demoCode,
+                    ),
                 ),
             )
         }
     }
+    // Коды восстановления — сразу после регистрации, поверх любого экрана
+    auth.recoveryCodes?.takeIf { it.isNotEmpty() }?.let { ru.wishka.memory.ui.auth.RecoveryCodesDialog(it, authVm::dismissRecoveryCodes) }
 }
 
 @Composable
@@ -292,6 +357,13 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             }
         }
     }
+    // Исчезающие сообщения: раз в 10 секунд убираем истёкшие (и их файлы)
+    LaunchedEffect(Unit) {
+        while (true) {
+            vm.sweepExpired().forEach { MediaFiles.delete(it) }
+            delay(10_000)
+        }
+    }
     // Подписка Memory+ сверяется с часами: закончилась — тариф бесплатный
     LaunchedEffect(Unit) {
         while (true) {
@@ -311,6 +383,9 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         }
     }
     val prefs = remember(context) { DevicePrefs(context.applicationContext) }
+    // Один раз — спросить про отчёты о сбоях и статистику (если сборка умеет их отправлять)
+    var askTelemetry by remember { mutableStateOf(ru.wishka.memory.telemetry.TelemetrySetup.hasKey && !ru.wishka.memory.telemetry.TelemetrySetup.asked) }
+    LaunchedEffect(Unit) { ru.wishka.memory.data.Telemetry.track(ru.wishka.memory.data.AppEvent.AppOpen) }
     val version = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
             .getOrNull() ?: ""
@@ -320,10 +395,34 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
     // → группа → лента → выход
     val canGoBack = state.viewing != null || state.openProduct != null || state.commentsPostId != null || state.commentsPrismId != null ||
         state.openChatId != null || state.openPersonId != null || state.profileSection != null || state.settingsPage != null ||
-        state.creatingPrism ||
+        state.creatingPrism || state.activityOpen || state.watchingLiveId != null || state.liveStarting || state.searchOpen || state.openPostId != null || state.editingPostId != null ||
         state.openGroupId != null || state.tab != Tab.Feed
     BackHandler(enabled = canGoBack) { vm.back() }
 
+    // #теги, @упоминания и ссылки в тексте; ссылка на запись и правка — в меню любой карточки
+    val links = remember(vm, state.me.id) {
+        LinkActions(
+            meId = state.me.id,
+            onTag = vm::openTag,
+            onMention = vm::openHandle,
+            onUrl = { url ->
+                val target = Links.parse(url)
+                if (target != null) {
+                    if (!vm.openLink(target)) Toast.makeText(context, t("Это недоступно на этом телефоне — возможно, запись удалили или профиль закрыт."), Toast.LENGTH_LONG).show()
+                } else runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            },
+            suggest = vm::mentionCandidates,
+            onShareLink = { post ->
+                ru.wishka.memory.data.Telemetry.track(ru.wishka.memory.data.AppEvent.LinkShared)
+                MediaFiles.share(context, Links.shareText(post), emptyList())
+            },
+            onCopyLink = { post -> ru.wishka.memory.ui.auth.copyText(context, "Memory", Links.post(post.id), t("Ссылка скопирована")) },
+            onEdit = { post -> vm.startEdit(post.id) },
+        )
+    }
+    CompositionLocalProvider(LocalLinkActions provides links) {
     Box(modifier = Modifier.fillMaxSize()) {
         CosmicBackground()
 
@@ -336,10 +435,16 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         val openChat = state.openChat
         val openPerson = state.openPerson
         val openGroup = state.openGroup
+        val openPost = state.openPostId?.let { state.findPost(it) }
         if (openChat != null) {
             ChatScreen(vm, openChat, state.chats.filter { it.id != openChat.id }, blocked = state.isBlocked(openChat.peer.id))
         } else {
         when {
+            // Активность и поиск — поверх вкладки; с них можно уйти на человека или группу
+            state.activityOpen -> ru.wishka.memory.ui.activity.ActivityScreen(vm, state, padding)
+            openPost != null && openPerson == null && openGroup == null ->
+                ru.wishka.memory.ui.feed.PostScreen(vm, state, openPost, padding)
+            state.searchOpen && openPerson == null && openGroup == null -> ru.wishka.memory.ui.search.SearchScreen(vm, state, padding)
             // Страница человека и группы — поверх вкладки, панель вкладок остаётся
             openPerson != null -> PersonScreen(vm, state, openPerson, padding)
             openGroup != null && state.groupSettingsOpen -> GroupSettingsScreen(vm, openGroup, padding)
@@ -445,5 +550,12 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         state.legalDoc?.let { LegalDocViewer(it, onClose = vm::closeLegal) }
         // Свой PRISM — камера и редактор во весь экран, поверх всего
         if (state.creatingPrism) PrismCreateFlow(vm, state)
+        // Эфир — во весь экран, поверх всего
+        state.watchingLive?.let { ru.wishka.memory.ui.live.LiveScreen(vm, state, it) }
+        if (state.liveStarting) ru.wishka.memory.ui.live.LiveStartDialog(vm)
+        state.liveSummary?.let { ru.wishka.memory.ui.live.LiveSummaryDialog(vm, it) }
+        state.editingPostId?.let { id -> state.findPost(id)?.let { ru.wishka.memory.ui.feed.EditPostSheet(vm, it) } }
+        if (askTelemetry && state.banner == null) ru.wishka.memory.ui.settings.TelemetryConsentDialog { askTelemetry = false }
+    }
     }
 }

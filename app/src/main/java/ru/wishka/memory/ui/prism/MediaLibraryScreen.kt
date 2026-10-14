@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.prism
 
+import ru.wishka.memory.ui.components.label
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -201,7 +202,7 @@ fun MediaLibraryScreen(vm: AppViewModel, state: UiState, contentPadding: Padding
                                 .background(Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean)))
                                 .clickable { submitted = query.trim() },
                             contentAlignment = Alignment.Center,
-                        ) { Glyph(LineIcon.Search, Palette.Ink, size = 20.dp) }
+                        ) { Glyph(LineIcon.Search, Palette.Ink, size = 20.dp, description = LineIcon.Search.label) }
                     }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Chip(t("Популярное"), active = genre == null) { genre = null }
@@ -325,7 +326,7 @@ fun MediaLibraryScreen(vm: AppViewModel, state: UiState, contentPadding: Padding
                         current = null
                     },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp) }
+                ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp, description = LineIcon.Close.label) }
             }
         }
     }

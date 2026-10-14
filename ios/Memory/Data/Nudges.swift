@@ -111,6 +111,20 @@ enum Nudges {
         return Nudge(kind: .reactions, title: person.name, text: text, target: .post, targetId: post.id)
     }
 
+    /// Друг начал прямой эфир. targetId — друг: нажатие откроет его эфир, если он ещё идёт.
+    static func liveStarted(_ friend: User, _ title: String) -> Nudge {
+        Nudge(kind: .friends, title: friend.name,
+              text: tf(g(friend, "%s начал эфир: %s", "%s начала эфир: %s"), friend.firstName, title),
+              target: .person, targetId: Int64(friend.id))
+    }
+
+    /// Комментарий к вашей записи (или упоминание в нём).
+    static func commented(_ person: User, _ post: Post, _ text: String) -> Nudge {
+        Nudge(kind: .reactions, title: person.name,
+              text: tf(g(person, "%s прокомментировал: %s", "%s прокомментировала: %s"), person.firstName, String(text.prefix(80))),
+              target: .post, targetId: post.id)
+    }
+
     /// Заявка в друзья ко мне; common — общие интересы, если есть.
     static func followRequest(_ person: User, common: [String]) -> Nudge {
         let text = common.isEmpty

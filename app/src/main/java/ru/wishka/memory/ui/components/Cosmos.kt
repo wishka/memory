@@ -19,6 +19,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -163,7 +165,7 @@ fun Avatar(user: User, size: Dp = 44.dp, ring: Boolean = false, showOnline: Bool
 /** Заголовок экрана — тонкий широкий Unbounded капслоком, как в референсах. */
 @Composable
 fun ScreenTitle(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
+    Column(modifier = modifier.semantics(mergeDescendants = true) { heading() }) {
         Text(title.uppercase(), style = MaterialTheme.typography.displaySmall, color = Palette.Ink)
         if (subtitle != null) {
             Text(
