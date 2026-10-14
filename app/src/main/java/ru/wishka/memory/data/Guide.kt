@@ -5,13 +5,17 @@ import ru.wishka.memory.i18n.L10n
 /**
  * Гид по Memory — справка внутри приложения: главы, темы, шаги.
  *
- * Текст лежит в docs/guide/guide.json сразу на двух языках; из него
+ * Текст лежит в docs/guide/guide.json сразу на трёх языках (ru, en, hy); из него
  * scripts/sync_guide.py собирает GuideContent.kt и GuideContent.swift.
  * Поэтому гид не идёт через общий словарь t(): у каждой строки своя пара.
  */
-data class GuideText(val ru: String, val en: String) {
+data class GuideText(val ru: String, val en: String, val hy: String = en) {
     /** На выбранном языке интерфейса. */
-    val text: String get() = if (L10n.english) en else ru
+    val text: String get() = when {
+        L10n.english -> en
+        L10n.armenian -> hy
+        else -> ru
+    }
 }
 
 /** Куда ведёт кнопка темы «Открыть …». */
@@ -47,7 +51,10 @@ data class GuideChapter(
 data class GuideHit(val chapter: GuideChapter, val topic: GuideTopic)
 
 object Guide {
-    val chapters: List<GuideChapter> get() = GuideContent.chapters
+    /** Главы; пока Memory+ выключен, темы о нём скрыты. */
+    val chapters: List<GuideChapter>
+        get() = if (Premium.enabled) GuideContent.chapters
+        else GuideContent.chapters.map { c -> c.copy(topics = c.topics.filter { it.action != GuideAction.Premium }) }
 
     /** Всего тем — для «прочитано N из M». */
     val topicCount: Int get() = chapters.sumOf { it.topics.size }
@@ -67,12 +74,12 @@ object Guide {
         if (words.isEmpty()) return emptyList()
         val hits = chapters.flatMap { c ->
             c.topics.mapNotNull { t ->
-                val title = "${t.title.ru} ${t.title.en}".lowercase()
+                val title = "${t.title.ru} ${t.title.en} ${t.title.hy}".lowercase()
                 val body = buildString {
                     append(title).append(' ')
-                    append(c.title.ru).append(' ').append(c.title.en).append(' ')
-                    t.steps.forEach { append(it.ru).append(' ').append(it.en).append(' ') }
-                    t.tip?.let { append(it.ru).append(' ').append(it.en) }
+                    append(c.title.ru).append(' ').append(c.title.en).append(' ').append(c.title.hy).append(' ')
+                    t.steps.forEach { append(it.ru).append(' ').append(it.en).append(' ').append(it.hy).append(' ') }
+                    t.tip?.let { append(it.ru).append(' ').append(it.en).append(' ').append(it.hy) }
                 }.lowercase()
                 if (words.all { it in body }) GuideHit(c, t) to words.count { it in title } else null
             }

@@ -18,3 +18,6 @@ keystore.properties
 ios/Memory/Secrets.plist
 
 .DS_Store
+
+# Python
+__pycache__/

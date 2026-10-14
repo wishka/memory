@@ -7,12 +7,12 @@ import Foundation
 /// в Legal.kt и в docs/legal. Те же правила — Legal.kt на Android.
 enum Legal {
     /// Версия документов: поменялась — каждый вошедший заново принимает их.
-    static let version = "2026-10-12"
+    static let version = "2026-10-14"
 
     /// С какого возраста можно пользоваться Memory (и рейтинг в магазинах).
     static let minAge = 16
 
-    static let operatorName = "[Название оператора: ООО «…» или ИП …, ИНН …]"
+    static let operatorName = "[Название оператора: ООО «…» / ИП …, ՀՎՀՀ …]"
     static let privacyEmail = "[privacy@домен]"
     static let abuseEmail = "[abuse@домен]"
     /// Где опубликованы документы (GitHub Pages из docs или свой домен).
@@ -42,21 +42,38 @@ enum LegalDoc: String, CaseIterable, Identifiable {
     }
 
     var title: String { t(ru) }
-    var file: String { "\(id).md" }
 
-    /// Текст из сборки; документы — по-русски (их требует российское право).
+    /// Файл на языке интерфейса: terms.hy.md (армянский — основная редакция),
+    /// terms.md (русский), terms.en.md (английский).
+    var file: String { fileFor(L10n.shared.lang) }
+
+    func fileFor(_ lang: Lang) -> String {
+        switch lang {
+        case .hy: return "\(id).hy.md"
+        case .en: return "\(id).en.md"
+        default: return "\(id).md"
+        }
+    }
+
+    /// Текст из сборки на языке интерфейса; нет перевода — русская редакция.
     /// Синхронизированная папка Xcode кладёт файлы в корень сборки, но
     /// сначала ищем в Legal — на случай, если папку скопируют целиком.
     func load(bundle: Bundle = .main) -> String {
-        guard let url = bundle.url(forResource: id, withExtension: "md", subdirectory: "Legal")
-            ?? bundle.url(forResource: id, withExtension: "md"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+        Self.read(file, bundle: bundle) ?? Self.read("\(id).md", bundle: bundle) ?? ""
+    }
+
+    private static func read(_ name: String, bundle: Bundle) -> String? {
+        // «terms.hy.md» → ресурс «terms.hy» с расширением «md»
+        let base = String(name.dropLast(3))
+        guard let url = bundle.url(forResource: base, withExtension: "md", subdirectory: "Legal")
+            ?? bundle.url(forResource: base, withExtension: "md"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         return text
     }
 }
 
 /// Согласие с документами — на телефоне, по аккаунту: версия и время
-/// («2026-10-12|1790000000000»). С сервером оно же уйдёт в журнал
+/// («2026-10-14|1790000000000»). С сервером оно же уйдёт в журнал
 /// согласий оператора.
 struct ConsentStore {
     private let defaults: UserDefaults

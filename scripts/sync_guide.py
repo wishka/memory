@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Гид по Memory — один источник: docs/guide/guide.json (русский и английский).
+"""Гид по Memory — один источник: docs/guide/guide.json (русский, английский, армянский).
 
 Скрипт собирает из него код для обоих приложений:
   app/src/main/java/ru/wishka/memory/data/GuideContent.kt
@@ -37,8 +37,8 @@ def check_source(data) -> list:
     errors, ids = [], set()
 
     def text(t, where):
-        if not isinstance(t, dict) or not t.get("ru", "").strip() or not t.get("en", "").strip():
-            errors.append(f"{where}: нужен текст ru и en")
+        if not isinstance(t, dict) or not all(t.get(k, "").strip() for k in ("ru", "en", "hy")):
+            errors.append(f"{where}: нужен текст ru, en и hy")
 
     for c in data["chapters"]:
         if c["id"] in ids:
@@ -66,7 +66,7 @@ def check_source(data) -> list:
 
 def kotlin(data) -> str:
     def g(t):
-        return f'GuideText("{esc(t["ru"], True)}", "{esc(t["en"], True)}")'
+        return f'GuideText("{esc(t["ru"], True)}", "{esc(t["en"], True)}", "{esc(t["hy"], True)}")'
 
     out = [
         "// Сгенерировано scripts/sync_guide.py из docs/guide/guide.json — не править руками.",
@@ -99,7 +99,7 @@ def kotlin(data) -> str:
 
 def swift(data) -> str:
     def g(t):
-        return f'GuideText(ru: "{esc(t["ru"], False)}", en: "{esc(t["en"], False)}")'
+        return f'GuideText(ru: "{esc(t["ru"], False)}", en: "{esc(t["en"], False)}", hy: "{esc(t["hy"], False)}")'
 
     def lower(a):
         return a[0].lower() + a[1:]

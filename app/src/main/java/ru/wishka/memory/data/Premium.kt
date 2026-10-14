@@ -73,7 +73,7 @@ enum class PremiumFeature(val tier: PlanTier, private val ru: String, private va
     StickerPacks(PlanTier.Plus, "Коллекции стикеров", "Бесплатно — две коллекции, в Memory+ — сколько угодно."),
     Backdrops(PlanTier.Plus, "Все фоны переписок", "Все 10 фонов коллекции и своё фото."),
     ChatBackdrop(PlanTier.Plus, "Фон для отдельного чата", "У каждой переписки — свой фон."),
-    Sounds(PlanTier.Plus, "Звуки Memory", "Все 8 звуков уведомлений: комета, луна, призма, орбита…"),
+    Sounds(PlanTier.Plus, "Все звуки Memory", "57 звуков уведомлений в девяти стилях: маримба, ханг, лоу-фай, синт, 8-бит, природа…"),
     PrismLong(PlanTier.Plus, "Ролики до 60 секунд", "Бесплатно — 15 и 30 секунд."),
     PrismFilters(PlanTier.Plus, "Все фильтры PRISM", "12 фильтров вместо четырёх."),
     PrismAdjust(PlanTier.Plus, "Цветокоррекция", "Яркость, контраст, насыщенность и тепло ролика."),
@@ -92,6 +92,17 @@ enum class PremiumFeature(val tier: PlanTier, private val ru: String, private va
 }
 
 object Premium {
+    /**
+     * Memory+ включён. Пока выключен — всё бесплатно: премиум-функции открыты
+     * всем, экрана тарифов, карточки в профиле и шторки нет, темы о Memory+
+     * в гиде скрыты. Включить — true (и проверить оплату через магазины).
+     */
+    @Volatile
+    var enabled: Boolean = false
+
+    /** Действующий тариф, пока Memory+ выключен: открыто всё. */
+    val OPEN_TIER: PlanTier get() = PlanTier.Business
+
     const val TRIAL_DAYS = 3
 
     const val FREE_PINS = 3
@@ -109,7 +120,6 @@ object Premium {
     const val HI_RES = 2
 
     val FREE_BACKDROPS = setOf(BackdropStyle.Cosmos, BackdropStyle.Nebula, BackdropStyle.Aurora, BackdropStyle.Plain)
-    val FREE_SOUNDS = setOf(NotifySound.Crystal, NotifySound.System, NotifySound.Silent)
     val FREE_FILTERS = setOf(VideoFilter.None, VideoFilter.Crystal, VideoFilter.Lilac, VideoFilter.Night, VideoFilter.Noir)
     val FREE_LENGTHS = setOf(15, 30)
 

@@ -11,9 +11,12 @@ final class Round17Tests: XCTestCase {
     override func setUp() {
         super.setUp()
         L10n.shared.setLanguage(.ru)
+        // Memory+ пока скрыт; здесь проверяем, как он работает включённым
+        Premium.enabled = true
     }
 
     override func tearDown() {
+        Premium.enabled = false
         L10n.shared.setLanguage(.ru)
         super.tearDown()
     }

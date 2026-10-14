@@ -1,6 +1,8 @@
 package ru.wishka.memory.data
 
 import android.content.Context
+import ru.wishka.memory.i18n.L10n
+import ru.wishka.memory.i18n.Lang
 import ru.wishka.memory.i18n.t
 
 /**
@@ -13,12 +15,12 @@ import ru.wishka.memory.i18n.t
  */
 object Legal {
     /** Версия документов: поменялась — каждый вошедший заново принимает их. */
-    const val VERSION = "2026-10-12"
+    const val VERSION = "2026-10-14"
 
     /** С какого возраста можно пользоваться Memory (и рейтинг в магазинах). */
     const val MIN_AGE = 16
 
-    const val OPERATOR = "[Название оператора: ООО «…» или ИП …, ИНН …]"
+    const val OPERATOR = "[Название оператора: ООО «…» / ИП …, ՀՎՀՀ …]"
     const val PRIVACY_EMAIL = "[privacy@домен]"
     const val ABUSE_EMAIL = "[abuse@домен]"
     /** Где опубликованы документы (GitHub Pages из docs или свой домен). */
@@ -39,11 +41,23 @@ enum class LegalDoc(val id: String, private val ru: String) {
     ;
 
     val title: String get() = t(ru)
-    val file: String get() = "$id.md"
+    /**
+     * Файл на языке интерфейса: terms.hy.md (армянский — основная редакция),
+     * terms.md (русский), terms.en.md (английский).
+     */
+    val file: String get() = fileFor(L10n.lang)
 
-    /** Текст из assets; документы — по-русски (их требует российское право). */
+    fun fileFor(lang: Lang): String = when (lang) {
+        Lang.Hy -> "$id.hy.md"
+        Lang.En -> "$id.en.md"
+        else -> "$id.md"
+    }
+
+    /** Текст из assets на языке интерфейса; нет перевода — русская редакция. */
     fun load(context: Context): String =
-        runCatching { context.assets.open(file).bufferedReader().use { it.readText() } }.getOrDefault("")
+        runCatching { context.assets.open(file).bufferedReader().use { it.readText() } }
+            .recoverCatching { context.assets.open("$id.md").bufferedReader().use { it.readText() } }
+            .getOrDefault("")
 }
 
 /**

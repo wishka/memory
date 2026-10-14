@@ -1,7 +1,8 @@
-@file:OptIn(UnstableApi::class, ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class)
 
 package ru.wishka.memory.ui.prism.create
 
+import androidx.annotation.OptIn as AndroidOptIn
 import android.net.Uri
 import android.view.ViewGroup
 import androidx.compose.foundation.Image
@@ -104,6 +105,7 @@ import ru.wishka.memory.ui.theme.Unbounded
 import java.io.File
 
 /** Инструменты редактора — вкладки внизу. */
+@AndroidOptIn(UnstableApi::class)
 enum class EditorTool(val title: String, val icon: LineIcon) {
     Trim("Обрезка", LineIcon.Scissors),
     Speed("Скорость", LineIcon.Speed),
@@ -123,6 +125,7 @@ enum class EditorTool(val title: String, val icon: LineIcon) {
  * показывает их сразу (цвет, кадр, скорость, звук — через ExoPlayer,
  * текст и стикеры — поверх, их можно двигать пальцем).
  */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 fun PrismEditor(
     /** Memory+: все фильтры и цветокоррекция. */
@@ -323,8 +326,10 @@ fun PrismEditor(
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 fun speedTitle(s: Float): String = (if (s % 1f == 0f) "${s.toInt()}" else "$s".replace('.', ',')) + "×"
 
+@AndroidOptIn(UnstableApi::class)
 private fun percent(v: Float) = "${(v * 100).toInt()}%"
 
 /**
@@ -333,6 +338,7 @@ private fun percent(v: Float) = "${(v * 100).toInt()}%"
  * плеером. Эффекты меняются с небольшой задержкой: плеер собирается
  * заново, пока человек тянет ползунок, это было бы слишком часто.
  */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun EditorPreview(edit: VideoEdit, musicPath: String?, modifier: Modifier) {
     val context = LocalContext.current
@@ -397,6 +403,7 @@ private fun EditorPreview(edit: VideoEdit, musicPath: String?, modifier: Modifie
 }
 
 /** Текст и стикеры поверх кадра: центр каждого — в (x, y); тянется пальцем. */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun OverlayLayer(
     overlays: List<VideoOverlay>,
@@ -441,6 +448,7 @@ private fun OverlayLayer(
 }
 
 /** Текст или стикер так же, как он будет нарисован в файле (OverlayPainter). */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 fun OverlayText(o: VideoOverlay, fontSize: androidx.compose.ui.unit.TextUnit) {
     val color = Color(o.color)
@@ -458,6 +466,7 @@ fun OverlayText(o: VideoOverlay, fontSize: androidx.compose.ui.unit.TextUnit) {
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun TrimPanel(edit: VideoEdit, onChange: (Long, Long) -> Unit) {
     val total = edit.sourceDurationMs.toFloat()
@@ -486,6 +495,7 @@ private fun TrimPanel(edit: VideoEdit, onChange: (Long, Long) -> Unit) {
     Text(t("PRISM — до минуты. Перетащите края, чтобы оставить нужное."), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun FramePanel(edit: VideoEdit, update: ((VideoEdit) -> VideoEdit) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -498,6 +508,7 @@ private fun FramePanel(edit: VideoEdit, update: ((VideoEdit) -> VideoEdit) -> Un
 }
 
 /** Фильтр: образец цвета (сиреневый кружок через матрицу фильтра) и название. */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun FilterChip(f: VideoFilter, active: Boolean, locked: Boolean = false, onClick: () -> Unit) {
     val sample = remember(f) {
@@ -521,11 +532,13 @@ private fun FilterChip(f: VideoFilter, active: Boolean, locked: Boolean = false,
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun AdjustSlider(title: String, value: Float, onChange: (Float) -> Unit) {
     LabeledSlider(title, value, -1f..1f, "${if (value > 0) "+" else ""}${(value * 100).toInt()}", onChange)
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 fun LabeledSlider(title: String, value: Float, range: ClosedFloatingPointRange<Float>, valueText: String, onChange: (Float) -> Unit) {
     Column {
@@ -537,6 +550,7 @@ fun LabeledSlider(title: String, value: Float, range: ClosedFloatingPointRange<F
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 fun sliderColors() = SliderDefaults.colors(
     thumbColor = Palette.Ink,
@@ -544,6 +558,7 @@ fun sliderColors() = SliderDefaults.colors(
     inactiveTrackColor = Palette.Plum,
 )
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun TextPanel(
     selected: VideoOverlay?,
@@ -566,6 +581,7 @@ private fun TextPanel(
 }
 
 /** Цвет, оформление и шрифт текста. */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun OverlayStyleControls(o: VideoOverlay, onChange: (VideoOverlay) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -586,6 +602,7 @@ private fun OverlayStyleControls(o: VideoOverlay, onChange: (VideoOverlay) -> Un
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun StickerPanel(
     selected: VideoOverlay?,
@@ -607,6 +624,7 @@ private fun StickerPanel(
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun MusicPanel(edit: VideoEdit, tracks: List<MusicTrack>, update: ((VideoEdit) -> VideoEdit) -> Unit, onLibrary: () -> Unit) {
     // Медиатека — открытая музыка Jamendo и Openverse прямо из редактора
@@ -647,6 +665,7 @@ private fun MusicPanel(edit: VideoEdit, tracks: List<MusicTrack>, update: ((Vide
     LabeledSlider(t("Громкость музыки"), edit.musicVolume, 0f..1f, percent(edit.musicVolume)) { v -> update { it.copy(musicVolume = v) } }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun CoverPanel(edit: VideoEdit, onChange: (Long) -> Unit) {
     val frame by produceState<ImageBitmap?>(null, edit.sourcePath, edit.coverMs / 250) {
@@ -671,6 +690,7 @@ private fun CoverPanel(edit: VideoEdit, onChange: (Long) -> Unit) {
 }
 
 /** Ввод текста: поле, цвет, оформление и шрифт — с образцом сверху. */
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun TextEditorSheet(draft: VideoOverlay, onDone: (VideoOverlay) -> Unit, onCancel: () -> Unit) {
     var o by remember { mutableStateOf(draft) }
@@ -704,6 +724,7 @@ private fun TextEditorSheet(draft: VideoOverlay, onDone: (VideoOverlay) -> Unit,
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 private fun ToolButton(icon: LineIcon, title: String, active: Boolean = false, onClick: () -> Unit) {
     Row(
@@ -719,6 +740,7 @@ private fun ToolButton(icon: LineIcon, title: String, active: Boolean = false, o
     }
 }
 
+@AndroidOptIn(UnstableApi::class)
 @Composable
 fun RoundTool(icon: LineIcon, onClick: () -> Unit) {
     Box(

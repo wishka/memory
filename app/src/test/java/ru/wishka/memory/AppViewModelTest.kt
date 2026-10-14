@@ -697,7 +697,9 @@ class AppViewModelTest {
         repeat(4) { vm.publish("Момент $it") }
         val mine = vm.state.value.myPosts
         mine.forEach { vm.toggleProfilePin(it.id) }
-        assertEquals(AppViewModel.MAX_PINS, vm.state.value.profilePins.size)
+        // Бесплатно — три; пока Memory+ скрыт, открыто всё (шесть)
+        val pinLimit = if (ru.wishka.memory.data.Premium.enabled) AppViewModel.MAX_PINS else ru.wishka.memory.data.Premium.PLUS_PINS
+        assertEquals(minOf(mine.size, pinLimit), vm.state.value.profilePins.size)
         val foreign = vm.state.value.posts.first { it.author.id != vm.state.value.me.id }
         vm.toggleProfilePin(foreign.id)
         assertFalse(foreign.id in vm.state.value.profilePins)

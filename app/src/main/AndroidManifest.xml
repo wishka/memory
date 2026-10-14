@@ -58,7 +58,7 @@
             android:value="false" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="memory_default" />
+            android:value="memory_default_v2" />
         <!-- Вырезка объекта для стикеров: модель ML Kit скачивается через
              Google Play заранее, при установке, а не при первом стикере. -->
         <meta-data

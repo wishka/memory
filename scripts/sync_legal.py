@@ -22,9 +22,11 @@ def main() -> int:
     check = "--check" in sys.argv
     stale = []
     DST.mkdir(parents=True, exist_ok=True)
-    for name in APP_DOCS:
-        src = SRC / f"{name}.md"
-        dst = DST / f"{name}.md"
+    # Каждый документ — на трёх языках: name.hy.md (основной), name.md (русский), name.en.md
+    files = [f"{name}{suffix}.md" for name in APP_DOCS for suffix in ("", ".hy", ".en")]
+    for file in files:
+        src = SRC / file
+        dst = DST / file
         text = src.read_text(encoding="utf-8")
         if not dst.exists() or dst.read_text(encoding="utf-8") != text:
             stale.append(dst.relative_to(ROOT))

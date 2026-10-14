@@ -233,7 +233,8 @@ fun ProfileScreen(
                     }
                 }
             }
-            item { ru.wishka.memory.ui.premium.PremiumProfileCard(vm, state) }
+            // Memory+ пока скрыт — всё бесплатно
+            if (ru.wishka.memory.data.Premium.enabled) item { ru.wishka.memory.ui.premium.PremiumProfileCard(vm, state) }
             item { AchievementsCard(state) }
             item { ProfileContentTabs(vm, state) }
             item { PeopleRows(vm, state) }

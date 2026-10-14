@@ -146,7 +146,7 @@ enum PremiumFeature: String, CaseIterable, Identifiable {
         case .stickerPacks: return "Коллекции стикеров"
         case .backdrops: return "Все фоны переписок"
         case .chatBackdrop: return "Фон для отдельного чата"
-        case .sounds: return "Звуки Memory"
+        case .sounds: return "Все звуки Memory"
         case .prismLong: return "Ролики до 60 секунд"
         case .prismFilters: return "Все фильтры PRISM"
         case .prismAdjust: return "Цветокоррекция"
@@ -169,7 +169,7 @@ enum PremiumFeature: String, CaseIterable, Identifiable {
         case .stickerPacks: return "Бесплатно — две коллекции, в Memory+ — сколько угодно."
         case .backdrops: return "Все 10 фонов коллекции и своё фото."
         case .chatBackdrop: return "У каждой переписки — свой фон."
-        case .sounds: return "Все 8 звуков уведомлений: комета, луна, призма, орбита…"
+        case .sounds: return "57 звуков уведомлений в девяти стилях: маримба, ханг, лоу-фай, синт, 8-бит, природа…"
         case .prismLong: return "Бесплатно — 15 и 30 секунд."
         case .prismFilters: return "12 фильтров вместо четырёх."
         case .prismAdjust: return "Яркость, контраст, насыщенность и тепло ролика."
@@ -190,6 +190,15 @@ enum PremiumFeature: String, CaseIterable, Identifiable {
 
 /// Лимиты бесплатного тарифа, цены и состав тарифов.
 enum Premium {
+    /// Memory+ включён. Пока выключен — всё бесплатно: премиум-функции открыты
+    /// всем, экрана тарифов, карточки в профиле и шторки нет, темы о Memory+
+    /// в гиде скрыты. Включить — true (и проверить оплату через StoreKit).
+    /// Тот же флаг — Premium.enabled на Android.
+    static var enabled = false
+
+    /// Действующий тариф, пока Memory+ выключен: открыто всё.
+    static var openTier: PlanTier { .business }
+
     static let trialDays = 3
 
     static let freePins = 3
@@ -207,7 +216,6 @@ enum Premium {
     static let hiRes = 2
 
     static let freeBackdrops: Set<BackdropStyle> = [.cosmos, .nebula, .aurora, .plain]
-    static let freeSounds: Set<NotifySound> = [.crystal, .system, .silent]
     static let freeFilters: Set<VideoFilter> = [.none, .crystal, .lilac, .night, .noir]
     static let freeLengths: Set<Int> = [15, 30]
 

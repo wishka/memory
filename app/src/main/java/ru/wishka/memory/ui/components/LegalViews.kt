@@ -141,7 +141,7 @@ fun CheckRow(checked: Boolean, text: String, onChange: (Boolean) -> Unit) {
 }
 
 /**
- * Три отдельные галочки, как требует 152-ФЗ: возраст, соглашение с
+ * Три отдельные галочки: возраст, соглашение с
  * правилами и — отдельно — согласие на обработку данных.
  */
 class ConsentState(age: Boolean = false, terms: Boolean = false, data: Boolean = false) {

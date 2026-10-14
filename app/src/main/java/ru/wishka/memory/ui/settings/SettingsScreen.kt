@@ -519,7 +519,7 @@ private fun SoundsPage(vm: AppViewModel, state: UiState) {
                 NavRow(LineIcon.Volume, kind.soundTitle, current.getValue(kind).title) { editing = kind }
             }
         }
-        Hint(t("Звуки Memory — стекло, звёзды и космос, в стиле приложения. Звук играет и в пуше, и в плашке, когда приложение открыто."))
+        Hint(t("57 звуков Memory в девяти стилях — от стекла и маримбы до лоу-фай и 8-бита. Звук играет и в пуше, и в плашке, когда приложение открыто."))
         if (!state.notifications.all) Hint(t("Сейчас все уведомления выключены — звуков не будет."))
     }
     editing?.let { kind ->
@@ -529,19 +529,27 @@ private fun SoundsPage(vm: AppViewModel, state: UiState) {
             title = { Text(kind.soundTitle, style = MaterialTheme.typography.titleMedium, color = Palette.Ink) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    NotifySound.entries.forEach { sound ->
-                        // Бесплатно — Кристалл, «Как в телефоне», «Без звука» и звук по умолчанию
-                        val locked = state.plan == ru.wishka.memory.data.PlanTier.Free &&
-                            sound !in ru.wishka.memory.data.Premium.FREE_SOUNDS && sound != NotifySound.default(kind)
-                        ChoiceRow(
-                            sound.title + (if (sound == NotifySound.default(kind)) " · " + t("по умолчанию") else "") + (if (locked) " · PLUS" else ""),
-                            current.getValue(kind) == sound,
-                        ) {
-                            SoundPlayer.play(context, sound)
-                            if (!locked || vm.require(ru.wishka.memory.data.PremiumFeature.Sounds)) {
-                                MemoryNotifications.changeSound(context, kind, sound)
-                                version++
-                            } else editing = null
+                    // По стилям: стекло, маримба, пузыри… и в конце — звук телефона и тишина
+                    ru.wishka.memory.data.SoundStyle.entries.forEach { style ->
+                        Text(
+                            style.title.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.Lilac,
+                            modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 2.dp),
+                        )
+                        NotifySound.inStyle(style).forEach { sound ->
+                            // Бесплатно — по одному-два звука каждого стиля и звук по умолчанию
+                            val locked = state.plan == ru.wishka.memory.data.PlanTier.Free && !sound.free && sound != NotifySound.default(kind)
+                            ChoiceRow(
+                                sound.title + (if (sound == NotifySound.default(kind)) " · " + t("по умолчанию") else "") + (if (locked) " · PLUS" else ""),
+                                current.getValue(kind) == sound,
+                            ) {
+                                SoundPlayer.play(context, sound)
+                                if (!locked || vm.require(ru.wishka.memory.data.PremiumFeature.Sounds)) {
+                                    MemoryNotifications.changeSound(context, kind, sound)
+                                    version++
+                                } else editing = null
+                            }
                         }
                     }
                 }

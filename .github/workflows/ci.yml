@@ -42,6 +42,10 @@ jobs:
       - name: Гид совпадает
         run: python3 scripts/sync_guide.py --check
 
+      # Список звуков собран из scripts/sounds/catalog.py (Kotlin и Swift)
+      - name: Звуки совпадают
+        run: python3 scripts/make_sounds.py --check
+
       - name: Сборка
         env:
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}

@@ -426,7 +426,7 @@ private struct SoundsPage: View {
                 NavRow(icon: .volume, title: kind.soundTitle, value: (current[kind] ?? NotifySound.default(kind)).title) { editing = kind }
             }
         }
-        Hint(text: t("Звуки Memory — стекло, звёзды и космос, в стиле приложения. Звук играет и в пуше, и в плашке, когда приложение открыто."))
+        Hint(text: "57 звуков Memory в девяти стилях — от стекла и маримбы до лоу-фай и 8-бита. Звук играет и в пуше, и в плашке, когда приложение открыто.")
         if !model.state.notifications.all {
             Hint(text: t("Сейчас все уведомления выключены — звуков не будет."))
         }
@@ -470,11 +470,18 @@ private struct SoundChooser: View {
             .padding(.horizontal, 16)
             .padding(.top, 18)
             ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(NotifySound.allCases.enumerated()), id: \.element) { i, sound in
+                VStack(alignment: .leading, spacing: 0) {
+                    // По стилям: стекло, маримба, пузыри… и в конце — звук телефона и тишина
+                    ForEach(SoundStyle.allCases) { style in
+                        Text(style.title.uppercased())
+                            .textStyle(.label, Palette.lilac)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 16)
+                            .padding(.bottom, 4)
+                        ForEach(Array(NotifySound.inStyle(style).enumerated()), id: \.element) { i, sound in
                         if i > 0 { Divider() }
-                        // Бесплатно — Кристалл, «Как в телефоне», «Без звука» и звук по умолчанию
-                        let locked = free && !Premium.freeSounds.contains(sound) && sound != NotifySound.default(kind)
+                        // Бесплатно — по одному-два звука каждого стиля и звук по умолчанию
+                        let locked = free && !sound.free && sound != NotifySound.default(kind)
                         ChoiceRow(
                             title: sound.title + (sound == NotifySound.default(kind) ? " · " + t("по умолчанию") : "") + (locked ? " · PLUS" : ""),
                             selected: active == sound
@@ -488,6 +495,7 @@ private struct SoundChooser: View {
                                 chosen = sound
                                 onPick(sound)
                             }
+                        }
                         }
                     }
                 }

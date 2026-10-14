@@ -677,7 +677,9 @@ final class AppModelTests: XCTestCase {
         for i in 0..<4 { vm.publish("Момент \(i)") }
         let mine = vm.state.myPosts
         mine.forEach { vm.toggleProfilePin($0.id) }
-        XCTAssertEqual(vm.state.profilePins.count, AppModel.maxPins)
+        // Бесплатно — три; пока Memory+ скрыт, открыто всё (шесть)
+        let pinLimit = Premium.enabled ? AppModel.maxPins : Premium.plusPins
+        XCTAssertEqual(vm.state.profilePins.count, min(mine.count, pinLimit))
         let foreign = try XCTUnwrap(vm.state.posts.first { $0.author.id != vm.state.me.id })
         vm.toggleProfilePin(foreign.id)
         XCTAssertFalse(vm.state.profilePins.contains(foreign.id))

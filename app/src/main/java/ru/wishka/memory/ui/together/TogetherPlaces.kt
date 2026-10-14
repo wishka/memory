@@ -298,7 +298,11 @@ private fun CacheDialog(vm: AppViewModel, state: UiState, geo: Geo, c: Cache, on
 private val dateFormat = SimpleDateFormat("EEEE, d MMMM · HH:mm", Locale("ru"))
 
 internal fun outingTime(ms: Long): String =
-    (if (ru.wishka.memory.i18n.L10n.english) SimpleDateFormat("EEEE, MMMM d · HH:mm", Locale.US) else dateFormat).format(Date(ms))
+    when {
+        ru.wishka.memory.i18n.L10n.english -> SimpleDateFormat("EEEE, MMMM d · HH:mm", Locale.US)
+        ru.wishka.memory.i18n.L10n.armenian -> SimpleDateFormat("EEEE, d MMMM · HH:mm", Locale("hy", "AM"))
+        else -> dateFormat
+    }.format(Date(ms))
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

@@ -274,6 +274,8 @@ func agoTitle(_ minutes: Int) -> String {
 /// По-английски — «1 post» / «5 posts»: формы берутся из словаря.
 func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
     if L10n.shared.english { return "\(n) \(t(n == 1 ? one : many))" }
+    // По-армянски после числа — единственное число: «5 գրառում»
+    if L10n.shared.armenian { return "\(n) \(t(one))" }
     let mod10 = n % 10
     let mod100 = n % 100
     let word: String
@@ -481,7 +483,7 @@ struct Privacy: Equatable, Codable {
         set { closedProfileFlag = newValue }
     }
 
-    /// Выключены — полка ничего не подбирает (149-ФЗ: отказ от рекомендаций).
+    /// Выключены — полка ничего не подбирает (отказ от рекомендаций).
     var personalRecs: Bool {
         get { personalRecsFlag ?? true }
         set { personalRecsFlag = newValue }

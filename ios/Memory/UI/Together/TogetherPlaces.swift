@@ -456,9 +456,22 @@ private let outingFormatterEn: DateFormatter = {
     return f
 }()
 
+private let outingFormatterHy: DateFormatter = {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "hy_AM")
+    f.dateFormat = "EEEE, d MMMM · HH:mm"
+    return f
+}()
+
 /// «суббота, 17 октября · 11:00».
 func outingTime(_ date: Date) -> String {
-    (L10n.shared.english ? outingFormatterEn : outingFormatterRu).string(from: date)
+    let f: DateFormatter
+    switch L10n.shared.lang {
+    case .en: f = outingFormatterEn
+    case .hy: f = outingFormatterHy
+    default: f = outingFormatterRu
+    }
+    return f.string(from: date)
 }
 
 struct OutingsSection: View {
