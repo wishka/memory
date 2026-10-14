@@ -171,4 +171,6 @@ dependencies {
     implementation("io.sentry:sentry-android:8.58.0")
 
     testImplementation("junit:junit:4.13.2")
+    // Настоящий org.json для юнит-тестов: в android.jar он пустой («not mocked»)
+    testImplementation("org.json:json:20240303")
 }
