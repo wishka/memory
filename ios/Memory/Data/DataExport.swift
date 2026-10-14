@@ -52,7 +52,7 @@ enum DataExport {
         atts += s.recentGifs ?? []
         atts += (s.stories ?? []).compactMap(\.media)
         var paths: [String] = atts.flatMap { [$0.fileName] + $0.frames }
-        paths += (s.stickers ?? []).flatMap { [$0.fileName] + ($0.frameFiles ?? []) }
+        paths += (s.stickers ?? []).flatMap { (st) -> [String] in [st.fileName] + (st.frameFiles ?? []) }
         paths += (s.tracks ?? []).map(\.fileName)
         paths += [avatar, s.backdrop?.photo ?? ""]
         paths += s.chats.compactMap { $0.backdrop?.photo }
@@ -191,8 +191,16 @@ final class ZipWriter {
         self.sink = sink
         let c = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
         let year = max(1980, c.year ?? 1980)
-        dosTime = UInt16(((c.hour ?? 0) << 11) | ((c.minute ?? 0) << 5) | ((c.second ?? 0) / 2))
-        dosDate = UInt16(((year - 1980) << 9) | ((c.month ?? 1) << 5) | (c.day ?? 1))
+        // По частям: одним выражением компилятор Swift не успевает вывести типы
+        let hour: Int = c.hour ?? 0
+        let minute: Int = c.minute ?? 0
+        let second: Int = c.second ?? 0
+        let month: Int = c.month ?? 1
+        let day: Int = c.day ?? 1
+        let time: Int = (hour << 11) | (minute << 5) | (second / 2)
+        let dateBits: Int = ((year - 1980) << 9) | (month << 5) | day
+        dosTime = UInt16(time)
+        dosDate = UInt16(dateBits)
     }
 
     func add(_ name: String, _ body: Data) throws {

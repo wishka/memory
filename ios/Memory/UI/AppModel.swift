@@ -1344,7 +1344,9 @@ final class AppModel {
             if !s.stories.contains(where: { $0.authorId == f.id && $0.active(now) }) && Int.random(in: 0..<3, using: &rng) != 0 {
                 let count = 1 + Int.random(in: 0..<3, using: &rng)
                 for i in 0..<count {
-                    let ago = Int64.random(in: 10 * 60_000..<20 * 60 * 60_000, using: &rng) - Int64(i)
+                    let low: Int64 = 600_000          // 10 минут
+                    let high: Int64 = 72_000_000      // 20 часов
+                    let ago: Int64 = Int64.random(in: low..<high, using: &rng) - Int64(i)
                     let close = Int.random(in: 0..<5, using: &rng) == 0
                     added.append(demoStory(f.id, at: now.addingTimeInterval(-Double(ago) / 1000), close: close, using: &rng))
                 }
