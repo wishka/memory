@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.prism.create
 
+import ru.wishka.memory.ui.components.label
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.text.style.TextOverflow
 import ru.wishka.memory.data.MusicTrack
@@ -299,7 +300,7 @@ fun PrismCamera(
                 Box(
                     modifier = Modifier.size(28.dp).clip(CircleShape).clickable { music = null },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Close, Palette.Mist, size = 14.dp) }
+                ) { Glyph(LineIcon.Close, Palette.Mist, size = 14.dp, description = LineIcon.Close.label) }
             }
         }
 
@@ -412,7 +413,7 @@ private fun CamButton(icon: LineIcon, size: Int = 44, active: Boolean = false, o
             .glass(CircleShape, strong = active)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Glyph(icon, if (active) Palette.Ink else Palette.Lilac, size = (size * 0.45f).dp) }
+    ) { Glyph(icon, if (active) Palette.Ink else Palette.Lilac, size = (size * 0.45f).dp, description = icon.label) }
 }
 
 @Composable

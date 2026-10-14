@@ -217,7 +217,7 @@ fun VoiceBubble(file: Attachment, modifier: Modifier = Modifier) {
                 .background(Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean)))
                 .clickable { val p = obtain(); if (p.isPlaying) p.pause() else p.play() },
             contentAlignment = Alignment.Center,
-        ) { Glyph(if (playing) LineIcon.Pause else LineIcon.Play, Palette.Ink, size = 18.dp) }
+        ) { Glyph(if (playing) LineIcon.Pause else LineIcon.Play, Palette.Ink, size = 18.dp, description = (if (playing) LineIcon.Pause else LineIcon.Play).label) }
         Spacer(Modifier.width(10.dp))
         Waveform(
             file.waveform, progress, Palette.Ink,
@@ -262,7 +262,7 @@ fun RecordingBar(elapsedMs: Long, levels: List<Int>, onCancel: () -> Unit, onSen
         Box(
             modifier = Modifier.size(50.dp).clip(CircleShape).glass(CircleShape).clickable(onClick = onCancel),
             contentAlignment = Alignment.Center,
-        ) { Glyph(LineIcon.Trash, Palette.PearlPink, size = 22.dp) }
+        ) { Glyph(LineIcon.Trash, Palette.PearlPink, size = 22.dp, description = LineIcon.Trash.label) }
         Spacer(Modifier.width(10.dp))
         Row(
             modifier = Modifier
@@ -286,6 +286,6 @@ fun RecordingBar(elapsedMs: Long, levels: List<Int>, onCancel: () -> Unit, onSen
                 .background(Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean)))
                 .clickable(onClick = onSend),
             contentAlignment = Alignment.Center,
-        ) { Glyph(LineIcon.Send, Palette.Ink) }
+        ) { Glyph(LineIcon.Send, Palette.Ink, description = LineIcon.Send.label) }
     }
 }

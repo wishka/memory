@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.prism
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.ui.FriendState
 import ru.wishka.memory.ui.components.FriendButton
 import ru.wishka.memory.i18n.t
@@ -38,6 +39,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -125,7 +129,7 @@ fun PrismScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
             .glass(CircleShape, strong = true)
             .clickable { vm.openPrismCreator() },
         contentAlignment = Alignment.Center,
-    ) { Glyph(LineIcon.Plus, Palette.Ink, size = 22.dp) }
+    ) { Glyph(LineIcon.Plus, Palette.Ink, size = 22.dp, description = LineIcon.Plus.label) }
     }
 
     confirmDelete?.let { prism ->
@@ -153,7 +157,8 @@ private fun PrismTabLabel(text: String, active: Boolean, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
+            .semantics { selected = active }
             .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -306,7 +311,7 @@ private fun PrismPage(
                 Spacer(Modifier.width(10.dp))
                 if (friend != null) FriendButton(friend, prism.author.name, onFriend)
             }
-            Text(prism.caption, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+            ru.wishka.memory.ui.components.RichText(prism.caption)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Glyph(LineIcon.Music, Palette.Lilac, size = 16.dp)
                 Spacer(Modifier.width(6.dp))
@@ -328,7 +333,9 @@ private fun SideButton(icon: LineIcon, label: String, onClick: (() -> Unit)?, ic
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clip(CircleShape)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick) else Modifier)
+            // «Нравится, 1,2 тыс.», «Комментарии, 40», «Поделиться»
+            .semantics(mergeDescendants = true) { contentDescription = if (icon.label == label) label else icon.label + ", " + label }
             .padding(4.dp),
     ) {
         if (iconContent != null) iconContent() else Glyph(icon, Palette.Ink, size = 30.dp)

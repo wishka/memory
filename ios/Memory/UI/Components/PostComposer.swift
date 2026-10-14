@@ -66,6 +66,9 @@ struct PostComposer: View {
                 }
                 GlassField(placeholder: checkIn != nil ? t("Пара слов к чек-ину") : media.isEmpty ? t("…или просто напишите") : placeholder,
                            text: $text, limit: 2000)
+                // «@ве…» — подсказки, кого упомянуть
+                MentionSuggestions(text: $text)
+                    .padding(.horizontal, 12)
                 if let poll {
                     PendingPoll(draft: poll) { self.poll = nil }
                         .padding(.horizontal, 12)

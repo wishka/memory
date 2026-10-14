@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.groups
 
+import ru.wishka.memory.ui.components.label
 import android.widget.Toast
 import ru.wishka.memory.i18n.tf
 import ru.wishka.memory.i18n.t
@@ -335,5 +336,5 @@ internal fun RoundGlass(icon: LineIcon, onClick: () -> Unit) {
             .glass(CircleShape, strong = true)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Glyph(icon, Palette.Ink) }
+    ) { Glyph(icon, Palette.Ink, description = icon.label) }
 }

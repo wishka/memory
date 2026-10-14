@@ -109,6 +109,14 @@ object Nudges {
         return Nudge(NudgeKind.Reactions, person.name, text, NudgeTarget.Post, post.id)
     }
 
+    /** Друг начал прямой эфир — нажатие открывает эфир. */
+    fun liveStarted(friend: User, title: String): Nudge =
+        Nudge(NudgeKind.Friends, friend.name, tf(g(friend, "%s начал эфир: %s", "%s начала эфир: %s"), firstName(friend), title), NudgeTarget.Person, friend.id.toLong())
+
+    /** Комментарий к вашей записи (или упоминание в нём). */
+    fun commented(person: User, post: Post, text: String): Nudge =
+        Nudge(NudgeKind.Reactions, person.name, tf(g(person, "%s прокомментировал: %s", "%s прокомментировала: %s"), firstName(person), text.take(80)), NudgeTarget.Post, post.id)
+
     /** Заявка в друзья ко мне; common — общие интересы, если есть. */
     fun followRequest(person: User, common: List<String>) = Nudge(
         NudgeKind.Follows, person.name,

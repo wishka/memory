@@ -89,7 +89,7 @@ fun PostComposer(
                             .clip(CircleShape)
                             .clickable { checkIn = null },
                         contentAlignment = Alignment.Center,
-                    ) { Glyph(LineIcon.Close, Palette.Ink, size = 14.dp) }
+                    ) { Glyph(LineIcon.Close, Palette.Ink, size = 14.dp, description = LineIcon.Close.label) }
                 }
             }
             // Не «чистый лист»: сначала готовые сценарии — одно нажатие, и запись наполовину готова
@@ -105,6 +105,7 @@ fun PostComposer(
                 }
             }
             GlassField(text, { text = it.take(2000) }, if (checkIn != null) t("Пара слов к чек-ину") else if (media.isEmpty()) t("…или просто напишите") else placeholder)
+            MentionSuggestions(text, { text = it.take(2000) }, Modifier.padding(horizontal = 12.dp))
             poll?.let { p -> PendingPoll(p, onRemove = { poll = null }, modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()) }
             PendingAttachments(
                 media,
@@ -137,7 +138,7 @@ fun PostComposer(
                         .glass(CircleShape, strong = checkIn != null)
                         .clickable { choosingCheckIn = true },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Pin, Palette.Lilac, size = 20.dp) }
+                ) { Glyph(LineIcon.Pin, Palette.Lilac, size = 20.dp, description = LineIcon.Pin.label) }
                 Spacer(Modifier.width(10.dp))
                 Text(
                     when {

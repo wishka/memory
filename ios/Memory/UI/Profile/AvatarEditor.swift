@@ -42,6 +42,7 @@ struct EditableAvatar: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(LineIcon.camera.label)
         .glassActions($showMenu, actions: actions)
         .photosPicker(isPresented: $showGallery, selection: $galleryItem, matching: .images)
         .onChange(of: galleryItem) { _, item in

@@ -121,6 +121,34 @@ internal object GuideContent {
                 ),
             ),
             GuideTopic(
+                "activity", GuideText("Колокольчик: кто оценил и упомянул", "The bell: who liked and mentioned you", "Զանգակ․ ով հավանեց և նշեց ձեզ"),
+                listOf(
+                    GuideText("В «Ленте» вверху — колокольчик. Точка на нём — сколько нового.", "At the top of the Feed there’s a bell. The badge shows how much is new.", "«Լրահոսի» վերևում զանգակ է։ Նրա վրայի կետը ցույց է տալիս՝ որքան նոր բան կա։"),
+                    GuideText("Внутри — кто оценил и прокомментировал ваши записи, упомянул вас, позвал в друзья или начал эфир.", "Inside: who liked or commented on your posts, mentioned you, sent a friend request or went live.", "Ներսում՝ ով հավանեց կամ մեկնաբանեց ձեր գրառումները, նշեց ձեզ, ընկերության հայտ ուղարկեց կամ եթեր սկսեց։"),
+                    GuideText("Заявки в друзья можно принять прямо там. Нажатие на событие ведёт к записи или человеку.", "You can accept friend requests right there. Tapping an event opens the post or person.", "Ընկերության հայտերը կարող եք ընդունել հենց այնտեղ։ Իրադարձության վրա սեղմելը տանում է գրառմանը կամ մարդուն։"),
+                ),
+                tip = GuideText("Несколько «нравится» к одной записи складываются в одну строку.", "Several likes on one post are combined into a single line.", "Մեկ գրառման մի քանի հավանումները միավորվում են մեկ տողում։"),
+                action = GuideAction.Feed,
+            ),
+            GuideTopic(
+                "search", GuideText("Поиск, #теги и @упоминания", "Search, #tags and @mentions", "Որոնում, #պիտակներ և @նշումներ"),
+                listOf(
+                    GuideText("Лупа в «Ленте» — поиск людей, записей, групп и тегов.", "The magnifier in the Feed searches people, posts, groups and tags.", "«Լրահոսի» խոշորացույցը որոնում է մարդկանց, գրառումներ, խմբեր և պիտակներ։"),
+                    GuideText("Пишите #тег в записи — по нему записи найдут другие. Нажатие на тег открывает все записи с ним.", "Write a #tag in a post so others can find it. Tapping a tag shows all posts with it.", "Գրառման մեջ գրեք #պիտակ, որ ուրիշները գտնեն այն։ Պիտակի վրա սեղմելը ցույց է տալիս դրանով բոլոր գրառումները։"),
+                    GuideText("Наберите @ и начало имени — Memory подскажет человека. Он узнает об упоминании.", "Type @ and the start of a name — Memory suggests the person. They’ll be notified of the mention.", "Գրեք @ և անվան սկիզբը — Memory-ն կառաջարկի մարդուն։ Նա կիմանա նշման մասին։"),
+                ),
+                action = GuideAction.Feed,
+            ),
+            GuideTopic(
+                "edit-share", GuideText("Изменить запись и поделиться ссылкой", "Edit a post and share a link", "Խմբագրել գրառումը և կիսվել հղումով"),
+                listOf(
+                    GuideText("«⋯» на своей записи → «Изменить»: поправьте текст или уберите лишние фото. У записи появится пометка «изменено».", "“⋯” on your post → “Edit”: fix the text or remove extra photos. The post gets an “edited” mark.", "Ձեր գրառման «⋯» → «Խմբագրել»՝ ուղղեք տեքստը կամ հեռացրեք ավելորդ լուսանկարները։ Գրառման վրա կհայտնվի «խմբագրված» նշումը։"),
+                    GuideText("«⋯» на любой записи → «Поделиться ссылкой» или «Скопировать ссылку».", "“⋯” on any post → “Share link” or “Copy link”.", "Ցանկացած գրառման «⋯» → «Կիսվել հղումով» կամ «Պատճենել հղումը»։"),
+                    GuideText("Ссылка открывает запись в Memory, а без приложения — подскажет, как его поставить. Ссылку на профиль — «⋯» на странице человека.", "The link opens the post in Memory, or explains how to install the app. For a profile link — “⋯” on the person’s page.", "Հղումը բացում է գրառումը Memory-ում, իսկ առանց հավելվածի՝ կբացատրի, ինչպես տեղադրել այն։ Պրոֆիլի հղումը՝ մարդու էջի «⋯»։"),
+                ),
+                action = GuideAction.Feed,
+            ),
+            GuideTopic(
                 "photos", GuideText("Фото и видео на весь экран", "Full-screen photos and videos", "Լուսանկարներ և տեսանյութեր ամբողջ էկրանով"),
                 listOf(
                     GuideText("Нажмите на фото или видео — откроется на весь экран.", "Tap a photo or video to open it full screen.", "Սեղմեք լուսանկարին կամ տեսանյութին, և այն կբացվի ամբողջ էկրանով։"),
@@ -162,6 +190,16 @@ internal object GuideContent {
                 listOf(
                     GuideText("Поле вверху — то же, что в Ленте: фото, стикеры, чек-ины.", "The field at the top works like the Feed’s: photos, stickers, check-ins.", "Վերևի դաշտը նույնն է, ինչ Լրահոսում՝ լուսանկարներ, ստիկերներ, չեք-իններ։"),
                 ),
+            ),
+            GuideTopic(
+                "live", GuideText("Прямой эфир", "Live stream", "Ուղիղ եթեր"),
+                listOf(
+                    GuideText("«Истории» → «Эфир»: назовите эфир, выберите, кто видит, и нажмите «Начать».", "Stories → “Live”: name the stream, choose who can see it and tap “Start”.", "«Պատմություններ» → «Եթեր»՝ անվանեք եթերը, ընտրեք, ով է տեսնում, և սեղմեք «Սկսել»։"),
+                    GuideText("Друзья получат уведомление. Зрители пишут в чат эфира и шлют сердечки.", "Friends are notified. Viewers write in the live chat and send hearts.", "Ընկերները ծանուցում կստանան։ Դիտողները գրում են եթերի զրուցարանում և սրտիկներ ուղարկում։"),
+                    GuideText("Эфиры друзей — кружками с меткой «В ЭФИРЕ» над историями.", "Friends’ streams appear as circles marked LIVE above the stories.", "Ընկերների եթերները՝ «ԵԹԵՐ» նշումով շրջանակներ պատմությունների վերևում։"),
+                ),
+                tip = GuideText("Эфир не сохраняется: он есть, пока идёт. Пока сервера нет, видео видит только ведущий — это демо.", "Streams aren’t saved — they exist only while live. Until the server is ready, only the host sees the video — it’s a demo.", "Եթերը չի պահպանվում՝ այն կա, քանի դեռ ընթանում է։ Քանի դեռ սերվեր չկա, տեսանյութը տեսնում է միայն վարողը — սա դեմո է։"),
+                action = GuideAction.Stories,
             ),
         ),
     )
@@ -255,6 +293,16 @@ internal object GuideContent {
                     GuideText("Закреплённое видно полоской под шапкой.", "A pinned message shows as a strip under the header.", "Ամրացվածը երևում է վերնագրի տակ՝ շերտով։"),
                     GuideText("Нажатие на имя собеседника — его страница.", "Tap the other person’s name to open their page.", "Զրուցակցի անվանը սեղմելով՝ կբացվի նրա էջը։"),
                 ),
+            ),
+            GuideTopic(
+                "secret", GuideText("Шифрование и исчезающие сообщения", "Encryption and disappearing messages", "Գաղտնագրում և անհետացող հաղորդագրություններ"),
+                listOf(
+                    GuideText("«⋯» в переписке → «Сквозное шифрование»: сообщения читаете только вы двое.", "“⋯” in a chat → “End-to-end encryption”: only the two of you can read the messages.", "Նամակագրության «⋯» → «Ծայրից ծայր գաղտնագրում»՝ հաղորդագրությունները կարդում եք միայն դուք երկուսով։"),
+                    GuideText("«Код безопасности» — 60 цифр. Сверьте с собеседником: совпали — переписку никто не перехватывает.", "The “Safety code” is 60 digits. Compare it with your friend: if it matches, no one is intercepting.", "«Անվտանգության կոդը» 60 թվանշան է։ Համեմատեք զրուցակցի հետ՝ եթե համընկնում է, ոչ ոք չի որսում։"),
+                    GuideText("«Исчезающие» — новые сообщения исчезнут у обоих через 5 минут, час, день или неделю.", "“Disappearing” — new messages vanish for both of you after 5 minutes, an hour, a day or a week.", "«Անհետացող»՝ նոր հաղորդագրությունները կանհետանան երկուսի մոտ 5 րոպեից, ժամից, օրից կամ շաբաթից։"),
+                ),
+                tip = GuideText("Значки у времени: 🔒 — ушло зашифрованным, ⏱ — исчезнет.", "Icons by the time: 🔒 — sent encrypted, ⏱ — will disappear.", "Ժամի կողքի նշանները՝ 🔒 — ուղարկված է գաղտնագրված, ⏱ — կանհետանա։"),
+                action = GuideAction.Chats,
             ),
             GuideTopic(
                 "backdrop", GuideText("Фон переписки", "Chat background", "Զրույցի ֆոն"),
@@ -519,6 +567,24 @@ internal object GuideContent {
                 action = GuideAction.Privacy,
             ),
             GuideTopic(
+                "my-data", GuideText("Скачать мои данные", "Download my data", "Ներբեռնել իմ տվյալները"),
+                listOf(
+                    GuideText("Настройки → «Приватность» → «Скачать мои данные».", "Settings → “Privacy” → “Download my data”.", "Կարգավորումներ → «Գաղտնիություն» → «Ներբեռնել իմ տվյալները»։"),
+                    GuideText("Выберите, класть ли фото, видео и музыку, и место для архива — «Файлы», диск или флешка.", "Choose whether to include photos, videos and music, and where to save the archive — Files, a drive or a USB stick.", "Ընտրեք՝ ներառե՞լ լուսանկարները, տեսանյութերն ու երաժշտությունը, և արխիվի տեղը՝ «Ֆայլեր», սկավառակ կամ ֆլեշ։"),
+                    GuideText("В архиве — профиль, записи, переписка, группы, PRISM, полка и настройки. Пароля и кодов там нет.", "The archive has your profile, posts, chats, groups, PRISM, shelf and settings. No password or codes.", "Արխիվում՝ պրոֆիլ, գրառումներ, նամակագրություն, խմբեր, PRISM, դարակ և կարգավորումներ։ Գաղտնաբառ և կոդեր չկան։"),
+                ),
+                action = GuideAction.Privacy,
+            ),
+            GuideTopic(
+                "crashes", GuideText("Отчёты о сбоях и статистика", "Crash reports and statistics", "Խափանումների հաշվետվություններ և վիճակագրություն"),
+                listOf(
+                    GuideText("Настройки → «Приватность» → «Сбои и статистика»: два отдельных переключателя, по умолчанию выключены.", "Settings → “Privacy” → “Crashes and statistics”: two separate switches, off by default.", "Կարգավորումներ → «Գաղտնիություն» → «Խափանումներ և վիճակագրություն»՝ երկու առանձին անջատիչ, լռելյայն անջատված։"),
+                    GuideText("Отчёт о сбое — что сломалось и где в коде, без ваших записей и переписки.", "A crash report says what broke and where in the code — without your posts or chats.", "Խափանման հաշվետվությունը ցույց է տալիս՝ ինչ է խափանվել և որտեղ կոդում, առանց ձեր գրառումների և նամակագրության։"),
+                    GuideText("Статистика — раз в день счётчики вроде «опубликовано записей: 3», без текстов.", "Statistics — once a day, counters like “posts published: 3”, no texts.", "Վիճակագրություն՝ օրը մեկ հաշվիչներ, օրինակ՝ «հրապարակված գրառումներ՝ 3», առանց տեքստերի։"),
+                ),
+                action = GuideAction.Privacy,
+            ),
+            GuideTopic(
                 "report", GuideText("Пожаловаться", "Reporting", "Բողոքել"),
                 listOf(
                     GuideText("«Пожаловаться» есть у записи, комментария, ролика, сообщения и человека.", "“Report” is available on posts, comments, videos, messages and people.", "«Բողոքել» կոճակը կա գրառման, մեկնաբանության, տեսահոլովակի, հաղորդագրության և մարդու մոտ։"),
@@ -536,10 +602,11 @@ internal object GuideContent {
                 action = GuideAction.Blacklist,
             ),
             GuideTopic(
-                "password", GuideText("Пароль и удаление аккаунта", "Password and deleting your account", "Գաղտնաբառ և հաշվի ջնջում"),
+                "password", GuideText("Пароль, восстановление и удаление аккаунта", "Password, recovery and deleting your account", "Գաղտնաբառ, վերականգնում և հաշվի ջնջում"),
                 listOf(
                     GuideText("Настройки → «Безопасность»: сменить пароль.", "Settings → “Security”: change your password.", "Կարգավորումներ → «Անվտանգություն»՝ փոխել գաղտնաբառը։"),
-                    GuideText("Там же — удалить аккаунт: всё ваше будет стёрто с телефона без возврата.", "Also there: delete your account — everything of yours is erased from the phone for good.", "Այնտեղ է նաև հաշվի ջնջումը․ ձեր ամբողջ տվյալներն անվերադարձ կջնջվեն հեռախոսից։"),
+                    GuideText("Там же — коды восстановления (новые — по паролю) и почта: подтвердите её кодом из письма.", "Also there: recovery codes (new ones need your password) and email — confirm it with the code from the message.", "Այնտեղ են նաև վերականգնման կոդերը (նորերը՝ գաղտնաբառով) և էլ. փոստը՝ հաստատեք այն նամակի կոդով։"),
+                    GuideText("И удалить аккаунт: всё ваше будет стёрто с телефона без возврата.", "And delete your account: everything of yours is erased from the phone for good.", "Եվ ջնջել հաշիվը․ ձեր ամբողջ տվյալներն անվերադարձ կջնջվեն հեռախոսից։"),
                 ),
                 action = GuideAction.Security,
             ),
@@ -584,6 +651,15 @@ internal object GuideContent {
                 action = GuideAction.Language,
             ),
             GuideTopic(
+                "screen-reader", GuideText("Экранный диктор", "Screen reader", "Էկրանի ընթերցիչ"),
+                listOf(
+                    GuideText("Memory работает с TalkBack на Android и VoiceOver на iPhone: у кнопок-значков есть названия.", "Memory works with TalkBack on Android and VoiceOver on iPhone: icon buttons have names.", "Memory-ն աշխատում է TalkBack-ի (Android) և VoiceOver-ի (iPhone) հետ՝ պատկերակ-կոճակներն ունեն անուններ։"),
+                    GuideText("Карточки записей читаются целиком, «нравится» и комментарии — с числом, переключатели — со словами «вкл.» и «выкл.».", "Post cards are read as a whole, likes and comments with their counts, switches as on or off.", "Գրառումների քարտերը կարդացվում են ամբողջությամբ, հավանումներն ու մեկնաբանությունները՝ թվով, անջատիչները՝ միացված/անջատված։"),
+                    GuideText("Размер текста — Настройки → «Размер текста».", "Text size — Settings → “Text size”.", "Տեքստի չափը՝ Կարգավորումներ → «Տեքստի չափը»։"),
+                ),
+                action = GuideAction.Language,
+            ),
+            GuideTopic(
                 "ideas", GuideText("Идеи и ошибки", "Ideas and bugs", "Գաղափարներ և սխալներ"),
                 listOf(
                     GuideText("Настройки → «Друзья и идеи»: «Предложить идею» или «Сообщить об ошибке».", "Settings → “Friends & ideas”: “Suggest an idea” or “Report a bug”.", "Կարգավորումներ → «Ընկերներ և գաղափարներ»՝ «Առաջարկել գաղափար» կամ «Հայտնել սխալի մասին»։"),
@@ -613,8 +689,11 @@ internal object GuideContent {
             GuideTopic(
                 "forgot", GuideText("Я забыл пароль", "I forgot my password", "Մոռացել եմ գաղտնաբառը"),
                 listOf(
-                    GuideText("Пароль хранится на телефоне только в зашифрованном виде, восстановить его нельзя. Создайте новый аккаунт.", "The password is stored on the phone only in encrypted form and can’t be recovered. Create a new account.", "Գաղտնաբառը հեռախոսում պահվում է միայն գաղտնագրված տեսքով, այն վերականգնել հնարավոր չէ։ Ստեղծեք նոր հաշիվ։"),
+                    GuideText("На экране входа — «Забыли пароль?».", "On the sign-in screen tap “Forgot password?”.", "Մուտքի էկրանին սեղմեք «Մոռացե՞լ եք գաղտնաբառը»։"),
+                    GuideText("Введите логин и один из кодов восстановления, которые вы сохранили при регистрации, — и новый пароль.", "Enter your login, one of the recovery codes you saved when signing up, and a new password.", "Մուտքագրեք մուտքանունը, գրանցվելիս պահպանած վերականգնման կոդերից մեկը և նոր գաղտնաբառ։"),
+                    GuideText("Нет кодов — «Письмо на почту», если вы подтвердили почту в «Безопасности».", "No codes? Choose “Email” if you confirmed your email in Security.", "Կոդեր չկա՞ն — ընտրեք «Նամակ էլ. փոստին», եթե հաստատել եք էլ. փոստը «Անվտանգություն» բաժնում։"),
                 ),
+                tip = GuideText("Каждый код работает один раз. Новые коды — в «Безопасности».", "Each code works once. New codes are in Security.", "Յուրաքանչյուր կոդ աշխատում է մեկ անգամ։ Նոր կոդերը՝ «Անվտանգություն» բաժնում։"),
             ),
             GuideTopic(
                 "no-posts", GuideText("Почему я не вижу записи человека?", "Why can’t I see someone’s posts?", "Ինչո՞ւ չեմ տեսնում մարդու գրառումները"),

@@ -123,6 +123,8 @@ data class Post(
     val checkIn: CheckIn? = null,
     /** Опрос в записи; null — нет. */
     val poll: Poll? = null,
+    /** Когда запись правили (мс); 0 — не правили. Видно как «изменено». */
+    val editedAt: Long = 0,
 )
 
 /** Минуты с момента createdAt, а для демо-данных — заданные заранее. */
@@ -155,6 +157,10 @@ data class Message(
     val place: SharedPlace? = null,
     /** Товар с витрины группы — вопрос продавцу; null — нет. */
     val product: ProductRef? = null,
+    /** Ушло зашифрованным (секретная переписка): сервер видит только конверт. */
+    val secret: Boolean = false,
+    /** Когда исчезнет (мс); 0 — не исчезает. */
+    val expiresAt: Long = 0,
 )
 
 /**
@@ -183,6 +189,12 @@ data class Chat(
     val muted: Boolean = false,
     /** Свой фон этой переписки; null — общий из настроек. */
     val backdrop: Backdrop? = null,
+    /** Сквозное шифрование: новые сообщения уходят конвертами, которые читают только два телефона. */
+    val secret: Boolean = false,
+    /** Код безопасности сверен с собеседником. */
+    val verified: Boolean = false,
+    /** Исчезающие сообщения: через сколько мс исчезают новые; 0 — выключено. */
+    val disappearMs: Long = 0,
 ) {
     val pinned: Message? get() = pinnedId?.let { id -> messages.firstOrNull { it.id == id } }
 

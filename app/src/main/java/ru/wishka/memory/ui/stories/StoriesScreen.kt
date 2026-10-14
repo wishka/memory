@@ -72,6 +72,9 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
             )
         }
 
+        // Прямые эфиры: начать свой и смотреть друзей
+        item(key = "lives") { ru.wishka.memory.ui.live.LiveRow(vm, state) }
+
         if (state.friends.isNotEmpty()) {
             item {
                 LazyRow(

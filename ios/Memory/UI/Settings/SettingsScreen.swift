@@ -7,6 +7,10 @@ struct AccountActions {
     let changePassword: (_ current: String, _ new: String, _ repeated: String) async -> String?
     /// Ответ — текст ошибки или nil (аккаунт удалён, выполнен выход).
     let deleteAccount: (_ password: String) async -> String?
+    /// Коды восстановления и почта; nil — недоступно (в превью).
+    var recovery: RecoveryActions? = nil
+    /// «Скачать мои данные»; nil — недоступно (в превью).
+    var data: DataActions? = nil
 }
 
 /// Настройки за шестерёнкой в профиле. Список разделов и страница
@@ -29,6 +33,7 @@ struct SettingsScreen: View {
                             .textStyle(.headline)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
+                            .accessibilityAddTraits(.isHeader)
                         Spacer()
                     }
                     .padding(.horizontal, 12)
@@ -38,7 +43,12 @@ struct SettingsScreen: View {
                     switch page {
                     case .main: MainSettings(model: model, account: account)
                     case .security: SecurityPage(account: account)
-                    case .privacy: PrivacyPage(model: model)
+                    case .privacy:
+                        PrivacyPage(model: model)
+                        // Право на доступ к своим данным: архив со всем, что хранится
+                        if let data = account.data { MyDataCard(actions: data) }
+                        // Отчёты о сбоях и статистика — только с согласия
+                        TelemetryCard()
                     case .blacklist: BlacklistPage(model: model)
                     case .notifications: NotificationsPage(model: model)
                     case .textSize: TextSizePage()
@@ -196,6 +206,12 @@ private struct SecurityPage: View {
         .onChange(of: current) { _, _ in message = nil }
         .onChange(of: new) { _, _ in message = nil }
         .onChange(of: repeated) { _, _ in message = nil }
+
+        if let recovery = account.recovery {
+            SettingsCard {
+                RecoverySettings(actions: recovery)
+            }
+        }
 
         SettingsCard {
             VStack(alignment: .leading, spacing: 8) {
@@ -748,7 +764,9 @@ private struct Caption: View {
     let text: String
 
     var body: some View {
-        Text(t(text).uppercased()).textStyle(.label, Palette.mist)
+        Text(t(text).uppercased())
+            .textStyle(.label, Palette.mist)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 

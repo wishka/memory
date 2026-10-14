@@ -145,10 +145,12 @@ struct GroupSettingsScreen: View {
                     HStack(spacing: 14) {
                         Glyph(kind: group.muted ? .bellOff : .bell, color: Palette.lilac, size: 22)
                         Text(t("Уведомления группы")).textStyle(.body)
+                            .accessibilityHidden(true)
                         Spacer()
                         Toggle("", isOn: Binding(get: { !group.muted }, set: { _ in model.toggleGroupMute(group.id) }))
                             .labelsHidden()
                             .tint(Palette.orchid)
+                            .accessibilityLabel(t("Уведомления группы"))
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)

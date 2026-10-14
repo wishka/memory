@@ -13,6 +13,8 @@ class MemoryApp : Application() {
     override fun onCreate() {
         super.onCreate()
         DevicePrefs(this).load()
+        // Отчёты о сбоях и статистика — только если человек разрешил (по умолчанию нет)
+        ru.wishka.memory.telemetry.TelemetrySetup.init(this)
         MemoryNotifications.createChannels(this)
         PushSetup.init(this)
     }

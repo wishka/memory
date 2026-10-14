@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory</title>
+<meta name="description" content="Запись, профиль или тег в Memory.">
+<style>
+  :root { --bg: #07081a; --night: #0f153a; --ink: #f2eefe; --mist: #b7b0d6; --lilac: #bc92cd; --pink: #ff9ede; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink);
+    background: radial-gradient(circle at 20% 20%, #844cad88, transparent 50%),
+                radial-gradient(circle at 85% 70%, #19569966, transparent 45%),
+                linear-gradient(180deg, var(--bg), var(--night) 60%, #2a2152);
+    padding: 24px 16px;
+  }
+  main { width: 100%; max-width: 440px; text-align: center; }
+  .kicker { letter-spacing: .35em; font-size: 12px; color: var(--lilac); font-weight: 700; }
+  h1 { font-size: 28px; line-height: 1.25; margin: 14px 0 8px; }
+  .what { color: var(--pink); font-size: 18px; margin: 0 0 22px; }
+  .card { background: #ffffff14; border: 1px solid #ffffff2e; border-radius: 22px; padding: 18px; text-align: left; margin-bottom: 18px; }
+  .card p { margin: 6px 0; color: var(--mist); }
+  a.button { display: block; text-decoration: none; text-align: center; border-radius: 999px; padding: 14px 18px; font-weight: 600; margin: 10px 0; }
+  a.primary { background: linear-gradient(90deg, #ff9ede, #c6a2ff, #8cc4ff); color: #120c2c; }
+  a.ghost { border: 1px solid #ffffff40; color: var(--ink); }
+  .code { font-family: ui-monospace, Menlo, monospace; letter-spacing: .2em; color: var(--ink); }
+  small { color: var(--mist); }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">MEMORY</div>
+  <h1 id="title">Открываем Memory…</h1>
+  <p class="what" id="what">Если приложение установлено, оно откроется само.</p>
+  <div class="card">
+    <p>🎬 Memory — дневник того, что вы любите, вместе с друзьями.</p>
+    <p>✨ Записи, истории, PRISM и группы по интересам.</p>
+  </div>
+  <a class="button primary" id="open" href="memory://">Открыть в Memory</a>
+  <a class="button ghost" href="https://github.com/wishka/memory/releases">Скачать приложение</a>
+</main>
+<script>
+  // Те же ссылки, что в приложении (Links): ?p= запись, ?u= профиль, ?r= PRISM, ?g= группа, ?t= тег
+  var params = new URLSearchParams(location.search);
+  var deep = null, title = "", what = "";
+  function digits(v) { return /^[0-9]{1,18}$/.test(v || "") ? v : null; }
+  var p = digits(params.get("p")), r = digits(params.get("r")), g = digits(params.get("g"));
+  var u = (params.get("u") || "").toLowerCase().replace(/^@/, "");
+  var t = (params.get("t") || "").toLowerCase().replace(/^#/, "").slice(0, 40);
+  if (p) { deep = "memory://post/" + p; title = "Запись в Memory"; }
+  else if (/^[a-z0-9._]{3,20}$/.test(u)) { deep = "memory://u/" + u; title = "@" + u + " в Memory"; }
+  else if (r) { deep = "memory://prism/" + r; title = "PRISM в Memory"; }
+  else if (g) { deep = "memory://group/" + g; title = "Группа в Memory"; }
+  else if (/^[\p{L}\p{N}_]{2,40}$/u.test(t)) { deep = "memory://tag/" + encodeURIComponent(t); title = "#" + t + " в Memory"; }
+  // textContent: никакого HTML из адреса
+  if (title) document.getElementById("title").textContent = title;
+  if (deep) {
+    document.getElementById("open").setAttribute("href", deep);
+    setTimeout(function () { location.href = deep; }, 400);
+  } else {
+    document.getElementById("what").textContent = "Ссылка не распознана — откройте Memory вручную.";
+  }
+</script>
+</body>
+</html>

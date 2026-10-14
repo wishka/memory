@@ -29,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -56,6 +57,7 @@ import ru.wishka.memory.ui.theme.Palette
 @Composable
 fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = false) {
     var registering by rememberSaveable { mutableStateOf(startRegistering) }
+    var forgot by rememberSaveable { mutableStateOf(false) }
     var login by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
     // Пароли не сохраняются при повороте экрана: им нечего делать в
@@ -91,7 +93,11 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = 
             Spacer(Modifier.height(28.dp))
 
             GlassCard(modifier = Modifier.fillMaxWidth()) {
-                Column(
+                if (forgot) {
+                    Column(Modifier.padding(18.dp)) {
+                        ForgotPasswordForm(vm, state, login, onLogin = { login = it }, onBack = { forgot = false })
+                    }
+                } else Column(
                     modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -142,6 +148,17 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = 
                             if (registering) vm.register(login, name, password, repeat, consented = consent.all) else vm.login(login, password)
                         },
                     )
+
+                    if (!registering) {
+                        Text(
+                            t("Забыли пароль?"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Palette.Lilac,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { vm.clearError(); forgot = true },
+                        )
+                    }
 
                     Text(
                         if (registering) {

@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.prism.create
 
+import ru.wishka.memory.ui.components.label
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -159,7 +160,7 @@ fun MusicPicker(
                 Box(
                     modifier = Modifier.size(44.dp).clip(CircleShape).glass(CircleShape).clickable(onClick = onDismiss),
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Close, Palette.Ink) }
+                ) { Glyph(LineIcon.Close, Palette.Ink, description = LineIcon.Close.label) }
                 Spacer(Modifier.width(12.dp))
                 Text(t("Музыка для ролика"), style = MaterialTheme.typography.titleLarge, color = Palette.Ink)
             }
@@ -186,7 +187,7 @@ fun MusicPicker(
                                 .background(Brush.linearGradient(listOf(Palette.Orchid, Palette.Ocean)))
                                 .clickable { submitted = query.trim() },
                             contentAlignment = Alignment.Center,
-                        ) { Glyph(LineIcon.Search, Palette.Ink, size = 20.dp) }
+                        ) { Glyph(LineIcon.Search, Palette.Ink, size = 20.dp, description = LineIcon.Search.label) }
                     }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Chip(t("Популярное"), active = genre == null) { genre = null }

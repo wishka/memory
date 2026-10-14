@@ -6,11 +6,11 @@ I, a user of Memory, freely and knowingly give the operator [Name: LLC "…" / s
 
 ## What data
 
-Username, name, phone number (once the server is connected), the profile data I have filled in (photo, bio, city, birthday, website, interests), the content I publish (posts, photos, videos, voice messages, messages, comments, check-ins, shelf entries, showcase products), geolocation in the cases when I share it myself, technical device data, and the notification token.
+Username, name, email (if I add it), phone number (once the server is connected), the profile data I have filled in (photo, bio, city, birthday, website, interests), the content I publish (posts, photos, videos, voice messages, messages, comments, check-ins, shelf entries, showcase products), geolocation in the cases when I share it myself, technical device data, and the notification token.
 
 ## Why
 
-Registration and sign-in; operation of the social network, that is, showing my content to other users according to my settings; messaging; notifications; personal recommendations (these can be turned off in settings); fixing bugs and improving the app; complying with legal requirements.
+Registration, sign-in and account recovery; operation of the social network, that is, showing my content to other users according to my settings; messaging; notifications; personal recommendations (these can be turned off in settings); fixing bugs and improving the app; complying with legal requirements.
 
 ## What may be done with the data
 
@@ -19,6 +19,8 @@ Collection, recording, organization, storage, updating, use, transfer (provision
 ## Transfer outside Armenia
 
 I give my explicit consent to the transfer of data needed for certain features to services in countries that may not be on the list of countries with adequate protection: Google Firebase and Apple (USA) for notifications; GIPHY and Openverse (USA) and Jamendo (Luxembourg) for search; OpenStreetMap (United Kingdom) for maps. I understand that data protection in these countries may differ from that in Armenia.
+
+Crash reports and usage statistics (Sentry, USA) are not transferred under this consent: I can turn them on or off separately in Settings → Privacy.
 
 ## How long it is valid
 

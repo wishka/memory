@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Само приложение: космический фон, экран вкладки и парящая панель
 /// вкладок. Поверх вкладки могут быть открыты страница человека, группа
@@ -7,6 +8,12 @@ struct MainScreen: View {
     let model: AppModel
     let onSaveProfile: (String, ProfileInfo) -> Void
     let account: AccountActions
+    /// «Поделиться ссылкой» на запись — системное меню.
+    @State private var sharing: SharePayload?
+    /// Короткая подсказка внизу: «Ссылка скопирована», «Это недоступно…».
+    @State private var notice: String?
+    /// Один раз — спросить про отчёты о сбоях и статистику (если сборка умеет их отправлять).
+    @State private var askTelemetry = TelemetrySetup.hasKey && !TelemetrySetup.asked
 
     var body: some View {
         let state = model.state
@@ -23,7 +30,20 @@ struct MainScreen: View {
                     .simultaneousGesture(backSwipe)
             } else {
                 Group {
-                    if let person = state.openPerson {
+                    // Активность и поиск — поверх вкладки; с них можно уйти на человека или группу
+                    if state.activityOpen {
+                        ActivityScreen(model: model)
+                            .transition(.move(edge: .trailing))
+                            .simultaneousGesture(backSwipe)
+                    } else if let post = state.openPostId.flatMap({ state.findPost($0) }), state.openPerson == nil, state.openGroup == nil {
+                        PostScreen(model: model, post: post)
+                            .transition(.move(edge: .trailing))
+                            .simultaneousGesture(backSwipe)
+                    } else if state.searchOpen && state.openPerson == nil && state.openGroup == nil {
+                        SearchScreen(model: model)
+                            .transition(.move(edge: .trailing))
+                            .simultaneousGesture(backSwipe)
+                    } else if let person = state.openPerson {
                         PersonScreen(model: model, person: person)
                             .transition(.move(edge: .trailing))
                             .simultaneousGesture(backSwipe)
@@ -71,6 +91,31 @@ struct MainScreen: View {
         }
         .animation(.easeOut(duration: 0.2), value: state.echo != nil)
         .animation(.easeOut(duration: 0.2), value: state.openedInvite != nil)
+        // Запуск эфира, итог эфира и вопрос про отчёты о сбоях — окном посреди экрана
+        .overlay {
+            if state.liveStarting {
+                LiveStartDialog(model: model)
+                    .transition(.opacity)
+            } else if let summary = state.liveSummary {
+                LiveSummaryDialog(model: model, live: summary)
+                    .transition(.opacity)
+            } else if askTelemetry && state.banner == nil {
+                TelemetryConsentDialog { askTelemetry = false }
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: state.liveStarting)
+        .animation(.easeOut(duration: 0.2), value: state.liveSummary != nil)
+        // Эфир — во весь экран, поверх всего
+        .fullScreenCover(isPresented: watchingLive) {
+            LiveCover(model: model)
+        }
+        // Правка своей записи — шторкой
+        .sheet(item: editingPost) { post in
+            EditPostSheet(model: model, post: post)
+        }
+        .shareSheet($sharing)
+        .toast($notice)
         // Шторка «Это в Memory+» — поверх всего, где бы ни нажали
         .paywall(model)
         // Подписка Memory+ сверяется с часами: закончилась — тариф бесплатный
@@ -86,7 +131,7 @@ struct MainScreen: View {
             comments.reportSheet(model: model)
         }
         // Жалоба: причина, пара слов, заблокировать автора
-        .reportSheet(model: model, active: !commentsShown.wrappedValue)
+        .reportSheet(model: model, active: !commentsShown.wrappedValue && model.state.watchingLiveId == nil)
         // Документ: соглашение, политика, правила, лицензии
         .fullScreenCover(item: legalDoc) { doc in
             LegalDocViewer(doc: doc) { model.closeLegal() }
@@ -107,6 +152,57 @@ struct MainScreen: View {
         .animation(.easeOut(duration: 0.2), value: state.profileSection)
         .animation(.easeOut(duration: 0.2), value: state.settingsPage)
         .animation(.easeOut(duration: 0.2), value: state.personSection)
+        .animation(.easeOut(duration: 0.25), value: state.activityOpen)
+        .animation(.easeOut(duration: 0.25), value: state.searchOpen)
+        .animation(.easeOut(duration: 0.25), value: state.openPostId)
+        // #теги, @упоминания и ссылки в тексте; ссылка на запись и правка — в меню любой карточки
+        .environment(\.linkActions, links)
+    }
+
+    /// Что делают ссылки в тексте и меню «⋯» записи — для всех экранов сразу.
+    private var links: LinkActions {
+        LinkActions(
+            meId: model.state.me.id,
+            onTag: { model.openTag($0) },
+            onMention: { model.openHandle($0) },
+            onUrl: { openUrl($0) },
+            suggest: { model.mentionCandidates($0) },
+            onShareLink: { post in
+                Telemetry.track(.linkShared)
+                sharing = SharePayload(items: [Links.shareText(post)])
+            },
+            onCopyLink: { post in
+                copyText(Links.post(post.id))
+                notice = t("Ссылка скопирована")
+            },
+            onEdit: { model.startEdit($0.id) }
+        )
+    }
+
+    /// Ссылка Memory — в приложении; остальные — в браузере.
+    private func openUrl(_ link: String) {
+        if let target = Links.parse(link) {
+            if !model.openLink(target) {
+                notice = t("Это недоступно на этом телефоне — возможно, запись удалили или профиль закрыт.")
+            }
+        } else if let url = URL(string: link) {
+            UIApplication.shared.open(url)
+        }
+    }
+
+    private var watchingLive: Binding<Bool> {
+        Binding(
+            get: { model.state.watchingLive != nil },
+            // Закрыли жестом — как «назад»: зритель выходит, ведущему — вопрос
+            set: { if !$0 && model.state.watchingLiveId != nil { _ = model.back() } }
+        )
+    }
+
+    private var editingPost: Binding<Post?> {
+        Binding(
+            get: { model.state.editingPostId.flatMap { model.state.findPost($0) } },
+            set: { if $0 == nil && model.state.editingPostId != nil { model.cancelEdit() } }
+        )
     }
 
     private var commentsShown: Binding<Bool> {

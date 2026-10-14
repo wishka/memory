@@ -24,6 +24,9 @@ struct StoriesScreen: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
+                // Прямые эфиры: начать свой и смотреть друзей
+                LiveRow(model: model)
+
                 if !state.friends.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 14) {

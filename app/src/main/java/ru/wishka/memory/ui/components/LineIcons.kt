@@ -4,6 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import ru.wishka.memory.i18n.t
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -25,9 +28,15 @@ import androidx.compose.ui.unit.dp
  */
 enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic, Together, Poll, Gif }
 
+
+/**
+ * Значок. description — что он значит для экранного диктора: у значка без
+ * подписи рядом (кнопка «назад», «⋯», «отправить») — LineIcon.label; у
+ * значка рядом с текстом — null, его не нужно читать дважды.
+ */
 @Composable
-fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
-    Canvas(modifier = modifier.size(size)) {
+fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp, description: String? = null) {
+    Canvas(modifier = modifier.size(size).then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)) {
         val s = this.size.width
         val stroke = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
         when (kind) {

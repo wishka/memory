@@ -59,10 +59,23 @@ struct MediaTile: View {
         }
         .contentShape(Rectangle())
         if let onTap {
-            Button(action: onTap) { tile }.buttonStyle(.plain)
+            Button(action: onTap) { tile }
+                .buttonStyle(.plain)
+                .accessibilityLabel(kindLabel)
+                .accessibilityHint(t("Открыть на весь экран"))
+                .accessibilityAddTraits(.isImage)
         } else {
             tile
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(kindLabel)
+                .accessibilityAddTraits(.isImage)
         }
+    }
+
+    /// «Фото», «Видео» или «Гифка» — для VoiceOver.
+    private var kindLabel: String {
+        if attachment.isGif { return t("Гифка") }
+        return attachment.kind == .video ? t("Видео") : t("Фото")
     }
 }
 
@@ -303,6 +316,7 @@ struct AttachButton: View {
         }
         .buttonStyle(.plain)
         .disabled(loading)
+        .accessibilityLabel(LineIcon.attach.label)
         .glassActions($showMenu, actions: actions)
         .photosPicker(
             isPresented: $showGallery,
@@ -386,6 +400,7 @@ struct PendingAttachments: View {
                                     .background(Circle().fill(Palette.voidRGB.opacity(0.75)))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel(LineIcon.trash.label)
                             .padding(2)
                         }
                     }

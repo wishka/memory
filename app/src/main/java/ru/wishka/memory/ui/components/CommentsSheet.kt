@@ -141,9 +141,10 @@ fun CommentsSheet(
                     Box(
                         modifier = Modifier.size(32.dp).clip(CircleShape).clickable { replyTo = "" },
                         contentAlignment = Alignment.Center,
-                    ) { Glyph(LineIcon.Close, Palette.Mist, size = 16.dp) }
+                    ) { Glyph(LineIcon.Close, Palette.Mist, size = 16.dp, description = LineIcon.Close.label) }
                 }
             }
+            MentionSuggestions(text, { text = it.take(1000) }, Modifier.padding(horizontal = 12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                 verticalAlignment = Alignment.Bottom,
@@ -152,7 +153,7 @@ fun CommentsSheet(
                 Box(
                     modifier = Modifier.size(46.dp).clip(CircleShape).glass(CircleShape).clickable { choosingSticker = true },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Sticker, Palette.Lilac, size = 22.dp) }
+                ) { Glyph(LineIcon.Sticker, Palette.Lilac, size = 22.dp, description = LineIcon.Sticker.label) }
                 GlassField(
                     text, { text = it.take(1000) }, t("Комментарий"),
                     maxLines = 4,
@@ -220,7 +221,7 @@ private fun CommentRow(
                 if (comment.replyTo.isNotEmpty()) {
                     Text(tf("ответ для %s", comment.replyTo), style = MaterialTheme.typography.labelMedium, color = Palette.Lilac)
                 }
-                if (comment.text.isNotEmpty()) Text(comment.text, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+                if (comment.text.isNotEmpty()) RichText(comment.text)
                 comment.sticker?.let { StickerImage(it, size = 110.dp) }
             }
             MemoryMenu(expanded = menu, onDismiss = { menu = false }) {

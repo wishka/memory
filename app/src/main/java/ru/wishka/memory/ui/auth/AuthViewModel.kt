@@ -16,6 +16,7 @@ import ru.wishka.memory.data.ProfileInfo
 import ru.wishka.memory.data.auth.Account
 import ru.wishka.memory.data.auth.AuthResult
 import ru.wishka.memory.data.auth.LocalAuth
+import ru.wishka.memory.data.auth.DemoMail
 import ru.wishka.memory.data.auth.SecurePrefs
 
 data class AuthState(
@@ -26,6 +27,10 @@ data class AuthState(
     val error: String? = null,
     /** Меняется, когда человек принял документы: экран пересчитывает, нужен ли запрос. */
     val consentTick: Int = 0,
+    /** Только что созданные коды восстановления — показать один раз и забыть. */
+    val recoveryCodes: List<String>? = null,
+    /** «Забыли пароль?»: письмо с кодом отправлено (текст для человека). */
+    val resetSent: String? = null,
 )
 
 /**
@@ -54,10 +59,74 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun login(username: String, password: String) = run { auth.login(username, password) }
 
     /** consented — человек отметил возраст, соглашение и согласие на обработку: запоминаем версию документов. */
-    fun register(username: String, displayName: String, password: String, repeat: String, consented: Boolean = false) =
-        run(onOk = { account -> if (consented) consents.accept(account.username, System.currentTimeMillis()) }) {
-            auth.register(username, displayName, password, repeat)
+    fun register(username: String, displayName: String, password: String, repeat: String, consented: Boolean = false) {
+        // Коды восстановления — сразу при регистрации: без сервера это единственный путь назад.
+        // Хешируются они не в главном потоке — вместе с паролем
+        var codes: List<String> = emptyList()
+        run(onOk = { account ->
+            if (consented) consents.accept(account.username, System.currentTimeMillis())
+            ru.wishka.memory.data.Telemetry.track(ru.wishka.memory.data.AppEvent.SignUp)
+            _state.update { it.copy(recoveryCodes = codes) }
+        }) {
+            auth.register(username, displayName, password, repeat).also { r ->
+                if (r is AuthResult.Ok) codes = auth.newRecoveryCodes(r.account.username)
+            }
         }
+    }
+
+    /** «Забыли пароль?» — вход по одноразовому коду восстановления с новым паролем. */
+    fun recoverWithCode(username: String, code: String, new: String, repeat: String) =
+        run(onOk = { ru.wishka.memory.data.Telemetry.track(ru.wishka.memory.data.AppEvent.RecoveryUsed) }) { auth.recoverWithCode(username, code, new, repeat) }
+
+    /** «Забыли пароль?» по почте: письмо с кодом (если почта подтверждена). */
+    fun startEmailRecovery(username: String) {
+        if (username.isBlank()) return
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.Default) { auth.startEmailRecovery(username) }
+            _state.update { it.copy(resetSent = text, error = null) }
+        }
+    }
+
+    fun recoverWithEmail(username: String, code: String, new: String, repeat: String) =
+        run(onOk = { ru.wishka.memory.data.Telemetry.track(ru.wishka.memory.data.AppEvent.RecoveryUsed) }) { auth.recoverWithEmail(username, code, new, repeat) }
+
+    /** Коды показаны и сохранены человеком. */
+    fun dismissRecoveryCodes() {
+        _state.update { it.copy(recoveryCodes = null) }
+    }
+
+    /** Новые коды из «Безопасности» — после проверки пароля. null — неверный пароль. */
+    suspend fun regenerateRecoveryCodes(password: String): List<String>? {
+        val account = _state.value.account ?: return null
+        return withContext(Dispatchers.Default) {
+            if (auth.checkPasswordOf(account.username, password)) auth.newRecoveryCodes(account.username) else null
+        }
+    }
+
+    fun recoveryLeft(): Int = _state.value.account?.let { auth.recoveryLeft(it.username) } ?: 0
+
+    fun email(): String = _state.value.account?.let { auth.email(it.username) }.orEmpty()
+
+    fun emailConfirmed(): Boolean = _state.value.account?.let { auth.emailConfirmed(it.username) } ?: false
+
+    /** Указать почту — уходит письмо с кодом. null — отправлено. */
+    fun setEmail(email: String): String? = _state.value.account?.let { auth.setEmail(it.username, email) } ?: t("Вы не вошли")
+
+    fun confirmEmail(code: String): String? = _state.value.account?.let { auth.confirmEmail(it.username, code) } ?: t("Вы не вошли")
+
+    fun removeEmail() {
+        _state.value.account?.let { auth.removeEmail(it.username) }
+    }
+
+    /** Какую версию документов и когда принял человек — для выгрузки данных. */
+    fun consentInfo(): Pair<String?, Long> = _state.value.account?.let { consents.version(it.username) to consents.acceptedAt(it.username) } ?: (null to 0L)
+
+    /** Демо: код из «письма» — пока сервера нет, его показывает экран. */
+    fun demoCode(): String? = DemoMail.last?.second
+
+    fun clearResetSent() {
+        _state.update { it.copy(resetSent = null) }
+    }
 
     /** Согласие с текущей версией документов. */
     fun hasConsent(username: String): Boolean = consents.accepted(username)

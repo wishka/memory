@@ -13,6 +13,10 @@ final class AuthModel {
     var error: String?
     /// Меняется, когда человек принял документы: корень пересчитывает, нужен ли запрос.
     var consentTick = 0
+    /// Только что созданные коды восстановления — показать один раз и забыть.
+    var recoveryCodes: [String]?
+    /// «Забыли пароль?»: письмо с кодом отправлено (текст для человека).
+    var resetSent: String?
 
     @ObservationIgnored private let auth: LocalAuth
     @ObservationIgnored private let consents: ConsentStore
@@ -48,9 +52,92 @@ final class AuthModel {
     /// обработку: после удачной регистрации запоминаем версию документов.
     func register(_ username: String, _ displayName: String, _ password: String, _ repeated: String, consented: Bool = false) {
         let consents = self.consents
-        run(onOk: { account in if consented { consents.accept(account.username) } }) {
-            $0.register(username: username, displayName: displayName, password: password, repeatPassword: repeated)
+        // Коды восстановления — сразу при регистрации: без сервера это единственный путь назад.
+        // Хешируются в фоне, вместе с паролем, а не в главном потоке
+        let box = RecoveryCodesBox()
+        run(onOk: { [weak self] account in
+            if consented { consents.accept(account.username) }
+            Telemetry.track(.signUp)
+            self?.recoveryCodes = box.codes
+        }) { auth in
+            let result = auth.register(username: username, displayName: displayName, password: password, repeatPassword: repeated)
+            if case .ok(let account) = result { box.codes = auth.newRecoveryCodes(account.username) }
+            return result
         }
+    }
+
+    /// «Забыли пароль?» — вход по одноразовому коду восстановления с новым паролем.
+    func recoverWithCode(_ username: String, _ code: String, _ new: String, _ repeated: String) {
+        run(onOk: { _ in Telemetry.track(.recoveryUsed) }) {
+            $0.recoverWithCode(username: username, code: code, new: new, repeatPassword: repeated)
+        }
+    }
+
+    /// «Забыли пароль?» по почте: письмо с кодом (если почта подтверждена).
+    func startEmailRecovery(_ username: String) {
+        if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+        let auth = self.auth
+        Task.detached(priority: .userInitiated) {
+            let text = auth.startEmailRecovery(username)
+            await MainActor.run { [weak self] in
+                self?.resetSent = text
+                self?.error = nil
+            }
+        }
+    }
+
+    func recoverWithEmail(_ username: String, _ code: String, _ new: String, _ repeated: String) {
+        run(onOk: { _ in Telemetry.track(.recoveryUsed) }) {
+            $0.recoverWithEmail(username: username, code: code, new: new, repeatPassword: repeated)
+        }
+    }
+
+    /// Коды показаны и сохранены человеком.
+    func dismissRecoveryCodes() {
+        recoveryCodes = nil
+    }
+
+    /// Новые коды из «Безопасности» — после проверки пароля. nil — неверный пароль.
+    func regenerateRecoveryCodes(_ password: String) async -> [String]? {
+        guard let login = account?.username else { return nil }
+        let auth = self.auth
+        return await Task.detached(priority: .userInitiated) { () -> [String]? in
+            auth.checkPasswordOf(login, password) ? auth.newRecoveryCodes(login) : nil
+        }.value
+    }
+
+    func recoveryLeft() -> Int { account.map { auth.recoveryLeft($0.username) } ?? 0 }
+
+    func email() -> String { account.map { auth.email($0.username) } ?? "" }
+
+    func emailConfirmed() -> Bool { account.map { auth.emailConfirmed($0.username) } ?? false }
+
+    /// Указать почту — уходит письмо с кодом. nil — отправлено.
+    func setEmail(_ email: String) -> String? {
+        guard let login = account?.username else { return t("Вы не вошли") }
+        return auth.setEmail(login, email)
+    }
+
+    func confirmEmail(_ code: String) -> String? {
+        guard let login = account?.username else { return t("Вы не вошли") }
+        return auth.confirmEmail(login, code)
+    }
+
+    func removeEmail() {
+        if let login = account?.username { auth.removeEmail(login) }
+    }
+
+    /// Какую версию документов и когда (мс) принял человек — для выгрузки данных.
+    func consentInfo() -> (version: String?, at: Int64) {
+        guard let login = account?.username else { return (nil, 0) }
+        return (consents.version(login), consents.acceptedAt(login))
+    }
+
+    /// Демо: код из «письма» — пока сервера нет, его показывает экран.
+    func demoCode() -> String? { DemoMail.last?.code }
+
+    func clearResetSent() {
+        resetSent = nil
     }
 
     /// Согласие с текущей версией документов.
@@ -134,4 +221,9 @@ final class AuthModel {
             }
         }
     }
+}
+
+/// Коды восстановления, созданные в фоне при регистрации, — для показа в главном потоке.
+private final class RecoveryCodesBox {
+    var codes: [String] = []
 }

@@ -2,6 +2,7 @@
 
 package ru.wishka.memory.ui.prism.create
 
+import ru.wishka.memory.ui.components.label
 import androidx.annotation.OptIn as AndroidOptIn
 import android.net.Uri
 import android.view.ViewGroup
@@ -746,5 +747,5 @@ fun RoundTool(icon: LineIcon, onClick: () -> Unit) {
     Box(
         modifier = Modifier.size(44.dp).clip(CircleShape).glass(CircleShape).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Glyph(icon, Palette.Ink) }
+    ) { Glyph(icon, Palette.Ink, description = icon.label) }
 }

@@ -97,6 +97,7 @@ struct PrismScreen: View {
         }
         .buttonStyle(.plain)
         .animation(.easeOut(duration: 0.2), value: active)
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 
     private func jumpToStart() {
@@ -242,7 +243,7 @@ private struct PrismPage: View {
                     FriendButton(state: friend, name: prism.author.name, onToggle: onFriend)
                 }
             }
-            Text(prism.caption).textStyle(.body).fixedSize(horizontal: false, vertical: true)
+            RichText(text: prism.caption).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 Glyph(kind: .music, color: Palette.lilac, size: 16)
                 Text(prism.music).textStyle(.bodySmall, Palette.mist).lineLimit(1)
@@ -262,28 +263,40 @@ private struct PrismPage: View {
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.impact(weight: .light), trigger: prism.liked)
+            .accessibilityLabel(spoken(.heart, compact(prism.likes)))
+            .accessibilityAddTraits(prism.liked ? .isSelected : [])
             Button(action: onComments) {
                 sideLabel(.comment, compact(prism.comments))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(spoken(.comment, compact(prism.comments)))
             ShareLink(item: shareText(prism)) {
                 sideLabel(.share, t("Поделиться"))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(spoken(.share, t("Поделиться")))
             Button(action: onSave) {
                 sideLabel(prism.saved ? .bookmarkFilled : .bookmark, prism.saved ? t("В закладках") : t("Сохранить"))
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.selection, trigger: prism.saved)
+            .accessibilityLabel(prism.saved ? t("В закладках") : t("Сохранить"))
             if mine {
                 Button(action: onDelete) { sideLabel(.trash, t("Удалить")) }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(spoken(.trash, t("Удалить")))
             }
             if let onReport {
                 Button(action: onReport) { sideLabel(.flag, t("Пожаловаться")) }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(spoken(.flag, t("Пожаловаться")))
             }
         }
+    }
+
+    /// «Нравится, 1,2 тыс.», «Комментарии, 40», «Поделиться» — для VoiceOver.
+    private func spoken(_ icon: LineIcon, _ text: String) -> String {
+        icon.label == text ? text : icon.label + ", " + text
     }
 
     private func sideLabel(_ icon: LineIcon, _ text: String) -> some View {

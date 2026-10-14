@@ -36,6 +36,15 @@ final class StateStore {
         try? FileManager.default.removeItem(at: file(login))
     }
 
+    /// Всё сохранённое — читаемым JSON с отступами: memory.json в «Скачать мои данные».
+    static func exportJson(_ snapshot: Snapshot) -> String {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .millisecondsSince1970
+        e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? e.encode(snapshot), let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .millisecondsSince1970

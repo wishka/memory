@@ -158,6 +158,8 @@ struct Post: Identifiable, Equatable, Codable {
     var checkIn: CheckIn? = nil
     /// Опрос в записи; nil — нет.
     var poll: Poll? = nil
+    /// Когда запись правили; nil — не правили. Видно как «изменено».
+    var editedAt: Date? = nil
 }
 
 /// Минуты с момента createdAt, а для демо-данных — заданные заранее.
@@ -191,6 +193,16 @@ struct Message: Identifiable, Equatable, Codable {
     var place: SharedPlace? = nil
     /// Товар с витрины группы — вопрос продавцу; nil — нет.
     var product: ProductRef? = nil
+    /// Ушло зашифрованным (секретная переписка): сервер видит только конверт.
+    /// Необязательное — старые сохранения читаются без него; снаружи — secret.
+    var secretFlag: Bool? = nil
+    /// Когда исчезнет; nil — не исчезает.
+    var expiresAt: Date? = nil
+
+    var secret: Bool {
+        get { secretFlag ?? false }
+        set { secretFlag = newValue ? true : nil }
+    }
 }
 
 /// Товар в сообщении: копия названия, цены и фото на момент вопроса — чтобы
@@ -247,6 +259,27 @@ struct Chat: Identifiable, Equatable, Codable {
     var mutedFlag: Bool? = nil
     /// Свой фон этой переписки; nil — общий из настроек.
     var backdrop: Backdrop? = nil
+    /// Сквозное шифрование, сверка кода и исчезающие сообщения —
+    /// необязательные, для старых сохранений; снаружи — secret, verified, disappearMs.
+    var secretFlag: Bool? = nil
+    var verifiedFlag: Bool? = nil
+    var disappearMsValue: Int64? = nil
+
+    /// Сквозное шифрование: новые сообщения уходят конвертами, которые читают только два телефона.
+    var secret: Bool {
+        get { secretFlag ?? false }
+        set { secretFlag = newValue }
+    }
+    /// Код безопасности сверен с собеседником.
+    var verified: Bool {
+        get { verifiedFlag ?? false }
+        set { verifiedFlag = newValue }
+    }
+    /// Исчезающие сообщения: через сколько мс исчезают новые; 0 — выключено.
+    var disappearMs: Int64 {
+        get { disappearMsValue ?? 0 }
+        set { disappearMsValue = newValue == 0 ? nil : newValue }
+    }
 
     var onTop: Bool {
         get { onTopFlag ?? false }

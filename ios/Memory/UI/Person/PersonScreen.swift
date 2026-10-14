@@ -6,6 +6,8 @@ struct PersonScreen: View {
     let model: AppModel
     let person: User
     @State private var showMenu = false
+    @State private var sharing: SharePayload?
+    @State private var notice: String?
 
     var body: some View {
         if let section = model.state.personSection {
@@ -30,10 +32,18 @@ struct PersonScreen: View {
                 HStack(spacing: 12) {
                     RoundGlyphButton(icon: .back) { model.closePerson() }
                     Text("@\(person.handle)").textStyle(.title)
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
-                    // «⋯»: заблокировать или разблокировать, пожаловаться
+                    // «⋯»: ссылка на профиль, заблокировать или разблокировать, пожаловаться
                     RoundGlyphButton(icon: .more) { showMenu = true }
                         .glassActions($showMenu, title: person.name, actions: [
+                            GlassAction(icon: .share, title: t("Поделиться профилем")) {
+                                sharing = SharePayload(items: [person.name + "\n" + Links.profile(person.handle)])
+                            },
+                            GlassAction(icon: .link, title: t("Скопировать ссылку")) {
+                                copyText(Links.profile(person.handle))
+                                notice = t("Ссылка скопирована")
+                            },
                             blocked
                                 ? GlassAction(icon: .block, title: t("Разблокировать")) { model.unblock(person.id) }
                                 : GlassAction(icon: .block, title: t("Заблокировать"), destructive: true) { model.block(person.id) },
@@ -55,7 +65,7 @@ struct PersonScreen: View {
                         Text(person.online ? t("в сети") : "@\(person.handle)")
                             .textStyle(.bodySmall, person.online ? Palette.lilac : Palette.mist)
                         if !person.bio.isEmpty {
-                            Text(person.bio).textStyle(.body).multilineTextAlignment(.center)
+                            RichText(text: person.bio).multilineTextAlignment(.center)
                         }
                         FadeLine().padding(.top, 4)
                         // Счётчики — кнопки: записи и друзья человека
@@ -142,5 +152,7 @@ struct PersonScreen: View {
             .padding(.top, 12)
             .padding(.bottom, tabBarSpace)
         }
+        .shareSheet($sharing)
+        .toast($notice)
     }
 }

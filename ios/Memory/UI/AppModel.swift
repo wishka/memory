@@ -214,6 +214,58 @@ struct UiState: Equatable {
     var plan: PlanTier = Premium.enabled ? .free : Premium.openTier
     /// Шторка «Это в Memory+»: что пытались открыть без подписки.
     var paywall: PremiumFeature? = nil
+    /// Лента активности: «нравится», комментарии, упоминания, заявки — новые сверху.
+    var activity: [ActivityItem] = []
+    /// Когда ленту активности открывали в последний раз: что позже — «новое».
+    var activitySeen: Date = Date(timeIntervalSince1970: 0)
+    /// Открыта лента активности.
+    var activityOpen = false
+    /// Открыт поиск и что в нём набрано.
+    var searchOpen = false
+    var searchQuery = ""
+    /// Недавние запросы — новые первыми.
+    var searchHistory: [String] = []
+    /// Открытая по ссылке запись — отдельным экраном.
+    var openPostId: Int64? = nil
+    /// Своя запись, которую сейчас правят.
+    var editingPostId: Int64? = nil
+    /// Эфиры друзей, которые идут сейчас.
+    var lives: [LiveStream] = []
+    /// Свой эфир, пока он идёт.
+    var myLive: LiveStream? = nil
+    /// Какой эфир открыт на экране (свой или друга).
+    var watchingLiveId: Int64? = nil
+    /// Открыт запуск эфира: название и кто видит.
+    var liveStarting = false
+    /// Итог только что закончившегося своего эфира.
+    var liveSummary: LiveStream? = nil
+    /// Ведущий нажал «назад» — спросить, закончить ли эфир.
+    var confirmEndLive = false
+
+    /// Эфир на экране.
+    var watchingLive: LiveStream? {
+        guard let id = watchingLiveId else { return nil }
+        if let mine = myLive, mine.id == id { return mine }
+        return lives.first { $0.id == id }
+    }
+
+    /// Эфиры, которые можно смотреть: без заблокированных.
+    var visibleLives: [LiveStream] { lives.filter { $0.live && !blocked.contains($0.hostId) } }
+
+    /// Люди, которых можно найти и упомянуть: все, кроме себя и заблокированных.
+    var searchablePeople: [User] { Demo.people.filter { !blocked.contains($0.id) } }
+
+    /// Записи, которые можно найти: лента, свои и группы.
+    var searchablePosts: [Post] {
+        var seen = Set<Int64>()
+        return (feed + groups.flatMap(\.posts)).filter { !blocked.contains($0.author.id) && seen.insert($0.id).inserted }
+    }
+
+    /// Результаты текущего запроса.
+    var searchResults: SearchResults { Search.all(searchQuery, searchablePeople, searchablePosts, groups) }
+
+    /// Новых событий в ленте активности — точка на колокольчике.
+    var activityUnread: Int { Activity.unread(activity, activitySeen, blocked: blocked) }
 
     /// Полка — собирается сама из чек-инов и отметок.
     var shelf: Shelf { Shelf.build(posts.datedCheckIns(me.id), shelfMarks) }
@@ -367,6 +419,10 @@ struct Snapshot: Codable, Equatable {
     var guideHidden: Bool? = nil
     /// Подписка Memory+.
     var subscription: MemorySubscription? = nil
+    /// Лента активности (непонятные события новых версий пропускаются), когда её смотрели, история поиска.
+    var activity: LossyList<ActivityItem>? = nil
+    var activitySeen: Date? = nil
+    var searchHistory: [String]? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -671,21 +727,560 @@ final class AppModel {
     @discardableResult
     func back() -> Bool {
         if state.creatingPrism { closePrismCreator(); return true }
+        // «Назад» у ведущего эфира — вопрос «Закончить эфир?», а не выход
+        if let watching = state.watchingLiveId, state.myLive?.id == watching { state.confirmEndLive = true; return true }
+        if state.watchingLiveId != nil { leaveLive(); return true }
+        if state.liveStarting { closeLiveStart(); return true }
+        if state.activityOpen { closeActivity(); return true }
+        if state.editingPostId != nil { cancelEdit(); return true }
         if state.openProduct != nil { closeProduct(); return true }
         if state.viewing != nil { closeMedia(); return true }
         if state.commentsPostId != nil || state.commentsPrismId != nil { closeComments(); return true }
+        if state.openPostId != nil { closePost(); return true }
         if state.openChatId != nil { closeChat(); return true }
         if state.personSection != nil && state.openPersonId != nil { closePersonSection(); return true }
         if state.openPersonId != nil { closePerson(); return true }
         if state.groupSettingsOpen { closeGroupSettings(); return true }
         if state.openGroupId != nil { closeGroup(); return true }
+        if state.searchOpen { closeSearch(); return true }
         if state.settingsPage != nil { settingsBack(); return true }
         if state.profileSection != nil { closeProfileSection(); return true }
         if state.tab != .feed { selectTab(.feed); return true }
         return false
     }
 
+    // MARK: - Активность
+
+    /// Записать событие в ленту активности. person == nil — несколько человек (голоса).
+    func record(_ kind: ActivityKind, _ person: User?, targetId: Int64 = 0, preview: String = "", count: Int = 1) {
+        if let person, person.id == state.me.id || state.blocked.contains(person.id) { return }
+        let actorName: String
+        if let person, Demo.person(person.id) == nil { actorName = person.name } else { actorName = "" }
+        let item = ActivityItem(
+            id: newId(), kind: kind, actorId: person?.id ?? 0, at: clock(), targetId: targetId,
+            preview: String(preview.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)), count: count,
+            actorName: actorName, actorHue: person?.hue ?? 0.5
+        )
+        state.activity = Activity.add(state.activity, item)
+    }
+
+    func openActivity() {
+        Telemetry.track(.activityOpened)
+        var s = state
+        s.activityOpen = true
+        s.openPersonId = nil
+        s.openGroupId = nil
+        s.personSection = nil
+        state = s
+    }
+
+    /// Закрыли ленту — всё в ней прочитано.
+    func closeActivity() {
+        var s = state
+        s.activityOpen = false
+        s.activitySeen = clock()
+        state = s
+    }
+
+    /// Отметить всё прочитанным, не закрывая.
+    func markActivitySeen() {
+        state.activitySeen = clock()
+    }
+
+    /// Нажатие на событие: туда, о чём оно.
+    func openActivityItem(_ g: ActivityGroup) {
+        let s = state
+        closeActivity()
+        switch g.kind {
+        case .like, .comment, .reply, .mention, .commentLike, .pollVotes:
+            if s.findPost(g.targetId) != nil {
+                openComments(g.targetId)
+            } else if let actor = g.actors.first {
+                openPerson(actor.id)
+            }
+        case .prismLike, .prismComment:
+            selectTab(.prism)
+            if s.prisms.contains(where: { $0.id == g.targetId }) { state.prismStartId = g.targetId }
+        case .friendRequest:
+            openProfileSection(.requests)
+        case .friendAccepted:
+            if let actor = g.actors.first { openPerson(actor.id) }
+        case .groupJoin:
+            selectTab(.groups)
+            openGroup(Int(g.targetId))
+        case .live:
+            if s.lives.contains(where: { $0.id == g.targetId && $0.live }) {
+                watchLive(g.targetId)
+            } else if let actor = g.actors.first {
+                openPerson(actor.id)
+            }
+        }
+    }
+
+    /// Демо: друг комментирует вашу запись; иногда — упоминает вас.
+    private func demoComment<G: RandomNumberGenerator>(_ post: Post, _ fan: User, using rng: inout G) {
+        let me = state.me
+        let lines = ["Как красиво!", "Это где?", "Хочу так же", "Сохранила себе", "Вот это да", "Отличный момент"]
+        let mention = Int.random(in: 0..<3, using: &rng) == 0
+        let text = mention
+            ? tf("@%s, помнишь, мы туда собирались?", me.handle)
+            : t(lines[Int.random(in: 0..<lines.count, using: &rng)])
+        let comment = Comment(id: newId(), author: fan, text: text, createdAt: clock())
+        state.posts = state.posts.map { p in
+            var p = p
+            if p.id == post.id {
+                p.comments += 1
+                p.commentList.append(comment)
+            }
+            return p
+        }
+        record(mention ? .mention : .comment, fan, targetId: post.id, preview: text)
+        notify(Nudges.commented(fan, post, text))
+    }
+
+    // MARK: - Поиск
+
+    /// Открыть поиск; query — сразу с запросом (нажали на #тег).
+    func openSearch(_ query: String = "") {
+        var s = state
+        s.searchOpen = true
+        s.searchQuery = query
+        s.activityOpen = false
+        s.openPersonId = nil
+        s.personSection = nil
+        s.openGroupId = nil
+        s.groupSettingsOpen = false
+        s.commentsPostId = nil
+        s.commentsPrismId = nil
+        s.openChatId = nil
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            s.searchHistory = Search.remember(s.searchHistory, query)
+        }
+        state = s
+    }
+
+    func closeSearch() {
+        var s = state
+        s.searchOpen = false
+        s.searchQuery = ""
+        state = s
+    }
+
+    func setSearchQuery(_ query: String) {
+        state.searchQuery = String(query.prefix(80))
+    }
+
+    /// Запрос «состоялся» (нажали на результат или «Найти») — в историю. nil — то, что набрано.
+    func commitSearch(_ query: String? = nil) {
+        Telemetry.track(.searchUsed)
+        state.searchHistory = Search.remember(state.searchHistory, query ?? state.searchQuery)
+    }
+
+    func clearSearchHistory() {
+        state.searchHistory = []
+    }
+
+    /// Нажали на «#тег» в тексте — поиск по тегу.
+    func openTag(_ tag: String) {
+        Telemetry.track(.tagOpened)
+        let clean = tag.hasPrefix("#") ? String(tag.dropFirst()) : tag
+        openSearch("#" + clean.lowercased())
+    }
+
+    /// Нажали на «@логин» — страница человека; незнакомый логин — поиск по нему.
+    func openHandle(_ handle: String) {
+        let h = (handle.hasPrefix("@") ? String(handle.dropFirst()) : handle).lowercased()
+        if h == state.me.handle.lowercased() {
+            state.commentsPostId = nil
+            state.commentsPrismId = nil
+            selectTab(.profile)
+        } else if let person = Demo.people.first(where: { $0.handle.lowercased() == h }) {
+            state.commentsPostId = nil
+            state.commentsPrismId = nil
+            openPerson(person.id)
+        } else {
+            openSearch("@" + h)
+        }
+    }
+
+    /// Кого подсказать после «@» в поле ввода.
+    func mentionCandidates(_ part: String) -> [User] {
+        Search.mentionCandidates(part, state.searchablePeople, friends: state.following)
+    }
+
+    // MARK: - Правка записи
+
+    /// Править можно только свою запись — в ленте или в группе.
+    func startEdit(_ postId: Int64) {
+        guard let post = state.findPost(postId), post.author.id == state.me.id else { return }
+        state.editingPostId = postId
+    }
+
+    func cancelEdit() {
+        state.editingPostId = nil
+    }
+
+    /// Сохранить правку: новый текст и оставшиеся вложения (убрать можно,
+    /// добавить — новой записью). Пустая запись без вложений, чек-ина и
+    /// опроса не сохраняется. Ответ — текст ошибки или nil.
+    /// Файлы убранных вложений удаляет экран.
+    @discardableResult
+    func saveEdit(_ postId: Int64, _ text: String, _ media: [Attachment]) -> String? {
+        guard let post = state.findPost(postId) else { return t("Запись не найдена") }
+        if post.author.id != state.me.id { return t("Править можно только свои записи") }
+        let clean = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000))
+        let kept = post.media.filter { a in media.contains(where: { $0.id == a.id }) }
+        if clean.isEmpty && kept.isEmpty && post.checkIn == nil && post.poll == nil { return t("Запись не может быть пустой") }
+        if clean == post.text && kept.count == post.media.count {
+            cancelEdit()
+            return nil
+        }
+        var edited = post
+        edited.text = clean
+        edited.media = kept
+        edited.editedAt = clock()
+        Telemetry.track(.postEdited)
+        var s = state
+        s.posts = s.posts.map { $0.id == postId ? edited : $0 }
+        s.groups = s.groups.map { group in
+            guard group.posts.contains(where: { $0.id == postId }) else { return group }
+            var g = group
+            g.posts = g.posts.map { $0.id == postId ? edited : $0 }
+            return g
+        }
+        s.editingPostId = nil
+        state = s
+        return nil
+    }
+
+    // MARK: - Ссылки
+
+    /// Открыть ссылку Memory: запись, профиль, PRISM, группу или тег. false — такого на телефоне нет.
+    @discardableResult
+    func openLink(_ target: LinkTarget) -> Bool {
+        Telemetry.track(.linkOpened)
+        let s = state
+        switch target {
+        case .postLink(let id):
+            guard let post = s.findPost(id), !s.blocked.contains(post.author.id), s.canSee(post.author) else { return false }
+            var next = state
+            next.openPostId = id
+            next.activityOpen = false
+            next.searchOpen = false
+            next.openChatId = nil
+            state = next
+            return true
+        case .profile(let handle):
+            let h = handle.lowercased()
+            if h != s.me.handle.lowercased() && !Demo.people.contains(where: { $0.handle.lowercased() == h }) { return false }
+            openHandle(h)
+            return true
+        case .prismLink(let id):
+            guard s.prisms.contains(where: { $0.id == id }) else { return false }
+            selectTab(.prism)
+            state.prismStartId = id
+            return true
+        case .groupLink(let id):
+            guard s.groups.contains(where: { $0.id == id }) else { return false }
+            selectTab(.groups)
+            openGroup(id)
+            return true
+        case .tagLink(let tag):
+            openTag(tag)
+            return true
+        }
+    }
+
+    func closePost() {
+        state.openPostId = nil
+    }
+
+    // MARK: - Эфиры
+
+    /// Видеосвязь эфиров: демо, пока нет сервера LiveKit.
+    @ObservationIgnored var liveTransport: LiveTransport = DemoLiveTransport.shared
+    @ObservationIgnored private var liveTask: Task<Void, Never>?
+
+    func openLiveStart() {
+        state.liveStarting = true
+    }
+
+    func closeLiveStart() {
+        state.liveStarting = false
+    }
+
+    /// Начать свой эфир. Ответ — текст ошибки или nil.
+    @discardableResult
+    func startLive(_ title: String, friendsOnly: Bool) -> String? {
+        if state.myLive != nil { return t("Эфир уже идёт") }
+        let clean = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Lives.maxTitle))
+        if clean.isEmpty { return t("Назовите эфир — так друзья поймут, о чём он") }
+        let live = LiveStream(id: newId(), hostId: state.me.id, title: clean, startedAt: clock(),
+                              friendsOnly: friendsOnly, seed: Int.random(in: 0..<1000))
+        Telemetry.track(.liveStarted)
+        liveTransport.publish(room: live.room, token: "")
+        var s = state
+        s.myLive = live
+        s.watchingLiveId = live.id
+        s.liveStarting = false
+        s.liveSummary = nil
+        state = s
+        ensureLiveTicker()
+        return nil
+    }
+
+    /// Закончить свой эфир — итог на экране.
+    func endLive() {
+        guard var live = state.myLive else { return }
+        liveTransport.leave()
+        live.endedAt = clock()
+        live.viewers = 0
+        var s = state
+        s.myLive = nil
+        s.watchingLiveId = nil
+        s.liveSummary = live
+        s.confirmEndLive = false
+        state = s
+    }
+
+    /// Вернуться на экран своего идущего эфира.
+    func returnToMyLive() {
+        guard let live = state.myLive else { return }
+        state.watchingLiveId = live.id
+    }
+
+    func cancelEndLive() {
+        state.confirmEndLive = false
+    }
+
+    func dismissLiveSummary() {
+        state.liveSummary = nil
+    }
+
+    /// Смотреть эфир друга.
+    func watchLive(_ liveId: Int64) {
+        guard let live = state.visibleLives.first(where: { $0.id == liveId }) else { return }
+        Telemetry.track(.liveWatched)
+        liveTransport.join(room: live.room, token: "")
+        var s = state
+        s.watchingLiveId = liveId
+        s.activityOpen = false
+        s.searchOpen = false
+        s.lives = s.lives.map { $0.id == liveId ? Lives.viewers($0, 1) : $0 }
+        state = s
+        ensureLiveTicker()
+    }
+
+    /// Выйти из эфира друга.
+    func leaveLive() {
+        guard let id = state.watchingLiveId else { return }
+        if state.myLive?.id == id { return }
+        liveTransport.leave()
+        var s = state
+        s.watchingLiveId = nil
+        s.lives = s.lives.map { $0.id == id ? Lives.viewers($0, -1) : $0 }
+        state = s
+    }
+
+    private func updateLive(_ id: Int64, _ change: (LiveStream) -> LiveStream) {
+        var s = state
+        if let mine = s.myLive, mine.id == id { s.myLive = change(mine) }
+        s.lives = s.lives.map { $0.id == id ? change($0) : $0 }
+        state = s
+    }
+
+    /// Комментарий в открытом эфире.
+    func sendLiveComment(_ text: String) {
+        guard let id = state.watchingLiveId else { return }
+        let clean = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Lives.maxComment))
+        if clean.isEmpty { return }
+        let me = state.me
+        let comment = LiveComment(id: newId(), authorId: me.id, name: me.name, text: clean, at: clock(), hue: me.hue)
+        updateLive(id) { Lives.addComment($0, comment) }
+    }
+
+    /// Сердечко в открытом эфире.
+    func sendHeart() {
+        guard let id = state.watchingLiveId else { return }
+        updateLive(id) { live in
+            var x = live
+            x.hearts += 1
+            return x
+        }
+    }
+
+    /// Друг начал эфир: в «Историях», в ленте активности и уведомлением.
+    func friendGoesLive<G: RandomNumberGenerator>(_ friend: User, using rng: inout G) {
+        if state.blocked.contains(friend.id) || state.lives.contains(where: { $0.hostId == friend.id && $0.live }) { return }
+        let title = Lives.demoTitle(Int.random(in: 0..<100, using: &rng))
+        let live = LiveStream(id: newId(), hostId: friend.id, title: title, startedAt: clock(),
+                              viewers: 3 + Int.random(in: 0..<20, using: &rng), seed: Int.random(in: 0..<1000, using: &rng))
+        state.lives = [Lives.viewers(live, 0)] + state.lives
+        record(.live, friend, targetId: live.id, preview: title)
+        notify(Nudges.liveStarted(friend, title))
+        ensureLiveTicker()
+    }
+
+    /// Шаг демо-эфиров: в свой эфир приходят зрители, сердечки и
+    /// комментарии; эфиры друзей живут и через несколько минут кончаются.
+    func liveTick<G: RandomNumberGenerator>(using rng: inout G) {
+        let now = clock()
+        var s = state
+        let people = Demo.people.filter { !s.blocked.contains($0.id) }
+        var mine = s.myLive
+        if var m = mine {
+            m = Lives.viewers(m, Int.random(in: -1..<4, using: &rng))
+            m.hearts += Int.random(in: 0..<6, using: &rng)
+            if !people.isEmpty && Int.random(in: 0..<3, using: &rng) == 0 {
+                let p = people[Int.random(in: 0..<people.count, using: &rng)]
+                let text = Lives.demoComment(Int.random(in: 0..<100, using: &rng))
+                m = Lives.addComment(m, LiveComment(id: newId(), authorId: p.id, name: p.name, text: text, at: now, hue: p.hue))
+            }
+            mine = m
+        }
+        var lives: [LiveStream] = []
+        for l in s.lives where l.live {
+            // Эфир друга идёт 3–10 минут; смотрите — не кончится, пока вы в нём
+            if s.watchingLiveId != l.id && now.timeIntervalSince(l.startedAt) > 3 * 60 && Int.random(in: 0..<8, using: &rng) == 0 {
+                continue
+            }
+            var x = Lives.viewers(l, Int.random(in: -2..<3, using: &rng))
+            x.hearts = l.hearts + Int.random(in: 0..<4, using: &rng)
+            if !people.isEmpty && Int.random(in: 0..<2, using: &rng) == 0 {
+                let p = people[Int.random(in: 0..<people.count, using: &rng)]
+                if p.id != l.hostId {
+                    let text = Lives.demoComment(Int.random(in: 0..<100, using: &rng))
+                    x = Lives.addComment(x, LiveComment(id: newId(), authorId: p.id, name: p.name, text: text, at: now, hue: p.hue))
+                }
+            }
+            lives.append(x)
+        }
+        s.myLive = mine
+        s.lives = lives
+        if let id = s.watchingLiveId {
+            let stillThere = mine?.id == id || lives.contains(where: { $0.id == id })
+            if !stillThere { s.watchingLiveId = nil }
+        }
+        state = s
+    }
+
+    /// Демо-эфиры живут сами, пока идёт хоть один. В тестах (без демо-ответов) — только liveTick вручную.
+    private func ensureLiveTicker() {
+        guard demoReplies, liveTask == nil else { return }
+        liveTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if self.state.myLive == nil && self.state.lives.isEmpty {
+                    self.liveTask = nil
+                    return
+                }
+                try? await Task.sleep(nanoseconds: UInt64.random(in: 1_500_000_000...3_000_000_000))
+                if Task.isCancelled { return }
+                var rng = SystemRandomNumberGenerator()
+                self.liveTick(using: &rng)
+            }
+        }
+    }
+
+    // MARK: - Секретная и исчезающая переписка
+
+    /// Хранилище своего ключа шифрования (SecureStore); без него — в памяти, для тестов.
+    @ObservationIgnored private var keyStore: KeyValueStore?
+    @ObservationIgnored private var memoryKey: ChatKeyPair?
+
+    /// Последний конверт, который ушёл бы на сервер, — для проверки, что текста в нём нет.
+    @ObservationIgnored private(set) var lastEnvelope: String?
+
+    func attachKeys(_ store: KeyValueStore) {
+        keyStore = store
+    }
+
+    /// Свой ключ: открытый показывается в коде безопасности, закрытый не покидает телефон.
+    func myKeys() -> ChatKeyPair {
+        if let store = keyStore { return ChatKeys(store).identity(state.me.handle) }
+        if let key = memoryKey { return key }
+        let key = ChatKeyPair.generate()
+        memoryKey = key
+        return key
+    }
+
+    /// Открытый ключ собеседника. Пока сервера нет — его демо-ключ.
+    private func peerKeys(_ chat: Chat) -> ChatKeyPair { ChatCrypto.demoPeer(chat.peer.id) }
+
+    private func aad(_ chat: Chat) -> String {
+        "memory-chat:" + [state.me.handle, chat.peer.handle].sorted().joined(separator: "|")
+    }
+
+    private func sealFor(_ chat: Chat, _ text: String) -> String? {
+        guard let key = try? ChatCrypto.sessionKey(myKeys(), peerKeys(chat).publicKey) else { return nil }
+        return try? ChatCrypto.seal(key, text, aad: aad(chat))
+    }
+
+    /// «Телефон собеседника» открывает конверт своим ключом.
+    private func peerOpen(_ chat: Chat, _ envelope: String) -> String? {
+        guard let key = try? ChatCrypto.sessionKey(peerKeys(chat), myKeys().publicKey) else { return nil }
+        return ChatCrypto.open(key, envelope, aad: aad(chat))
+    }
+
+    /// Включить или выключить сквозное шифрование переписки. Выключили — отметка о сверке снимается.
+    func setSecret(_ chatId: Int, _ on: Bool) {
+        if on { Telemetry.track(.secretChat) }
+        updateChat(chatId) { c in
+            c.secret = on
+            if !on { c.verified = false }
+        }
+    }
+
+    /// Код безопасности переписки — 12 групп по 5 цифр.
+    func safetyNumber(_ chatId: Int) -> String? {
+        guard let chat = state.chats.first(where: { $0.id == chatId }) else { return nil }
+        return ChatCrypto.safetyNumber(myKeys().publicKey, peerKeys(chat).publicKey)
+    }
+
+    /// Человек сверил код с собеседником — отметка «проверено».
+    func markVerified(_ chatId: Int, _ verified: Bool = true) {
+        updateChat(chatId) { $0.verified = verified }
+    }
+
+    /// Исчезающие сообщения: новые исчезнут через ttl. Уже отправленные не меняются.
+    func setDisappearing(_ chatId: Int, _ ttl: Disappear) {
+        if ttl != .off { Telemetry.track(.disappearing) }
+        updateChat(chatId) { $0.disappearMs = ttl.ms }
+    }
+
+    /// Убрать исчезнувшие сообщения. Ответ — их вложения (файлы удаляет
+    /// вызывающий: модель о файлах не знает).
+    @discardableResult
+    func sweepExpired(now: Date? = nil) -> [Attachment] {
+        let moment = now ?? clock()
+        func expired(_ m: Message) -> Bool {
+            guard let at = m.expiresAt else { return false }
+            return at <= moment
+        }
+        guard state.chats.contains(where: { c in c.messages.contains(where: expired) }) else { return [] }
+        var gone: [Attachment] = []
+        state.chats = state.chats.map { chat in
+            let dead = chat.messages.filter(expired)
+            if dead.isEmpty { return chat }
+            var c = chat
+            for m in dead { gone += m.attachments }
+            c.messages = chat.messages.filter { !expired($0) }
+            if let pinned = c.pinnedId, !c.messages.contains(where: { $0.id == pinned }) { c.pinnedId = nil }
+            return c
+        }
+        return gone
+    }
+
     // MARK: - Лента
+
+    /// «Нравится» у записи, где бы она ни была: в ленте или в группе.
+    func likeAny(_ postId: Int64) {
+        if let group = state.groups.first(where: { g in g.posts.contains(where: { $0.id == postId }) }) {
+            toggleGroupPostLike(group.id, postId)
+        } else {
+            toggleLike(postId)
+        }
+    }
 
     func toggleLike(_ postId: Int64) {
         state.posts = state.posts.map { Self.toggled($0, postId) }
@@ -693,6 +1288,7 @@ final class AppModel {
 
     /// Новая запись: текст, фото и видео, чек-ин, опрос. Пустую (без текста и вложений) не публикуем.
     func publish(_ text: String, media: [Attachment] = [], checkIn: CheckIn? = nil, poll: PollDraft? = nil) {
+        Telemetry.track(.postPublished)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let built = poll.flatMap { $0.build(newId()) }
         if trimmed.isEmpty && media.isEmpty && checkIn == nil && built == nil { return }
@@ -869,6 +1465,7 @@ final class AppModel {
 
     /// Комментарий к записи в ленте или в группе.
     func addComment(_ postId: Int64, _ text: String, replyTo: String? = nil, sticker: Attachment? = nil) {
+        Telemetry.track(.commentSent)
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
         if trimmed.isEmpty && sticker == nil { return }
         let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo, sticker: sticker)
@@ -988,7 +1585,10 @@ final class AppModel {
         state.sentRequests.remove(userId)
         state.followRequests.removeAll { $0 == userId }
         state.following.insert(userId)
-        if let person = Demo.person(userId) { notify(Nudges.requestAccepted(person)) }
+        if let person = Demo.person(userId) {
+            record(.friendAccepted, person)
+            notify(Nudges.requestAccepted(person))
+        }
     }
 
     /// Принять заявку в друзья: человек становится другом.
@@ -1014,6 +1614,7 @@ final class AppModel {
               !state.followRequests.contains(userId), !state.blocked.contains(userId),
               !state.following.contains(userId), !state.sentRequests.contains(userId) else { return }
         state.followRequests.insert(userId, at: 0)
+        record(.friendRequest, person)
         notify(Nudges.followRequest(person, common: person.interests.filter { state.me.interests.contains($0) }))
     }
 
@@ -1051,9 +1652,16 @@ final class AppModel {
     /// чтобы переписку можно было почувствовать без сервера.
     func send(_ chatId: Int, _ text: String, attachments: [Attachment] = [], replyTo: ReplyRef? = nil,
               poll: PollDraft? = nil, place: SharedPlace? = nil) {
+        Telemetry.track(.messageSent)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let built = poll.flatMap { $0.build(newId()) }
         if trimmed.isEmpty && attachments.isEmpty && built == nil && place == nil { return }
+        // Секретная переписка: на сервер ушёл бы только конверт; демо-собеседник его расшифровывает своим ключом
+        if let secretChat = state.chats.first(where: { $0.id == chatId }), secretChat.secret, !trimmed.isEmpty {
+            let sealed = sealFor(secretChat, trimmed)
+            lastEnvelope = sealed
+            guard let envelope = sealed, peerOpen(secretChat, envelope) == trimmed else { return }
+        }
         append(chatId, Message(
             id: newId(), fromMe: true, text: trimmed, time: Self.now(),
             attachments: Array(attachments.prefix(Self.maxMedia)),
@@ -1078,9 +1686,9 @@ final class AppModel {
             let reply = Demo.replies[self.replyIndex % Demo.replies.count]
             self.replyIndex += 1
             self.append(chatId, Message(id: self.newId(), fromMe: false, text: reply, time: Self.now()))
-            // Открытая переписка — ответ и так на экране
+            // Открытая переписка — ответ и так на экране; у секретной текст в уведомление не попадает
             if let chat = self.state.chats.first(where: { $0.id == chatId }), !chat.muted, self.state.openChatId != chatId {
-                self.notify(Nudges.message(chat.peer, reply, chatId: chatId))
+                self.notify(Nudges.message(chat.peer, chat.secret ? t("Новое сообщение") : reply, chatId: chatId))
             }
         }
     }
@@ -1186,7 +1794,13 @@ final class AppModel {
     private func append(_ chatId: Int, _ message: Message) {
         guard var chat = state.chats.first(where: { $0.id == chatId }) else { return }
         let reading = state.openChatId == chatId
-        chat.messages.append(message)
+        // Настройки переписки — на каждое новое сообщение: шифрование и срок жизни
+        var stamped = message
+        if chat.secret { stamped.secret = true }
+        if stamped.expiresAt == nil && chat.disappearMs > 0 {
+            stamped.expiresAt = clock().addingTimeInterval(Double(chat.disappearMs) / 1000)
+        }
+        chat.messages.append(stamped)
         if !message.fromMe && !reading { chat.unread += 1 }
         // Чат с новым сообщением поднимается наверх списка
         state.chats = [chat] + state.chats.filter { $0.id != chatId }
@@ -1253,6 +1867,7 @@ final class AppModel {
     /// Опубликовать свой ролик: готовое видео из редактора, обложка,
     /// подпись и что звучит. Ролик встаёт первым во вкладке PRISM.
     func publishPrism(video: Attachment, cover: Attachment?, caption: String, music: String, durationMs: Double) {
+        Telemetry.track(.prismPublished)
         let id = newId()
         let text = String(caption.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
         let sound = music.trimmingCharacters(in: .whitespaces)
@@ -1843,6 +2458,9 @@ final class AppModel {
     func reset() {
         lifeTask?.cancel()
         lifeTask = nil
+        liveTask?.cancel()
+        liveTask = nil
+        if state.myLive != nil || state.watchingLiveId != nil { liveTransport.leave() }
         acceptTasks.values.forEach { $0.cancel() }
         acceptTasks = [:]
         state = UiState()
@@ -2025,7 +2643,12 @@ final class AppModel {
             selectTab(.groups)
             openGroup(Int(nudge.targetId))
         case .person:
-            openPerson(Int(nudge.targetId))
+            // Друг в эфире — сразу в эфир
+            if let live = state.visibleLives.first(where: { $0.hostId == Int(nudge.targetId) }) {
+                watchLive(live.id)
+            } else {
+                openPerson(Int(nudge.targetId))
+            }
         case .chat:
             if state.chats.contains(where: { $0.id == Int(nudge.targetId) }) { openChat(Int(nudge.targetId)) } else { selectTab(.chats) }
         case .recap:
@@ -2160,6 +2783,7 @@ final class AppModel {
         if !joined.isEmpty { options += [1, 1] }
         if !mine.isEmpty { options += [2, 2] }
         if !requesters.isEmpty { options.append(3) }
+        if !friends.isEmpty { options.append(4) }
         guard let pick = options.randomElement(using: &rng) else { return }
         switch pick {
         case 0:
@@ -2168,25 +2792,35 @@ final class AppModel {
             let group = joined.randomElement(using: &rng)!
             let name = Demo.newcomers.randomElement(using: &rng)!
             let person = User(id: 500 + Int.random(in: 0..<1000, using: &rng), name: name,
-                              handle: name.lowercased().replacingOccurrences(of: " ", with: "."))
+                              handle: name.lowercased().replacingOccurrences(of: " ", with: "."),
+                              hue: Double.random(in: 0..<1, using: &rng))
             state.groups = state.groups.map { g in
                 var g = g
                 if g.id == group.id { g.members += 1 }
                 return g
             }
+            if group.mine { record(.groupJoin, person, targetId: Int64(group.id), preview: group.name) }
             notify(Nudges.groupMember(group, person))
         case 2:
             let post = mine.randomElement(using: &rng)!
             let fans = Demo.people.filter { !state.blocked.contains($0.id) }
             let fan = fans.randomElement(using: &rng)!
-            state.posts = state.posts.map { p in
-                var p = p
-                if p.id == post.id { p.likes += 1 }
-                return p
+            if Int.random(in: 0..<3, using: &rng) == 0 {
+                // Иногда — не «нравится», а комментарий, порой с упоминанием
+                demoComment(post, fan, using: &rng)
+            } else {
+                state.posts = state.posts.map { p in
+                    var p = p
+                    if p.id == post.id { p.likes += 1 }
+                    return p
+                }
+                record(.like, fan, targetId: post.id, preview: post.text)
+                notify(Nudges.liked(fan, post))
             }
-            notify(Nudges.liked(fan, post))
-        default:
+        case 3:
             receiveFriendRequest(requesters.randomElement(using: &rng)!.id)
+        default:
+            friendGoesLive(friends.randomElement(using: &rng)!, using: &rng)
         }
     }
 
@@ -2241,6 +2875,7 @@ final class AppModel {
             var votes: [Int: Int] = [:]
             for _ in 0..<added { votes[Int.random(in: 0..<poll.options.count, using: &rng), default: 0] += 1 }
             updatePostPoll(post.id) { $0.addVotes(votes) }
+            record(.pollVotes, nil, targetId: post.id, preview: poll.question, count: added)
             let groupId = s.groups.first { g in g.posts.contains { $0.id == post.id } }?.id
             notify(Nudges.pollVotes(poll.question, added, postId: post.id, groupId: groupId))
         case 1:
@@ -2636,7 +3271,9 @@ final class AppModel {
             stickerPacks: state.stickerPacks, backdrop: state.backdrop, recentGifs: state.recentGifs,
             reports: state.reports,
             guideRead: state.guideRead.sorted(), guideHidden: state.guideHidden,
-            subscription: state.subscription
+            subscription: state.subscription,
+            activity: LossyList(state.activity), activitySeen: state.activitySeen,
+            searchHistory: state.searchHistory
         )
     }
 
@@ -2699,6 +3336,9 @@ final class AppModel {
         s.guideRead = Set(snapshot.guideRead ?? []).intersection(Guide.keys)
         s.guideHidden = snapshot.guideHidden ?? false
         s.subscription = snapshot.subscription ?? MemorySubscription()
+        s.activity = snapshot.activity?.items ?? []
+        s.activitySeen = snapshot.activitySeen ?? Date(timeIntervalSince1970: 0)
+        s.searchHistory = snapshot.searchHistory ?? []
         s.applyMe(s.me)
         state = s
         refreshPlan()

@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.profile
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -80,7 +81,7 @@ fun ProfileSectionScreen(vm: AppViewModel, state: UiState, section: ProfileSecti
                         .glass(CircleShape)
                         .clickable { vm.closeProfileSection() },
                     contentAlignment = Alignment.Center,
-                ) { Glyph(LineIcon.Back, Palette.Ink) }
+                ) { Glyph(LineIcon.Back, Palette.Ink, description = LineIcon.Back.label) }
                 Spacer(Modifier.width(14.dp))
                 ScreenTitle(section.title, subtitle(state, section))
             }
@@ -257,7 +258,7 @@ private fun FriendActions(person: User, onWrite: () -> Unit, onRemove: () -> Uni
             Box(
                 modifier = Modifier.size(36.dp).clip(CircleShape).clickable { menu = true },
                 contentAlignment = Alignment.Center,
-            ) { Glyph(LineIcon.More, Palette.Mist, size = 20.dp) }
+            ) { Glyph(LineIcon.More, Palette.Mist, size = 20.dp, description = LineIcon.More.label) }
             MemoryMenu(expanded = menu, onDismiss = { menu = false }) {
                 MenuRow(LineIcon.Trash, t("Удалить из друзей"), color = Palette.PearlPink) { menu = false; confirm = true }
             }

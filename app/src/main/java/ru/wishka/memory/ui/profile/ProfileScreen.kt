@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.profile
 
+import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.tf
 import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.clickable
@@ -146,7 +147,7 @@ fun ProfileScreen(
                                 .glass(CircleShape, strong = true)
                                 .clickable { avatarMenu = true },
                             contentAlignment = Alignment.Center,
-                        ) { Glyph(LineIcon.Camera, Palette.Ink, size = 16.dp) }
+                        ) { Glyph(LineIcon.Camera, Palette.Ink, size = 16.dp, description = LineIcon.Camera.label) }
                         MemoryMenu(expanded = avatarMenu, onDismiss = { avatarMenu = false }) {
                             MenuRow(LineIcon.Image, t("Выбрать из галереи")) { avatarMenu = false; picker.pickPhoto() }
                             MenuRow(LineIcon.Camera, t("Сделать фото")) { avatarMenu = false; picker.takePhoto() }
@@ -276,15 +277,15 @@ fun ProfileScreen(
 
 /** Круглая стеклянная кнопка со значком — шестерёнка, карандаш, «назад». */
 @Composable
-fun RoundIconButton(icon: LineIcon, color: androidx.compose.ui.graphics.Color = Palette.Lilac, onClick: () -> Unit) {
+fun RoundIconButton(icon: LineIcon, color: androidx.compose.ui.graphics.Color = Palette.Lilac, description: String = icon.label, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
             .glass(CircleShape)
-            .clickable(onClick = onClick),
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Glyph(icon, color, size = 20.dp) }
+    ) { Glyph(icon, color, size = 20.dp, description = description) }
 }
 
 /** Счётчик профиля, который можно нажать. */

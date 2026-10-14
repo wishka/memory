@@ -22,6 +22,8 @@ struct AuthScreen: View {
     /// Возраст, соглашение и согласие на обработку — три отдельные галочки.
     @State private var consent = ConsentState()
     @State private var openDoc: LegalDoc?
+    /// «Забыли пароль?» — вместо формы входа форма восстановления.
+    @State private var forgot = false
 
     private enum FieldId: Hashable { case login, name, password, repeated }
     @FocusState private var focus: FieldId?
@@ -37,6 +39,13 @@ struct AuthScreen: View {
                     Spacer().frame(height: 28)
 
                     GlassCard {
+                        if forgot {
+                            ForgotPasswordForm(auth: auth, login: $login) {
+                                withAnimation(.easeOut(duration: 0.2)) { forgot = false }
+                            }
+                            .padding(18)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
                         VStack(spacing: 12) {
                             modeSwitch
                             GlassField(placeholder: t("Логин"), text: $login, limit: 24, singleLine: true, keyboard: .asciiCapable, plain: true)
@@ -87,6 +96,16 @@ struct AuthScreen: View {
                                 action: submit
                             )
 
+                            if !registering {
+                                Button {
+                                    auth.clearError()
+                                    withAnimation(.easeOut(duration: 0.2)) { forgot = true }
+                                } label: {
+                                    Text(t("Забыли пароль?")).textStyle(.bodySmall, Palette.lilac)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
                             Text(registering
                                  ? t("Логин — латиница, цифры, точка и «_», от 3 символов. Пароль — от 8 символов, с буквами и цифрами.")
                                  : tf("Попробовать без регистрации: логин %s, пароль %s", LocalAuth.demoLogin, LocalAuth.demoPassword))
@@ -96,6 +115,7 @@ struct AuthScreen: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .padding(18)
+                        }
                     }
 
                     Text(t("Аккаунты пока хранятся только на этом iPhone."))

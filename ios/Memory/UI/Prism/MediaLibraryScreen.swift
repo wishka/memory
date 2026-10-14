@@ -151,6 +151,7 @@ struct MediaLibraryScreen: View {
                         .background(Circle().fill(LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.search.label)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -219,6 +220,7 @@ struct MediaLibraryScreen: View {
                     .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.more.label)
             }
             .padding(10)
         }
@@ -306,10 +308,12 @@ struct MediaLibraryScreen: View {
                     .background(Circle().fill(LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(player.playing ? LineIcon.pause.label : LineIcon.play.label)
             Button { player.stop() } label: {
                 Glyph(kind: .close, color: Palette.mist, size: 18).frame(width: 36, height: 36)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(LineIcon.close.label)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
