@@ -28,7 +28,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Запуск: переменные окружения (см. server/.env.example).
@@ -58,8 +57,8 @@ private val WITH_BODY = setOf(HttpMethod.Post, HttpMethod.Put, HttpMethod.Patch)
 
 fun Application.memory(core: Core) {
     install(WebSockets) {
-        pingPeriod = 30.seconds
-        timeout = 60.seconds
+        pingPeriodMillis = 30_000
+        timeoutMillis = 60_000
         maxFrameSize = 64L * 1024
     }
     routing {
