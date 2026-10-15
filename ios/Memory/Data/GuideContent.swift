@@ -327,6 +327,23 @@ enum GuideContent {
             tip: nil, action: .chats
         ))
         topics.append(GuideTopic(
+            id: "groups", title: GuideText(ru: "Групповые чаты", en: "Group chats", hy: "Խմբային զրույցներ"),
+            steps: [
+                GuideText(ru: "«Чаты» → значок группы вверху: название и друзья — и группа готова.", en: "Chats → the group icon at the top: give it a name, pick friends — done.", hy: "«Զրույցներ» → վերևի խմբի պատկերակը․ անուն և ընկերներ — խումբը պատրաստ է։"),
+                GuideText(ru: "Нажмите на название в шапке: участники, «Добавить участников», «Выйти из группы». Админы меняют название и состав, создатель назначает админов.", en: "Tap the name in the header: members, “Add members”, “Leave group”. Admins rename and manage members; the creator appoints admins.", hy: "Սեղմեք վերնագրի անվանը՝ մասնակիցներ, «Ավելացնել մասնակիցներ», «Դուրս գալ խմբից»։ Ադմինները փոխում են անունն ու կազմը, ստեղծողը նշանակում է ադմիններ։"),
+                GuideText(ru: "✓ — сообщение на сервере, ✓✓ — прочитали. В группе долгое нажатие на своё — «Прочитали: N».", en: "✓ — on the server, ✓✓ — read. In a group, long-press your message to see “Read by: N”.", hy: "✓ — սերվերում է, ✓✓ — կարդացել են։ Խմբում երկար սեղմեք ձեր հաղորդագրությանը՝ «Կարդացել են՝ N»։"),
+            ],
+            tip: nil, action: .chats
+        ))
+        topics.append(GuideTopic(
+            id: "requests", title: GuideText(ru: "Запросы на переписку", en: "Message requests", hy: "Գրելու հարցումներ"),
+            steps: [
+                GuideText(ru: "Если пишет не друг — сообщение попадёт в «Чаты» → «Запросы», без уведомления.", en: "If someone who isn't your friend writes, it lands in Chats → “Requests”, with no notification.", hy: "Եթե գրում է ոչ ընկերը, հաղորդագրությունը կհայտնվի «Զրույցներ» → «Հարցումներ»՝ առանց ծանուցման։"),
+                GuideText(ru: "Откройте запрос: «Принять», «Удалить» или «Заблокировать». Пока не приняли, человек не видит, что вы прочитали.", en: "Open a request: “Accept”, “Delete” or “Block”. Until you accept, they can't see you've read it.", hy: "Բացեք հարցումը՝ «Ընդունել», «Ջնջել» կամ «Արգելափակել»։ Մինչև չընդունեք, մարդը չի տեսնի, որ կարդացել եք։"),
+            ],
+            tip: GuideText(ru: "Кто вообще может вам писать — в «Приватности».", en: "Who can message you at all is set in Privacy.", hy: "Ով ընդհանրապես կարող է ձեզ գրել՝ «Գաղտնիություն»-ում։"), action: .chats
+        ))
+        topics.append(GuideTopic(
             id: "attach", title: GuideText(ru: "Вложения", en: "Attachments", hy: "Կցորդներ"),
             steps: [
                 GuideText(ru: "Скрепка — фото, видео, документы, свои стикеры, гифки, опрос и место на карте.", en: "The paperclip: photos, videos, documents, your stickers, GIFs, a poll and a location.", hy: "Ամրակ՝ լուսանկարներ, տեսանյութեր, փաստաթղթեր, ձեր ստիկերները, GIF-եր, հարցում և վայր քարտեզի վրա։"),
@@ -358,6 +375,7 @@ enum GuideContent {
                 GuideText(ru: "«⋯» в переписке → «Сквозное шифрование»: сообщения читаете только вы двое.", en: "“⋯” in a chat → “End-to-end encryption”: only the two of you can read the messages.", hy: "Նամակագրության «⋯» → «Ծայրից ծայր գաղտնագրում»՝ հաղորդագրությունները կարդում եք միայն դուք երկուսով։"),
                 GuideText(ru: "«Код безопасности» — 60 цифр. Сверьте с собеседником: совпали — переписку никто не перехватывает.", en: "The “Safety code” is 60 digits. Compare it with your friend: if it matches, no one is intercepting.", hy: "«Անվտանգության կոդը» 60 թվանշան է։ Համեմատեք զրուցակցի հետ՝ եթե համընկնում է, ոչ ոք չի որսում։"),
                 GuideText(ru: "«Исчезающие» — новые сообщения исчезнут у обоих через 5 минут, час, день или неделю.", en: "“Disappearing” — new messages vanish for both of you after 5 minutes, an hour, a day or a week.", hy: "«Անհետացող»՝ նոր հաղորդագրությունները կանհետանան երկուսի մոտ 5 րոպեից, ժամից, օրից կամ շաբաթից։"),
+                GuideText(ru: "Фото, видео и файлы в секретной переписке шифруются на телефоне — сервер хранит только шифр.", en: "Photos, videos and files in a secret chat are encrypted on the phone — the server stores only ciphertext.", hy: "Գաղտնի զրույցի լուսանկարները, տեսանյութերը և ֆայլերը գաղտնագրվում են հեռախոսում — սերվերը պահում է միայն գաղտնագիրը։"),
             ],
             tip: GuideText(ru: "Значки у времени: 🔒 — ушло зашифрованным, ⏱ — исчезнет.", en: "Icons by the time: 🔒 — sent encrypted, ⏱ — will disappear.", hy: "Ժամի կողքի նշանները՝ 🔒 — ուղարկված է գաղտնագրված, ⏱ — կանհետանա։"), action: .chats
         ))
@@ -666,6 +684,15 @@ enum GuideContent {
             tip: nil, action: nil
         ))
         topics.append(GuideTopic(
+            id: "hidden-words", title: GuideText(ru: "Скрытые слова и фильтр", en: "Hidden words and filter", hy: "Թաքցված բառեր և զտիչ"),
+            steps: [
+                GuideText(ru: "Приватность → «Скрытые слова и фильтр»: добавьте слова — комментарии к вашим записям и сообщения с ними свернутся.", en: "Privacy → “Hidden words and filter”: add words — comments on your posts and messages containing them get collapsed.", hy: "Գաղտնիություն → «Թաքցված բառեր և զտիչ»․ ավելացրեք բառեր — դրանցով մեկնաբանություններն ու հաղորդագրությունները կծալվեն։"),
+                GuideText(ru: "Там же — «Скрывать оскорбления» и «Скрывать спам». Свёрнутое можно открыть: «Показать».", en: "There you'll also find “Hide insults” and “Hide spam”. Collapsed items can be opened: “Show”.", hy: "Այնտեղ են նաև «Թաքցնել վիրավորանքները» և «Թաքցնել սպամը»։ Ծալվածը կարելի է բացել՝ «Ցույց տալ»։"),
+                GuideText(ru: "Свою запись можно закрыть от комментариев: в обсуждении — «Выключить комментарии».", en: "You can close your own post to comments: “Turn off comments” in the discussion.", hy: "Ձեր գրառումը կարելի է փակել մեկնաբանություններից՝ քննարկման մեջ «Անջատել մեկնաբանությունները»։"),
+            ],
+            tip: nil, action: .privacy
+        ))
+        topics.append(GuideTopic(
             id: "block", title: GuideText(ru: "Чёрный список", en: "Blocking", hy: "Սև ցուցակ"),
             steps: [
                 GuideText(ru: "«⋯» на странице человека → «Заблокировать».", en: "“⋯” on a person’s page → “Block”.", hy: "«⋯» մարդու էջում → «Արգելափակել»։"),
@@ -682,6 +709,14 @@ enum GuideContent {
                 GuideText(ru: "И удалить аккаунт: всё ваше будет стёрто с телефона без возврата.", en: "And delete your account: everything of yours is erased from the phone for good.", hy: "Եվ ջնջել հաշիվը․ ձեր ամբողջ տվյալներն անվերադարձ կջնջվեն հեռախոսից։"),
             ],
             tip: nil, action: .security
+        ))
+        topics.append(GuideTopic(
+            id: "devices", title: GuideText(ru: "Мои устройства", en: "My devices", hy: "Իմ սարքերը"),
+            steps: [
+                GuideText(ru: "Настройки → «Безопасность» → «Устройства»: где вы вошли и когда там были в последний раз.", en: "Settings → Security → “Devices”: where you're signed in and when each was last active.", hy: "Կարգավորումներ → «Անվտանգություն» → «Սարքեր»՝ որտեղ եք մուտք գործել և երբ եք վերջին անգամ եղել։"),
+                GuideText(ru: "«Выйти» у чужого устройства или «Выйти на всех, кроме этого» — если что-то не узнаёте.", en: "“Sign out” on a device you don't recognize, or “Sign out everywhere else”.", hy: "«Դուրս գալ» անծանոթ սարքից կամ «Դուրս գալ բոլոր մյուսներից»։"),
+            ],
+            tip: GuideText(ru: "Профиль и настройки приватности одинаковые на всех ваших телефонах.", en: "Your profile and privacy settings are the same on all your phones.", hy: "Պրոֆիլը և գաղտնիության կարգավորումները նույնն են ձեր բոլոր հեռախոսներում։"), action: .security
         ))
         topics.append(GuideTopic(
             id: "docs", title: GuideText(ru: "Документы", en: "Documents", hy: "Փաստաթղթեր"),
@@ -734,6 +769,7 @@ enum GuideContent {
             steps: [
                 GuideText(ru: "Настройки → «Данные и сеть»: качество фото и видео при отправке — «Стандартное», «Экономия трафика» или «Оригинал по Wi‑Fi».", en: "Settings → “Data and network”: photo and video quality when sending — “Standard”, “Data saver” or “Original on Wi‑Fi”.", hy: "Կարգավորումներ → «Տվյալներ և ցանց»՝ լուսանկարների և տեսանյութերի որակը ուղարկելիս՝ «Ստանդարտ», «Թրաֆիկի խնայում» կամ «Բնօրինակ Wi‑Fi-ով»։"),
                 GuideText(ru: "Там же — загрузки: пауза, продолжить, отменить; и сколько места занимает сохранённое для офлайна.", en: "There you'll also find uploads — pause, resume, cancel — and how much space offline content takes.", hy: "Այնտեղ են նաև վերբեռնումները՝ դադար, շարունակել, չեղարկել, և որքան տեղ է զբաղեցնում անցանցի համար պահպանվածը։"),
+                GuideText(ru: "Закрыли приложение — фото и видео догрузятся и отправятся сами, когда будет сеть.", en: "Closed the app? Photos and videos keep uploading and send themselves once there's a network.", hy: "Փակե՞լ եք հավելվածը — լուսանկարներն ու տեսանյութերը կվերբեռնվեն և կուղարկվեն ինքնուրույն, երբ ցանց լինի։"),
             ],
             tip: GuideText(ru: "Оборвалась связь — загрузка продолжится с того же места, даже после перезапуска.", en: "Connection dropped? The upload resumes from the same place, even after a restart.", hy: "Կապը կտրվե՞ց։ Վերբեռնումը կշարունակվի նույն տեղից, նույնիսկ վերագործարկումից հետո։"), action: .settings
         ))

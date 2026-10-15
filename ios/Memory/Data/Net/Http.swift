@@ -160,10 +160,11 @@ enum Json {
         return fallback
     }
 
-    static func bool(_ o: JSONObject, _ key: String) -> Bool {
+    /// fallback — если поля нет (как optBoolean(key, fallback) на Android).
+    static func bool(_ o: JSONObject, _ key: String, _ fallback: Bool = false) -> Bool {
         if let n = o[key] as? NSNumber { return n.boolValue }
         if let s = o[key] as? String { return s.lowercased() == "true" }
-        return false
+        return fallback
     }
 
     static func string(_ o: JSONObject, _ key: String, _ fallback: String = "") -> String {

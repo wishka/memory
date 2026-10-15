@@ -93,6 +93,7 @@ import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.DocumentRow
 import ru.wishka.memory.ui.components.FadeLine
 import ru.wishka.memory.ui.components.GhostButton
+import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.GlassField
 import ru.wishka.memory.ui.components.Glyph
 import ru.wishka.memory.ui.components.LineIcon
@@ -132,6 +133,8 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
     var choosingGif by remember { mutableStateOf(false) }
     var editingPoll by remember { mutableStateOf(false) }
     var headerMenu by remember { mutableStateOf(false) }
+    var groupInfo by remember(chat.id) { mutableStateOf(false) }
+    val state by vm.state.collectAsState()
     var choosingBackdrop by remember { mutableStateOf(false) }
     var showingSafety by remember { mutableStateOf(false) }
     var choosingDisappear by remember { mutableStateOf(false) }
@@ -208,27 +211,29 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { vm.openPerson(chat.peer.id) },
+                    .clickable { if (chat.isGroup) groupInfo = true else vm.openPerson(chat.peer.id) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Avatar(chat.peer, size = 40.dp, showOnline = true)
+                Avatar(chat.peer, size = 40.dp, showOnline = !chat.isGroup)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(chat.peer.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+                    val typingNow = state.typingTitle(chat)
                     Text(
                         when {
-                            chat.typing -> t("печатает…")
+                            typingNow != null -> typingNow
+                            chat.isGroup -> tf("Участников: %s", chat.group?.memberIds?.size ?: 0)
                             secretStatus(chat).isNotEmpty() -> secretStatus(chat)
                             chat.peer.online -> t("в сети")
                             else -> "@${chat.peer.handle}"
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (chat.typing || chat.peer.online) Palette.Lilac else Palette.Mist,
+                        color = if (typingNow != null || (!chat.isGroup && chat.peer.online)) Palette.Lilac else Palette.Mist,
                     )
                 }
             }
-            // Звонок: голосом или видео
-            if (!blocked) {
+            // Звонок: голосом или видео (в группах — позже, вместе с групповыми звонками)
+            if (!blocked && !chat.isGroup && !chat.request) {
                 Box(
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable { vm.startCall(chat.peer.id, video = false)?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } },
                     contentAlignment = Alignment.Center,
@@ -245,7 +250,8 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                 ) { Glyph(LineIcon.More, Palette.Ink, description = LineIcon.More.label) }
                 MemoryMenu(expanded = headerMenu, onDismiss = { headerMenu = false }) {
                     MenuRow(LineIcon.Image, t("Фон переписки")) { headerMenu = false; choosingBackdrop = true }
-                    MenuRow(LineIcon.Lock, if (chat.secret) t("Выключить шифрование") else t("Сквозное шифрование")) {
+                    if (chat.isGroup) MenuRow(LineIcon.Groups, t("О группе")) { headerMenu = false; groupInfo = true }
+                    if (!chat.isGroup) MenuRow(LineIcon.Lock, if (chat.secret) t("Выключить шифрование") else t("Сквозное шифрование")) {
                         headerMenu = false
                         vm.setSecret(chat.id, !chat.secret)
                     }
@@ -280,11 +286,14 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (chat.typing) item(key = "typing") { TypingBubble() }
+            if (chat.typing || chat.typingIds.isNotEmpty()) item(key = "typing") { TypingBubble() }
             items(reversed, key = { it.id }) { message ->
                 Bubble(
                     message,
                     peerName = chat.peer.name.substringBefore(' '),
+                    author = if (chat.isGroup && !message.fromMe) ru.wishka.memory.data.Demo.person(message.authorId) else null,
+                    hidden = if (message.fromMe) null else state.hiddenReason(message.text, if (chat.isGroup) message.authorId else chat.peer.id, chat),
+                    group = chat.isGroup,
                     onReply = { replyTo = vm.replyRef(chat.id, message) },
                     onForward = { forwarding = message },
                     pinned = chat.pinnedId == message.id,
@@ -339,6 +348,13 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                 onCancel = { recording = false; recorder.cancel() },
                 onSend = ::sendVoice,
             )
+        } else if (chat.request) {
+            RequestBar(
+                chat.peer.name,
+                onAccept = { vm.acceptRequest(chat.id) },
+                onDelete = { vm.deleteRequest(chat.id) },
+                onBlock = { vm.blockRequest(chat.id) },
+            )
         } else if (blocked) {
             Row(
                 modifier = Modifier
@@ -373,7 +389,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
                 },
             )
             GlassField(
-                text, { text = it.take(2000) }, t("Сообщение"),
+                text, { text = it.take(2000); if (it.isNotEmpty()) vm.typing(chat.id) }, t("Сообщение"),
                 maxLines = 5,
                 modifier = Modifier
                     .weight(1f)
@@ -448,6 +464,7 @@ fun ChatScreen(vm: AppViewModel, chat: Chat, chats: List<Chat>, blocked: Boolean
             SafetyNumberDialog(chat, number, onVerify = { vm.markVerified(chat.id, it) }, onDismiss = { showingSafety = false })
         }
     }
+    if (groupInfo && chat.isGroup) GroupInfoSheet(vm, state, chat) { groupInfo = false }
     if (choosingDisappear) {
         DisappearDialog(ru.wishka.memory.data.Disappear.of(chat.disappearMs), onPick = { vm.setDisappearing(chat.id, it) }, onDismiss = { choosingDisappear = false })
     }
@@ -570,9 +587,43 @@ private fun Bubble(
     onPost: (ru.wishka.memory.data.PostRef) -> Unit = {},
     /** Перезвонить по строке звонка. */
     onCallBack: (ru.wishka.memory.data.CallRecord) -> Unit = {},
+    /** В группе — кто написал (имя над пузырём). */
+    author: ru.wishka.memory.data.User? = null,
+    /** Скрыто фильтром — свёрнуто, пока не нажмут «Показать». */
+    hidden: ru.wishka.memory.data.HiddenReason? = null,
+    group: Boolean = false,
 ) {
     val mine = message.fromMe
     var menu by remember { mutableStateOf(false) }
+    var reveal by remember(message.id) { mutableStateOf(false) }
+    // Служебная строка группы — по центру, мелко
+    if (message.authorId == AppViewModel.SYSTEM_AUTHOR) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            Text(
+                message.text,
+                style = MaterialTheme.typography.labelLarge,
+                color = Palette.Mist,
+                modifier = Modifier.clip(RoundedCornerShape(50)).glass(RoundedCornerShape(50)).padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
+        return
+    }
+    // Скрыто фильтром: что и почему — без самого текста
+    if (hidden != null && !reveal) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+            Row(
+                Modifier.clip(RoundedCornerShape(16.dp)).glass(RoundedCornerShape(16.dp))
+                    .clickable(onClickLabel = t("Показать"), role = androidx.compose.ui.semantics.Role.Button) { reveal = true }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Glyph(LineIcon.Eye, Palette.Mist, size = 16.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(hiddenTitle(hidden) + " · " + t("Показать"), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+            }
+        }
+        return
+    }
     // Звонок — строкой по центру, без пузыря
     message.call?.let { call ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -612,6 +663,9 @@ private fun Bubble(
                     .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                author?.let { a ->
+                    Text(a.name.substringBefore(' '), style = MaterialTheme.typography.labelLarge, color = Palette.Lilac, modifier = Modifier.padding(start = 8.dp, top = 2.dp))
+                }
                 message.forwardedFrom?.let { from ->
                     Row(
                         modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 8.dp),
@@ -666,7 +720,8 @@ private fun Bubble(
                     Text(
                         // 🔒 — ушло зашифрованным, ⏱ — исчезнет
                         // 🕓 — ещё не дошло до сервера (ждёт сети в очереди)
-                        listOfNotNull(if (message.expiresAt > 0) "⏱" else null, if (message.secret) "🔒" else null, message.time, if (message.pending) "🕓" else null).joinToString(" "),
+                        // ✓ — на сервере, ✓✓ — прочитали (в группе — хоть кто-то)
+                        listOfNotNull(if (message.expiresAt > 0) "⏱" else null, if (message.secret) "🔒" else null, message.time, deliveryMark(message)).joinToString(" "),
                         style = MaterialTheme.typography.labelSmall,
                         color = Palette.Ink.copy(alpha = 0.6f),
                         modifier = Modifier.align(Alignment.End),
@@ -693,6 +748,9 @@ private fun Bubble(
                 MenuRow(LineIcon.Trash, t("Удалить у всех"), color = Palette.Lilac) {
                     menu = false
                     onDelete(true)
+                }
+                if (mine && group && message.readBy.isNotEmpty()) {
+                    MenuRow(LineIcon.Eye, tf("Прочитали: %s", message.readBy.size)) { menu = false }
                 }
                 if (!mine) MenuRow(LineIcon.Flag, t("Пожаловаться"), color = Palette.PearlPink) {
                     menu = false
@@ -745,6 +803,38 @@ private fun TypingBubble() {
                     .clip(CircleShape)
                     .background(Palette.Lilac.copy(alpha = 0.5f + it * 0.2f)),
             )
+        }
+    }
+}
+
+/** Значок доставки своего сообщения: 🕓 ждёт сети, ✓ на сервере, ✓✓ прочитано. */
+private fun deliveryMark(m: Message): String? = when {
+    !m.fromMe -> null
+    m.pending -> "🕓"
+    m.readBy.isNotEmpty() -> "✓✓"
+    m.delivered -> "✓"
+    else -> null
+}
+
+/** Почему свёрнуто: «Скрыто: скрытое слово» и т. п. */
+fun hiddenTitle(r: ru.wishka.memory.data.HiddenReason): String = when (r) {
+    ru.wishka.memory.data.HiddenReason.Word -> t("Скрыто: есть скрытое слово")
+    ru.wishka.memory.data.HiddenReason.Offensive -> t("Скрыто: похоже на оскорбление")
+    ru.wishka.memory.data.HiddenReason.Spam -> t("Скрыто: похоже на спам")
+}
+
+/** Вместо поля ввода у запроса на переписку: принять, удалить или заблокировать. */
+@Composable
+private fun RequestBar(name: String, onAccept: () -> Unit, onDelete: () -> Unit, onBlock: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(12.dp).glass(RoundedCornerShape(24.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(tf("%s хочет переписываться с вами. Пока вы не примете запрос, он не узнает, что вы прочитали.", name), style = MaterialTheme.typography.bodyMedium, color = Palette.Ink)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GlowButton(t("Принять"), onClick = onAccept)
+            GhostButton(t("Удалить"), onClick = onDelete)
+            GhostButton(t("Заблокировать"), onClick = onBlock)
         }
     }
 }

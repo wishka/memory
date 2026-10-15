@@ -6,7 +6,9 @@ enum class OpKind(val id: String) {
     CreatePost("post"),
     Like("like"),
     Unlike("unlike"),
-    SendMessage("message");
+    SendMessage("message"),
+    /** Любой запрос: группы, «прочитано», профиль. payload — {method, path, body, coalesce}. */
+    Call("call");
 
     companion object {
         fun of(id: String?) = entries.firstOrNull { it.id == id }
@@ -46,7 +48,7 @@ data class OutboxOp(
 }
 
 /** Итог прохода по очереди. */
-data class FlushResult(val sent: Int, val waiting: Int, val failed: Int, val offline: Boolean)
+data class FlushResult(val sent: Int, val waiting: Int, val failed: Int, val offline: Boolean, val authLost: Boolean = false)
 
 /**
  * Очередь отправки: что сделали без сети (или пока сеть моргнула), уходит
@@ -71,10 +73,15 @@ class Outbox(private val cache: OfflineCache, private val clock: () -> Long) {
         if (op.kind == OpKind.Like || op.kind == OpKind.Unlike) {
             all().filter { (it.kind == OpKind.Like || it.kind == OpKind.Unlike) && it.target == op.target }.forEach { remove(it.key) }
         }
+        // Профиль, «прочитано»: важно только последнее — прежнее такое же снимаем
+        coalesceOf(op)?.let { c -> all().filter { it.kind == OpKind.Call && coalesceOf(it) == c }.forEach { remove(it.key) } }
         save(op.copy(createdAt = if (op.createdAt == 0L) clock() else op.createdAt))
     }
 
     fun remove(key: String) = cache.remove(cacheKey(key))
+
+    private fun coalesceOf(op: OutboxOp): String? =
+        if (op.kind != OpKind.Call) null else runCatching { JSONObject(op.payload).optString("coalesce").ifEmpty { null } }.getOrNull()
 
     /** Снять паузу перед повтором (сеть вернулась). */
     fun retryNow(key: String) {
@@ -122,6 +129,11 @@ class Outbox(private val cache: OfflineCache, private val clock: () -> Long) {
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 val err = NetError.of(e)
+                if (err.kind == NetError.Kind.Auth) {
+                    // Вход закрыт — ничего не теряем: ждём, пока войдут снова
+                    save(op.copy(attempts = op.attempts + 1, nextAt = now + Backoff.MAX_MS, error = err.kind.name))
+                    return FlushResult(sent, count, failed, offline = false, authLost = true)
+                }
                 if (err.retryable) {
                     save(op.copy(attempts = op.attempts + 1, nextAt = now + Backoff.delayMs(op.attempts, retryAfterMs = err.retryAfterMs), error = err.kind.name))
                     waiting++

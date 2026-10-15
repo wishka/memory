@@ -57,6 +57,10 @@ enum SettingsPage: String, CaseIterable {
     case theme = "Оформление"
     /// Качество фото и видео при отправке, загрузки, очередь, кэш.
     case network = "Данные и сеть"
+    /// Скрытые слова, фильтр оскорблений и спама.
+    case hiddenWords = "Скрытые слова"
+    /// Устройства, с которых вошли.
+    case devices = "Устройства"
 
     var title: String { t(rawValue) }
 }
@@ -303,6 +307,12 @@ struct UiState: Equatable {
     var cacheBytes: Int64 = 0
     /// Что сказать о сети: «запись не отправлена» и т. п.; nil — нечего.
     var netNotice: String? = nil
+    /// Устройства, с которых вошли в аккаунт.
+    var devices: [DeviceInfo] = []
+    /// Короткое сообщение внизу экрана («Слишком часто…»); nil — нечего.
+    var notice: String? = nil
+    /// Вход на сервер закрыт (вышли с этого устройства на другом) — нужно войти снова.
+    var signedOut = false
 
     /// Кружки историй друзей (свой — отдельно).
     func storyCircles(_ now: Date) -> [StoryCircle] {
@@ -376,10 +386,35 @@ struct UiState: Equatable {
     var myGroups: [MemoryGroup] { groups.filter { $0.joined } }
     func postsOf(_ userId: Int) -> [Post] { posts.filter { $0.author.id == userId } }
     var openChat: Chat? { chats.first { $0.id == openChatId } }
-    /// Счётчик на вкладке «Чаты»: переписки без звука не считаются.
-    var unreadTotal: Int { chats.filter { !$0.muted }.reduce(0) { $0 + $1.unread } }
-    /// Список чатов: закреплённые сверху, остальные — по последнему сообщению.
-    var chatList: [Chat] { chats.filter(\.onTop) + chats.filter { !$0.onTop } }
+    /// Счётчик на вкладке «Чаты»: переписки без звука и запросы на переписку не считаются.
+    var unreadTotal: Int { chats.filter { !$0.muted && !$0.request }.reduce(0) { $0 + $1.unread } }
+    /// Список чатов: закреплённые сверху, остальные — по последнему сообщению. Без запросов.
+    var chatList: [Chat] {
+        let visible: [Chat] = chats.filter { !$0.request }
+        return visible.filter(\.onTop) + visible.filter { !$0.onTop }
+    }
+    /// Запросы на переписку: написали не друзья.
+    var requestChats: [Chat] { chats.filter(\.request) }
+
+    /// Скрыть ли текст фильтром (скрытые слова, оскорбления, спам): своё и
+    /// сказанное другом в переписке на двоих — не скрываем.
+    func hiddenReason(_ text: String, _ authorId: Int, chat: Chat? = nil) -> HiddenReason? {
+        if authorId == me.id || authorId == AppModel.systemAuthor { return nil }
+        if let chat, !chat.isGroup, !chat.request, following.contains(chat.peer.id) { return nil }
+        return Moderation.check(text, privacy.moderation)
+    }
+
+    /// «Вера печатает…», «Вера и Марк печатают…» — для группы; для двоих — просто «печатает…».
+    func typingTitle(_ chat: Chat) -> String? {
+        let meId = me.id
+        let ids: [Int] = chat.typingIds.filter { $0 != meId }.sorted()
+        if ids.isEmpty { return chat.typing ? t("печатает…") : nil }
+        if !chat.isGroup { return t("печатает…") }
+        let names: [String] = ids.compactMap { Demo.person($0)?.firstName }
+        if names.isEmpty { return t("печатает…") }
+        if names.count == 1 { return tf("%s печатает…", names[0]) }
+        return tf("%s и %s печатают…", names[0], names[1])
+    }
     /// Лента без записей тех, кто в чёрном списке, и без записей закрытых
     /// профилей тех, кто вам не друг.
     var feed: [Post] { posts.filter { !blocked.contains($0.author.id) && canSee($0.author) } }
@@ -569,6 +604,10 @@ final class AppModel {
     static let maxPins = 3
     /// Сколько фото у товара витрины.
     static let maxProductPhotos = 5
+    /// Служебные строки переписки (не человек): «Вы создали группу».
+    static let systemAuthor = -1
+    /// Демо: номера переписок, которые начинают незнакомые.
+    static let strangerChatBase = 2_000_000
 
     @ObservationIgnored private var nextId: Int64 = 10_000
     @ObservationIgnored private var replyIndex = 0
@@ -582,6 +621,8 @@ final class AppModel {
         self.demoReplies = demoReplies
         net = makeDemoNet()
         feedPager = net.feedPager()
+        // Демо-сеть по умолчанию (и в тестах) — тоже с живым каналом
+        connectRealtime()
     }
 
     private func newId() -> Int64 {
@@ -1924,6 +1965,9 @@ final class AppModel {
     /// Последний конверт, который ушёл бы на сервер, — для проверки, что текста в нём нет.
     @ObservationIgnored private(set) var lastEnvelope: String?
 
+    /// Ключи файлов последнего секретного сообщения (attachmentId → FileKey.encoded) — для проверки.
+    @ObservationIgnored private(set) var lastFileKeys: [String: String] = [:]
+
     func attachKeys(_ store: KeyValueStore) {
         keyStore = store
     }
@@ -1957,6 +2001,8 @@ final class AppModel {
 
     /// Включить или выключить сквозное шифрование переписки. Выключили — отметка о сверке снимается.
     func setSecret(_ chatId: Int, _ on: Bool) {
+        // Группы — без сквозного шифрования (ключи на каждого участника — следующий шаг)
+        if state.chats.first(where: { $0.id == chatId })?.isGroup == true { return }
         if on { Telemetry.track(.secretChat) }
         updateChat(chatId) { c in
             c.secret = on
@@ -2031,6 +2077,10 @@ final class AppModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let built = poll.flatMap { $0.build(newId()) }
         if trimmed.isEmpty && media.isEmpty && checkIn == nil && built == nil { return }
+        if !postLimiter.allow(nowMs()) {
+            tooOften()
+            return
+        }
         // Отмечать на фото можно только друзей — остальные отметки отбрасываются
         let friendIds = state.following
         let cleanMedia: [Attachment] = media.map { a in
@@ -2220,6 +2270,14 @@ final class AppModel {
         Telemetry.track(.commentSent)
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
         if trimmed.isEmpty && sticker == nil { return }
+        if let target = state.findPost(postId), target.commentsOff, target.author.id != state.me.id {
+            state.notice = t("Автор выключил комментарии")
+            return
+        }
+        if !commentLimiter.allow(nowMs()) {
+            tooOften()
+            return
+        }
         let comment = Comment(id: newId(), author: state.me, text: trimmed, createdAt: clock(), replyTo: replyTo, sticker: sticker)
         updatePosts(postId) { p in
             p.comments += 1
@@ -2382,6 +2440,7 @@ final class AppModel {
             if c.id == id { c.unread = 0 }
             return c
         }
+        sendRead(id)
     }
 
     func closeChat() {
@@ -2408,9 +2467,13 @@ final class AppModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let built = poll.flatMap { $0.build(newId()) }
         if trimmed.isEmpty && attachments.isEmpty && built == nil && place == nil { return }
+        if !messageLimiter.allow(nowMs()) {
+            tooOften()
+            return
+        }
         // Секретная переписка: на сервер ушёл бы только конверт; демо-собеседник его расшифровывает своим ключом
-        let isSecret = state.chats.first(where: { $0.id == chatId })?.secret ?? false
-        if let secretChat = state.chats.first(where: { $0.id == chatId }), secretChat.secret, !trimmed.isEmpty {
+        let secretChat: Chat? = state.chats.first(where: { $0.id == chatId && $0.secret })
+        if let secretChat, !trimmed.isEmpty {
             let sealed = sealFor(secretChat, trimmed)
             lastEnvelope = sealed
             guard let envelope = sealed, peerOpen(secretChat, envelope) == trimmed else { return }
@@ -2422,18 +2485,31 @@ final class AppModel {
         )
         outgoing.pending = true
         append(chatId, outgoing)
-        // На сервер — через очередь. Секретная переписка: уходит только конверт, без вложений
-        // (шифрование файлов — следующий шаг), так что сервер ничего не прочтёт
+        // На сервер — через очередь. Секретная переписка: текст — конвертом, файлы
+        // шифруются на телефоне своим ключом (FileCrypto), а ключ едет в имени
+        // вложения, запечатанный ключом переписки, — сервер ничего не прочтёт
         var wire = outgoing
-        if isSecret {
+        var fileKeys: [String: String] = [:]
+        if let secretChat {
             wire.text = trimmed.isEmpty ? "" : (lastEnvelope ?? "")
-            wire.attachments = []
+            var sealedAttachments: [Attachment] = []
+            for a in outgoing.attachments {
+                let key: String = FileKey.random().encoded()
+                guard let sealed = sealFor(secretChat, key) else { continue }
+                fileKeys[a.id] = key
+                var x = a
+                x.name = FileCrypto.sealed + sealed
+                x.tags = []
+                sealedAttachments.append(x)
+            }
+            wire.attachments = sealedAttachments
         }
+        lastFileKeys = fileKeys
         let hasText: Bool = !wire.text.isEmpty || !wire.attachments.isEmpty
         let hasExtra: Bool = wire.poll != nil || wire.place != nil
         let hasContent: Bool = hasText || hasExtra
         if hasContent {
-            net.queueMessage(chatId, wire)
+            net.queueMessage(chatId, wire, secretKeys: fileKeys)
         } else {
             updateMessage(chatId, outgoing.id) { $0.pending = false }
         }
@@ -2586,6 +2662,589 @@ final class AppModel {
         }
     }
 
+    // MARK: - Группы (переписки)
+
+    /// Новая групповая переписка: название и друзья. Номер выбирает телефон
+    /// (случайный, сервер примет или ответит 409) — так группа живёт и без
+    /// сети. Ответ — номер переписки; nil — без названия или без участников.
+    /// (Не путать с createGroup(name:description:topic:) — группой по интересам.)
+    func createGroup(_ title: String, _ memberIds: [Int]) -> Int? {
+        let s = state
+        let clean = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(ChatGroup.maxTitle))
+        var ids: [Int] = []
+        for id in memberIds where s.following.contains(id) && !s.blocked.contains(id) && id != s.me.id && !ids.contains(id) {
+            ids.append(id)
+        }
+        if clean.isEmpty || ids.isEmpty { return nil }
+        if ids.count + 1 > ChatGroup.maxMembers { return nil }
+        let taken = Set(s.chats.map(\.id))
+        var id = 1_000_000 + Int.random(in: 0..<1_000_000_000)
+        while taken.contains(id) { id = 1_000_000 + Int.random(in: 0..<1_000_000_000) }
+        let members: [Int] = [s.me.id] + ids
+        let g = ChatGroup(title: clean, memberIds: members, adminIds: [s.me.id], ownerId: s.me.id, hue: Double.random(in: 0..<1))
+        let first = systemMessage(tf("Вы создали группу «%s»", clean))
+        var chat = Chat(id: id, peer: g.asUser(id), messages: [first])
+        chat.group = g
+        state.chats.insert(chat, at: 0)
+        var body: JSONObject = [:]
+        body["id"] = id
+        body["title"] = clean
+        body["members"] = members
+        net.queueCall("POST", "/v1/chats", body: body)
+        refreshNetCounters()
+        kickNet()
+        return id
+    }
+
+    /// Служебная строка в переписке: «Вера теперь в группе», «Вы создали группу».
+    private func systemMessage(_ text: String) -> Message {
+        var m = Message(id: newId(), fromMe: false, text: text, time: Self.now())
+        m.authorId = Self.systemAuthor
+        m.delivered = true
+        return m
+    }
+
+    private func updateChatGroup(_ chatId: Int, _ change: (ChatGroup) -> ChatGroup) {
+        state.chats = state.chats.map { chat in
+            guard chat.id == chatId, let g = chat.group else { return chat }
+            var c = chat
+            let next = change(g)
+            c.group = next
+            c.peer = next.asUser(c.id)
+            return c
+        }
+    }
+
+    private func chatGroup(_ chatId: Int) -> ChatGroup? {
+        state.chats.first(where: { $0.id == chatId })?.group
+    }
+
+    private func isGroupAdmin(_ chatId: Int) -> Bool {
+        chatGroup(chatId)?.isAdmin(state.me.id) ?? false
+    }
+
+    /// Переименовать группу — только админ.
+    func renameGroup(_ chatId: Int, _ title: String) {
+        let clean = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(ChatGroup.maxTitle))
+        if clean.isEmpty || !isGroupAdmin(chatId) { return }
+        updateChatGroup(chatId) { g in
+            var x = g
+            x.title = clean
+            return x
+        }
+        append(chatId, systemMessage(tf("Новое название: «%s»", clean)))
+        let body: JSONObject = ["title": clean]
+        net.queueCall("PATCH", "/v1/chats/\(chatId)", body: body, coalesce: "title:\(chatId)")
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /// Добавить друзей в группу — только админ, не больше 200 человек.
+    func addGroupMembers(_ chatId: Int, _ userIds: [Int]) {
+        guard isGroupAdmin(chatId), let g = chatGroup(chatId) else { return }
+        let s = state
+        var add: [Int] = []
+        for uid in userIds where !g.memberIds.contains(uid) && s.following.contains(uid) && !s.blocked.contains(uid) && !add.contains(uid) {
+            add.append(uid)
+        }
+        let room = max(0, ChatGroup.maxMembers - g.memberIds.count)
+        add = Array(add.prefix(room))
+        if add.isEmpty { return }
+        updateChatGroup(chatId) { old in
+            var x = old
+            x.memberIds += add
+            return x
+        }
+        for uid in add {
+            if let p = Demo.person(uid) { append(chatId, systemMessage(tf("%s теперь в группе", p.firstName))) }
+            net.queueCall("PUT", "/v1/chats/\(chatId)/members/\(uid)")
+        }
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /// Убрать участника — админ; создателя не убрать.
+    func removeGroupMember(_ chatId: Int, _ userId: Int) {
+        guard let g = chatGroup(chatId) else { return }
+        if !isGroupAdmin(chatId) || userId == g.ownerId || !g.memberIds.contains(userId) { return }
+        updateChatGroup(chatId) { old in
+            var x = old
+            x.memberIds.removeAll { $0 == userId }
+            x.adminIds.remove(userId)
+            return x
+        }
+        if let p = Demo.person(userId) { append(chatId, systemMessage(tf("%s больше не в группе", p.firstName))) }
+        net.queueCall("DELETE", "/v1/chats/\(chatId)/members/\(userId)")
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /// Сделать админом или снять — только создатель.
+    func setGroupAdmin(_ chatId: Int, _ userId: Int, _ admin: Bool) {
+        guard let g = chatGroup(chatId) else { return }
+        if g.ownerId != state.me.id || userId == g.ownerId || !g.memberIds.contains(userId) { return }
+        updateChatGroup(chatId) { old in
+            var x = old
+            if admin {
+                x.adminIds.insert(userId)
+            } else {
+                x.adminIds.remove(userId)
+            }
+            return x
+        }
+        let method = admin ? "PUT" : "DELETE"
+        net.queueCall(method, "/v1/chats/\(chatId)/admins/\(userId)")
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /// Выйти из группы: переписка уходит из списка.
+    func leaveGroup(_ chatId: Int) {
+        guard chatGroup(chatId) != nil else { return }
+        let meId = state.me.id
+        state.chats.removeAll { $0.id == chatId }
+        if state.openChatId == chatId { state.openChatId = nil }
+        net.queueCall("DELETE", "/v1/chats/\(chatId)/members/\(meId)")
+        refreshNetCounters()
+        kickNet()
+    }
+
+    // MARK: - Живой канал
+
+    /// Когда последний раз сказали «печатаю» в переписке (мс).
+    @ObservationIgnored private var typingSentAt: [Int: Int64] = [:]
+
+    /// Печатаю в переписке: собеседникам — «печатает…» (не чаще раза в 3 секунды).
+    func typing(_ chatId: Int) {
+        let now = nowMs()
+        let last: Int64 = typingSentAt[chatId] ?? 0
+        if now - last < 3_000 { return }
+        typingSentAt[chatId] = now
+        net.realtime.send(.typing(chatId: chatId, userId: state.me.id, on: true))
+    }
+
+    /// Открыл переписку — «прочитано» до последнего пришедшего.
+    private func sendRead(_ chatId: Int) {
+        guard let chat = state.chats.first(where: { $0.id == chatId }) else { return }
+        // Запрос ещё не принят — человек не должен знать, что прочитали
+        if chat.request { return }
+        let times: [Int64] = chat.messages.filter { !$0.fromMe }.map(\.sentAt)
+        let upTo: Int64 = times.max() ?? 0
+        if upTo <= 0 { return }
+        let meId = state.me.id
+        if net.realtime.connected {
+            net.realtime.send(.read(chatId: chatId, userId: meId, upTo: upTo))
+        } else {
+            let body: JSONObject = ["upTo": upTo]
+            net.queueCall("POST", "/v1/chats/\(chatId)/read", body: body, coalesce: "read:\(chatId)")
+            refreshNetCounters()
+        }
+    }
+
+    /// Событие живого канала: сообщение, «печатает», «прочитано», состав группы.
+    func onRealtime(_ ev: RtEvent) {
+        switch ev {
+        case .newMessage(let chatId, let message):
+            receiveMessage(chatId, message)
+        case .typing(let chatId, let userId, let on):
+            if userId == state.me.id { return }
+            updateChat(chatId) { c in
+                if on {
+                    _ = c.typingIds.insert(userId)
+                } else {
+                    _ = c.typingIds.remove(userId)
+                }
+            }
+        case .read(let chatId, let userId, let upTo):
+            markReadBy(chatId, userId, upTo)
+        case .groupChanged(let chatId, let title, let memberIds, let adminIds):
+            applyGroupChange(chatId, title, memberIds, adminIds)
+        }
+    }
+
+    /// Пришло сообщение: в свою переписку, от нового человека — в переписки
+    /// (друг) или в «Запросы» (не друг); «Никто не может писать» — не приходит.
+    private func receiveMessage(_ evChatId: Int, _ json: JSONObject) {
+        let s = state
+        guard let m = ApiCodec(me: s.me).messageOf(json) else { return }
+        let author = m.authorId
+        if author == s.me.id || s.blocked.contains(author) { return }
+        var incoming = Message(
+            id: newId(), fromMe: false, text: m.text, time: m.time,
+            attachments: m.attachments, replyTo: m.replyTo, forwardedFrom: m.forwardedFrom,
+            poll: m.poll, place: m.place, product: m.product
+        )
+        incoming.story = m.story
+        incoming.post = m.post
+        incoming.call = m.call
+        incoming.authorId = author
+        incoming.delivered = true
+        incoming.sentAt = m.sentAt
+        let byId: Chat? = s.chats.first(where: { $0.id == evChatId })
+        let byPeer: Chat? = s.chats.first(where: { !$0.isGroup && $0.peer.id == author })
+        let known: Chat? = byId ?? byPeer
+        let chatId: Int
+        if let known {
+            chatId = known.id
+        } else {
+            guard let person = Demo.person(author) else { return }
+            let friend = s.following.contains(author)
+            switch s.privacy.messages {
+            case .nobody: return
+            case .following: if !friend { return }
+            case .everyone: break
+            }
+            var chat = Chat(id: evChatId, peer: person, messages: [])
+            chat.request = !friend
+            state.chats.insert(chat, at: 0)
+            chatId = evChatId
+        }
+        append(chatId, incoming)
+        // Пришло — значит, больше не печатает
+        updateChat(chatId) { c in
+            _ = c.typingIds.remove(author)
+        }
+        guard let chat = state.chats.first(where: { $0.id == chatId }) else { return }
+        if state.openChatId == chatId {
+            sendRead(chatId)
+        } else if !chat.muted && !chat.request {
+            let shown = chat.secret ? t("Новое сообщение") : incoming.text
+            notify(Nudges.message(Demo.person(author) ?? chat.peer, shown, chatId: chatId))
+        }
+    }
+
+    /// Собеседник (участник группы) прочитал всё до upTo — ✓✓ у своих сообщений.
+    private func markReadBy(_ chatId: Int, _ userId: Int, _ upTo: Int64) {
+        updateChat(chatId) { c in
+            c.messages = c.messages.map { (m: Message) -> Message in
+                guard m.fromMe, m.sentAt >= 1, m.sentAt <= upTo, !m.readBy.contains(userId) else { return m }
+                var x = m
+                x.readBy.append(userId)
+                return x
+            }
+        }
+    }
+
+    private func applyGroupChange(_ chatId: Int, _ title: String, _ memberIds: [Int], _ adminIds: [Int]) {
+        let meId = state.me.id
+        if !memberIds.isEmpty && !memberIds.contains(meId) {
+            // Нас убрали из группы
+            state.chats.removeAll { $0.id == chatId && $0.isGroup }
+            if state.openChatId == chatId { state.openChatId = nil }
+            return
+        }
+        updateChatGroup(chatId) { g in
+            var x = g
+            if !title.isEmpty { x.title = title }
+            if !memberIds.isEmpty { x.memberIds = memberIds }
+            if !adminIds.isEmpty { x.adminIds = Set(adminIds) }
+            return x
+        }
+    }
+
+    /// Демо: выдать созревшие события живого канала (в приложении — раз в секунду).
+    @discardableResult
+    func tickRealtime() -> Int {
+        guard let demo = net.realtime as? DemoRealtime else { return 0 }
+        return demo.tick()
+    }
+
+    /// Подключить живой канал и рассказать демо-серверу, кто в каких переписках.
+    private func connectRealtime() {
+        let n = net
+        if let d = n.demo {
+            let meId = state.me.id
+            for c in state.chats {
+                let ids: [Int] = c.group?.memberIds ?? [meId, c.peer.id]
+                d.registerChat(c.id, ids)
+            }
+        }
+        // Демо выдаёт события в главном потоке (tick); настоящий канал — со своего
+        let direct = n.realtime is DemoRealtime
+        n.realtime.connect { [weak self] ev in
+            if direct {
+                self?.onRealtime(ev)
+            } else {
+                DispatchQueue.main.async { self?.onRealtime(ev) }
+            }
+        }
+    }
+
+    // MARK: - Запросы на переписку
+
+    /// Принять: переписка переезжает к остальным, человек видит «прочитано».
+    func acceptRequest(_ chatId: Int) {
+        updateChat(chatId) { $0.request = false }
+        net.queueCall("POST", "/v1/chats/\(chatId)/accept")
+        sendRead(chatId)
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /// Удалить запрос: человек не узнает.
+    func deleteRequest(_ chatId: Int) {
+        state.chats.removeAll { $0.id == chatId && $0.request }
+        if state.openChatId == chatId { state.openChatId = nil }
+    }
+
+    /// Удалить запрос и заблокировать написавшего.
+    func blockRequest(_ chatId: Int) {
+        guard let chat = state.chats.first(where: { $0.id == chatId }) else { return }
+        deleteRequest(chatId)
+        block(chat.peer.id)
+    }
+
+    // MARK: - Модерация
+
+    @ObservationIgnored private let commentLimiter = RateLimiter(maxEvents: 10, windowMs: 60_000)
+    @ObservationIgnored private let messageLimiter = RateLimiter(maxEvents: 30, windowMs: 60_000)
+    @ObservationIgnored private let postLimiter = RateLimiter(maxEvents: 10, windowMs: 10 * 60_000)
+
+    /// Скрытое слово: комментарии и сообщения с ним сворачиваются (на всех своих телефонах).
+    func addHiddenWord(_ word: String) {
+        state.privacy.hiddenWords = Moderation.addWord(state.privacy.hiddenWords, word)
+        pushProfile()
+    }
+
+    func removeHiddenWord(_ word: String) {
+        state.privacy.hiddenWords.removeAll { $0 == word }
+        pushProfile()
+    }
+
+    /// Выключить или включить комментарии к своей записи.
+    func toggleComments(_ postId: Int64) {
+        let meId = state.me.id
+        var off = false
+        var found = false
+        state.posts = state.posts.map { (p: Post) -> Post in
+            guard p.id == postId && p.author.id == meId else { return p }
+            var x = p
+            x.commentsOff.toggle()
+            off = x.commentsOff
+            found = true
+            return x
+        }
+        guard found, let post = state.posts.first(where: { $0.id == postId }) else { return }
+        // Ещё не ушедшая запись уйдёт уже с нужным значением
+        if post.outboxKey.isEmpty {
+            let body: JSONObject = ["commentsOff": off]
+            net.queueCall("PATCH", "/v1/posts/\(postId)", body: body, coalesce: "comments:\(postId)")
+        }
+        refreshNetCounters()
+        kickNet()
+    }
+
+    func dismissNotice() {
+        state.notice = nil
+    }
+
+    private func tooOften() {
+        state.notice = t("Слишком часто — подождите минуту")
+    }
+
+    // MARK: - Вход на сервер и устройства
+
+    /// Имя этого телефона для списка устройств («iPhone») — ставит MemoryApp.
+    @ObservationIgnored var deviceName: String = "iPhone"
+
+    /// Войти на сервер (если ещё не вошли) и сверить профиль. fresh — на
+    /// этом телефоне аккаунт новый: берём профиль с сервера, иначе — шлём свой.
+    func startSession(login: String, password: String?, fresh: Bool) {
+        if !demoReplies { return }
+        Task { @MainActor [weak self] in
+            await self?.startSessionNow(login: login, password: password, fresh: fresh)
+        }
+    }
+
+    @MainActor func startSessionNow(login: String, password: String?, fresh: Bool) async {
+        let n = net
+        // Вторая попытка — если сохранённые токены сервер уже не знает
+        // (демо-сервер новый при каждом запуске, вышли на другом устройстве)
+        for attempt in 0..<2 {
+            if !n.session.signedIn {
+                do {
+                    try await n.signIn(login: login, password: password ?? "", device: deviceName, platform: "ios")
+                } catch {
+                    let e = NetError.of(error)
+                    if e.kind == .auth || e.kind == .client { state.signedOut = true }
+                    return
+                }
+                // Что ждало входа — отправить сразу; живой канал — уже с токеном
+                n.retryAuth()
+                kickNet()
+                if !(n.realtime is DemoRealtime) {
+                    n.realtime.close()
+                    connectRealtime()
+                }
+            }
+            state.signedOut = false
+            let remote: ProfileSync?
+            do {
+                remote = try await n.api.profile()
+            } catch {
+                let e = NetError.of(error)
+                // Сохранённые токены сервер не знает (демо-сервер новый при каждом
+                // запуске, настоящий — вышли с этого телефона на другом): войти ещё раз
+                if e.kind != .auth || attempt > 0 { return }
+                n.session.clear()
+                continue
+            }
+            if let remote, fresh {
+                applyProfile(remote.json)
+            } else {
+                pushProfile()
+            }
+            return
+        }
+    }
+
+    /// Свой профиль и приватность — на сервер (для других своих телефонов).
+    private func pushProfile() {
+        let me = state.me
+        var o: JSONObject = [:]
+        o["name"] = me.name
+        o["bio"] = me.bio
+        o["city"] = me.city
+        o["birthday"] = me.birthday
+        o["website"] = me.website
+        o["interests"] = me.interests
+        o["privacy"] = ApiCodec(me: me).privacyJson(state.privacy)
+        net.queueCall("PUT", "/v1/me", body: o, coalesce: "me")
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /// Профиль с сервера — на новый телефон.
+    private func applyProfile(_ o: JSONObject) {
+        var me = state.me
+        func str(_ key: String, _ fallback: String) -> String {
+            let v = Json.string(o, key)
+            return v.isEmpty ? fallback : v
+        }
+        me.name = str("name", me.name)
+        me.bio = str("bio", me.bio)
+        me.city = str("city", me.city)
+        me.birthday = str("birthday", me.birthday)
+        me.website = str("website", me.website)
+        if o["interests"] is [Any] { me.interests = Json.strings(o, "interests") }
+        let codec = ApiCodec(me: me)
+        let privacy: Privacy = Json.object(o, "privacy").map { codec.privacyOf($0) } ?? state.privacy
+        applyMe(me)
+        state.privacy = privacy
+    }
+
+    func loadDevices() {
+        if !demoReplies { return }
+        Task { @MainActor [weak self] in
+            await self?.loadDevicesNow()
+        }
+    }
+
+    /// Устройства: это — первым, остальные — кто был в сети недавно.
+    @MainActor func loadDevicesNow() async {
+        do {
+            let list = try await net.api.devices()
+            state.devices = list.sorted { a, b in
+                if a.current != b.current { return a.current }
+                return a.lastSeen > b.lastSeen
+            }
+        } catch {
+            let e = NetError.of(error)
+            if e.kind == .offline {
+                state.notice = t("Нет сети — список устройств загрузится позже")
+            } else {
+                state.notice = t("Не удалось загрузить устройства")
+            }
+            if e.kind == .auth { state.signedOut = true }
+        }
+    }
+
+    func revokeDevice(_ id: String) {
+        if !demoReplies { return }
+        Task { @MainActor [weak self] in
+            await self?.revokeDeviceNow(id)
+        }
+    }
+
+    @MainActor func revokeDeviceNow(_ id: String) async {
+        do {
+            try await net.api.revokeDevice(id)
+        } catch {
+            state.notice = t("Не получилось — проверьте сеть")
+        }
+        await loadDevicesNow()
+    }
+
+    func revokeOtherDevices() {
+        if !demoReplies { return }
+        Task { @MainActor [weak self] in
+            await self?.revokeOtherDevicesNow()
+        }
+    }
+
+    @MainActor func revokeOtherDevicesNow() async {
+        do {
+            try await net.api.revokeOtherDevices()
+        } catch {
+            state.notice = t("Не получилось — проверьте сеть")
+        }
+        await loadDevicesNow()
+    }
+
+    // MARK: - Фоновая отправка
+
+    /// Пока приложение было закрыто, очередь могла уйти в фоне (BackgroundNet).
+    /// Сверить: записи, которых в очереди уже нет, — отправлены; сообщения
+    /// переписок без очереди — тоже.
+    private func reconcileOutbox() {
+        let ops = net.outbox.all()
+        let keys = Set(ops.map(\.key))
+        var chatsWithOps = Set<Int>()
+        for op in ops where op.kind == .sendMessage { chatsWithOps.insert(Int(op.target)) }
+        let stalePosts = state.posts.contains { !$0.outboxKey.isEmpty && !keys.contains($0.outboxKey) }
+        if stalePosts {
+            state.posts = state.posts.map { (p: Post) -> Post in
+                guard !p.outboxKey.isEmpty, !keys.contains(p.outboxKey) else { return p }
+                var x = p
+                x.outboxKey = ""
+                return x
+            }
+        }
+        let staleChats = state.chats.contains { c in !chatsWithOps.contains(c.id) && c.messages.contains(where: \.pending) }
+        if staleChats {
+            state.chats = state.chats.map { (c: Chat) -> Chat in
+                if chatsWithOps.contains(c.id) || !c.messages.contains(where: \.pending) { return c }
+                var x = c
+                x.messages = c.messages.map { (m: Message) -> Message in
+                    guard m.pending else { return m }
+                    var y = m
+                    y.pending = false
+                    y.delivered = true
+                    return y
+                }
+                return x
+            }
+        }
+    }
+
+    /// Свернули приложение — дослать, что осталось (beginBackgroundTask):
+    /// проходы отправки, пока очередь не опустеет, нет сети или не кончилось
+    /// время. Ответ — всё ли ушло.
+    @MainActor func drainNet(maxRounds: Int = 40) async -> Bool {
+        for _ in 0..<maxRounds {
+            if Task.isCancelled { return false }
+            if !net.busy { return true }
+            if state.netStatus == .offline || state.signedOut { return false }
+            // Всё на паузе после ошибок — подождать ближайшего повтора, но недолго
+            let wait: Int64 = net.nextAttemptAt() - nowMs()
+            if wait > 20_000 { return false }
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait) * 1_000_000) }
+            await pumpNet()
+            if state.netStatus == .serverDown { return false }
+        }
+        return !net.busy
+    }
+
     // MARK: - Сеть
 
     /// Всё сетевое: API, очередь отправки, загрузки, кэш. Пока аккаунт не
@@ -2594,6 +3253,8 @@ final class AppModel {
     @ObservationIgnored private(set) var net: Net = Net.demo(clock: { 0 }, me: { Demo.me })
     @ObservationIgnored private var feedPager: Pager<Post>?
     @ObservationIgnored private var netTask: Task<Void, Never>?
+    /// Демо: раз в секунду выдаёт события живого канала.
+    @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private let netKick = NetKicker()
     /// Есть ли сеть у телефона (NetMonitor).
     @ObservationIgnored private var deviceOnline = true
@@ -2611,11 +3272,16 @@ final class AppModel {
 
     /// Подключить сеть аккаунта: сохранённая лента — сразу, без сети.
     func attachNet(_ n: Net) {
+        // Прежний живой канал больше не нужен
+        if net !== n { net.realtime.close() }
         net = n
         let pager = n.feedPager()
         pager.restore()
         feedPager = pager
         publishFeed()
+        // Пока приложение было закрыто, очередь могла уйти в фоне
+        reconcileOutbox()
+        connectRealtime()
         refreshNetCounters()
         applyOnline()
     }
@@ -2624,9 +3290,13 @@ final class AppModel {
     private func detachNet() {
         netTask?.cancel()
         netTask = nil
+        tickTask?.cancel()
+        tickTask = nil
         netKick.kick()
+        net.realtime.close()
         net = makeDemoNet()
         feedPager = net.feedPager()
+        connectRealtime()
     }
 
     private func publishFeed() {
@@ -2687,6 +3357,14 @@ final class AppModel {
     /// Ждёт пинка (kickNet) или ближайшей повторной попытки.
     func startNetLoop() {
         guard netTask == nil, demoReplies else { return }
+        // Демо-сервер «присылает» события живого канала — выдаём их раз в секунду
+        tickTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self else { return }
+                self.tickRealtime()
+            }
+        }
         let kick = netKick
         netTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -2720,8 +3398,8 @@ final class AppModel {
             let op = item.op
             switch op.kind {
             case .createPost: clearOutboxKey(op.key)
-            case .sendMessage: markDelivered(op)
-            case .like, .unlike: break
+            case .sendMessage: markSent(op, answer: item.answer)
+            case .like, .unlike, .call: break
             }
         }
         for job in r.uploads where job.state == .done {
@@ -2735,7 +3413,7 @@ final class AppModel {
             case .sendMessage:
                 markDelivered(op)
                 state.netNotice = t("Сообщение не отправлено: вложение не нашлось.")
-            case .like, .unlike: break
+            case .like, .unlike, .call: break
             }
         }
         let status: NetStatus
@@ -2747,7 +3425,20 @@ final class AppModel {
             status = .online
         }
         if state.netStatus != status { state.netStatus = status }
+        if r.authLost && !state.signedOut { state.signedOut = true }
         refreshNetCounters()
+    }
+
+    /// Сообщение дошло до сервера: ✓ и время сервера (по нему — «прочитано до»).
+    private func markSent(_ op: OutboxOp, answer: JSONObject?) {
+        guard let o = Json.parse(op.payload), o["id"] != nil else { return }
+        let localId = Json.long(o, "id")
+        let sentAt: Int64 = answer.map { Json.long($0, "sentAt") } ?? 0
+        updateMessage(Int(op.target), localId) { m in
+            m.pending = false
+            m.delivered = true
+            m.sentAt = sentAt
+        }
     }
 
     /// Запись ушла (или не уйдёт никогда) — больше не «ждёт сети».
@@ -3521,6 +4212,7 @@ final class AppModel {
         me.interests = info.interests
         me.avatar = info.avatar
         applyMe(me)
+        pushProfile()
     }
 
     /// Своё фото в профиле; "" — вернуть аватар из букв.
@@ -3544,6 +4236,7 @@ final class AppModel {
     /// Заявки в друзья от закрытости профиля не зависят — ждут ответа как есть.
     func setPrivacy(_ privacy: Privacy) {
         state.privacy = privacy
+        pushProfile()
     }
 
     /// В чёрный список: записи, комментарии и сообщения человека больше не
@@ -3830,6 +4523,11 @@ final class AppModel {
         if !friends.isEmpty { options += [5, 5] }
         if !mine.isEmpty && !friends.isEmpty { options.append(6) }
         if !friends.isEmpty && state.call == nil { options.append(7) }
+        // Пишет незнакомый — в «Запросы»; пишут в группе
+        let hasDemo = net.demo != nil
+        let groupChats: [Chat] = state.chats.filter(\.isGroup)
+        if !requesters.isEmpty && hasDemo { options.append(8) }
+        if !groupChats.isEmpty && hasDemo { options += [9, 9] }
         guard let pick = options.randomElement(using: &rng) else { return }
         switch pick {
         case 0:
@@ -3879,10 +4577,31 @@ final class AppModel {
                 return p
             }
             record(.repost, fan, targetId: post.id, preview: post.text)
-        default:
+        case 7:
             let friend = friends.randomElement(using: &rng)!
             incomingCall(friend.id, video: Bool.random(using: &rng))
+        case 8:
+            let stranger = requesters.randomElement(using: &rng)!
+            let text = Demo.strangerTexts.randomElement(using: &rng)!
+            demoDeliver(Self.strangerChatBase + stranger.id, stranger.id, text, afterMs: 0)
+        default:
+            let group = groupChats.randomElement(using: &rng)!
+            let meId = state.me.id
+            let blocked = state.blocked
+            let others: [Int] = (group.group?.memberIds ?? []).filter { $0 != meId && !blocked.contains($0) }
+            guard let who = others.randomElement(using: &rng) else { return }
+            net.demo?.realtime?.schedule(.typing(chatId: group.id, userId: who, on: true), afterMs: 0)
+            let reply = Demo.replies.randomElement(using: &rng)!
+            demoDeliver(group.id, who, reply, afterMs: 2_500)
         }
+    }
+
+    /// Демо: сервер «присылает» сообщение по живому каналу.
+    private func demoDeliver(_ chatId: Int, _ authorId: Int, _ text: String, afterMs: Int64) {
+        guard let d = net.demo else { return }
+        var m = Message(id: 0, fromMe: false, text: text, time: Self.now())
+        m.authorId = authorId
+        d.deliver(chatId, ApiCodec(me: state.me).messageJson(m), afterMs: afterMs)
     }
 
     /// Друг отметил чек-ин: запись в ленте и уведомление — с тем, что вы обсуждали.
@@ -4349,6 +5068,7 @@ final class AppModel {
         s.chats = snapshot.chats.map { chat in
             var c = chat
             c.typing = false
+            c.typingIds = []
             return c
         }
         // Демо-группы из старого сохранения получают витрину и сведения из новых демо-данных

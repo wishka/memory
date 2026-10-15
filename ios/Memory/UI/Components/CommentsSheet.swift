@@ -17,8 +17,16 @@ struct CommentsSheet: View {
     let onAuthor: (Int) -> Void
     /// Свои стикеры из «Студии» — ответить стикером.
     var stickers: [Sticker] = []
+    /// Скрыто ли фильтром (комментарии к своему); nil — показывать.
+    var hiddenOf: (Comment) -> HiddenReason? = { _ in nil }
+    /// Автор выключил комментарии — поле ввода прячется.
+    var closed: Bool = false
+    /// Своя запись: переключатель «Выключить комментарии».
+    var onToggleClosed: (() -> Void)? = nil
 
     @State private var choosingSticker = false
+    /// Свёрнутые фильтром, которые открыли «Показать».
+    @State private var revealed: Set<Int64> = []
     @State private var text = ""
     /// Кому отвечаем: имя автора комментария; nil — просто комментарий.
     @State private var replyTo: String?
@@ -44,7 +52,7 @@ struct CommentsSheet: View {
                                 .padding(.vertical, 20)
                         }
                         ForEach(comments) { c in
-                            row(c).id(c.id)
+                            commentItem(c).id(c.id)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -67,55 +75,27 @@ struct CommentsSheet: View {
                     .transition(.opacity)
             }
             FadeLine()
-            if let replyTo {
-                HStack(spacing: 8) {
-                    Glyph(kind: .reply, color: Palette.lilac, size: 16)
-                    Text(tf("Ответ для %s", replyTo)).textStyle(.labelLarge, Palette.lilac)
-                    Spacer()
-                    Button { self.replyTo = nil } label: {
-                        Glyph(kind: .close, color: Palette.mist, size: 16).frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(LineIcon.close.label)
-                }
-                .padding(.leading, 20)
-                .padding(.trailing, 8)
-                .padding(.top, 6)
-            }
-            // «@ве…» — подсказки, кого упомянуть
-            MentionSuggestions(text: $text)
-                .padding(.horizontal, 12)
-            HStack(alignment: .bottom, spacing: 10) {
-                Button { choosingSticker = true } label: {
-                    Glyph(kind: .sticker, color: Palette.lilac, size: 22)
-                        .frame(width: 46, height: 46)
-                        .glass(Circle())
+            if let onToggleClosed {
+                Button(action: onToggleClosed) {
+                    Text(closed ? t("Включить комментарии") : t("Выключить комментарии"))
+                        .textStyle(.labelLarge, Palette.lilac)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(t("Стикер"))
-                GlassField(placeholder: t("Комментарий"), text: $text, limit: 1000, maxLines: 4)
-                    .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .focused($focused)
-                Button {
-                    onSend(text, replyTo, nil)
-                    text = ""
-                    replyTo = nil
-                } label: {
-                    Glyph(kind: .send, color: canSend ? Palette.ink : Palette.mist)
-                        .frame(width: 46, height: 46)
-                        .background(
-                            Circle().fill(
-                                canSend
-                                    ? LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)
-                                    : LinearGradient(colors: [Palette.plum, Palette.plum], startPoint: .top, endPoint: .bottom)
-                            )
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .accessibilityLabel(LineIcon.send.label)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
             }
-            .padding(12)
+            if closed && onToggleClosed == nil {
+                Text(t("Автор выключил комментарии"))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            } else {
+                inputArea
+            }
         }
         .background(Palette.night.ignoresSafeArea())
         .presentationDetents([.medium, .large])
@@ -130,6 +110,78 @@ struct CommentsSheet: View {
         }
         .glassActions(item: $menu, title: { $0.author.name }, message: { String($0.text.prefix(80)) }) { c in
             actions(c)
+        }
+    }
+
+    /// Ответ кому, подсказки упоминаний и поле ввода.
+    @ViewBuilder
+    private var inputArea: some View {
+        if let replyTo {
+            HStack(spacing: 8) {
+                Glyph(kind: .reply, color: Palette.lilac, size: 16)
+                Text(tf("Ответ для %s", replyTo)).textStyle(.labelLarge, Palette.lilac)
+                Spacer()
+                Button { self.replyTo = nil } label: {
+                    Glyph(kind: .close, color: Palette.mist, size: 16).frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(LineIcon.close.label)
+            }
+            .padding(.leading, 20)
+            .padding(.trailing, 8)
+            .padding(.top, 6)
+        }
+        // «@ве…» — подсказки, кого упомянуть
+        MentionSuggestions(text: $text)
+            .padding(.horizontal, 12)
+        HStack(alignment: .bottom, spacing: 10) {
+            Button { choosingSticker = true } label: {
+                Glyph(kind: .sticker, color: Palette.lilac, size: 22)
+                    .frame(width: 46, height: 46)
+                    .glass(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(t("Стикер"))
+            GlassField(placeholder: t("Комментарий"), text: $text, limit: 1000, maxLines: 4)
+                .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .focused($focused)
+            Button {
+                onSend(text, replyTo, nil)
+                text = ""
+                replyTo = nil
+            } label: {
+                Glyph(kind: .send, color: canSend ? Palette.ink : Palette.mist)
+                    .frame(width: 46, height: 46)
+                    .background(
+                        Circle().fill(
+                            canSend
+                                ? LinearGradient(colors: [Palette.orchid, Palette.ocean], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                : LinearGradient(colors: [Palette.plum, Palette.plum], startPoint: .top, endPoint: .bottom)
+                        )
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .accessibilityLabel(LineIcon.send.label)
+        }
+        .padding(12)
+    }
+
+    /// Комментарий или, если скрыт фильтром, «Скрыто: … · Показать».
+    @ViewBuilder
+    private func commentItem(_ c: Comment) -> some View {
+        if let reason = hiddenOf(c), !revealed.contains(c.id) {
+            Button { revealed.insert(c.id) } label: {
+                Text(hiddenShowTitle(reason))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(t("Показать"))
+        } else {
+            row(c)
         }
     }
 

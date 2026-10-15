@@ -56,7 +56,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun login(username: String, password: String) = run { auth.login(username, password) }
+    /**
+     * Пароль последнего входа — один раз, чтобы войти и на сервер (не
+     * хранится: забирается takePassword() и стирается).
+     */
+    @Volatile private var pendingPassword: String? = null
+
+    fun takePassword(): String? = pendingPassword.also { pendingPassword = null }
+
+    fun login(username: String, password: String) = run(onOk = { pendingPassword = password }) { auth.login(username, password) }
 
     /** consented — человек отметил возраст, соглашение и согласие на обработку: запоминаем версию документов. */
     fun register(username: String, displayName: String, password: String, repeat: String, consented: Boolean = false) {
@@ -64,6 +72,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         // Хешируются они не в главном потоке — вместе с паролем
         var codes: List<String> = emptyList()
         run(onOk = { account ->
+            pendingPassword = password
             if (consented) consents.accept(account.username, System.currentTimeMillis())
             ru.wishka.memory.data.Telemetry.track(ru.wishka.memory.data.AppEvent.SignUp)
             _state.update { it.copy(recoveryCodes = codes) }

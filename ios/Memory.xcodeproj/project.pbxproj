@@ -237,7 +237,6 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Memory;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Чтобы снимать фото и видео для записей в Ленте и сообщений в чатах.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Чтобы показывать клады, миссии и вылазки рядом с вами";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Чтобы записывать звук, когда вы снимаете видео для Ленты или чата.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Чтобы сохранять итоги и карточки в Фото";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -416,7 +415,6 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Memory;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Чтобы снимать фото и видео для записей в Ленте и сообщений в чатах.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Чтобы показывать клады, миссии и вылазки рядом с вами";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Чтобы записывать звук, когда вы снимаете видео для Ленты или чата.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Чтобы сохранять итоги и карточки в Фото";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

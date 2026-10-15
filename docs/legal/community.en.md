@@ -11,7 +11,7 @@ Memory is a place for moments you want to remember and people you want to share 
 - **Impersonate** another person or organization.
 - **Violate others' rights**: publish other people's photos, music or texts without permission; disclose other people's personal data (address, phone number, documents).
 
-The same rules apply to **live streams** and their chat: the host is responsible for what they show, and a stream that breaks the rules may be stopped by a moderator. The same rules apply to **stories** and **calls**. You can only tag friends in photos; a tagged person can remove their tag at any time.
+The same rules apply to **live streams** and their chat: the host is responsible for what they show, and a stream that breaks the rules may be stopped by a moderator. The same rules apply to **stories** and **calls**. You can hide words and phrases, turn off comments on your posts, and messages from strangers arrive as requests you can delete or block. You can only tag friends in photos; a tagged person can remove their tag at any time.
 
 ## What to do if you see a violation
 

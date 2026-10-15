@@ -115,6 +115,9 @@ import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 import java.time.LocalTime
 import ru.wishka.memory.data.net.MediaQuality
+import ru.wishka.memory.data.net.DemoRealtime
+import ru.wishka.memory.data.net.DeviceInfo
+import ru.wishka.memory.data.net.RtEvent
 import ru.wishka.memory.data.net.Net
 import ru.wishka.memory.data.net.NetError
 import ru.wishka.memory.data.net.OpKind
@@ -181,6 +184,10 @@ enum class SettingsPage(private val ru: String) {
     Theme("Оформление"),
     /** Качество фото и видео при отправке, загрузки, очередь, кэш. */
     Network("Данные и сеть"),
+    /** Скрытые слова, фильтр оскорблений и спама. */
+    HiddenWords("Скрытые слова"),
+    /** Устройства, с которых вошли. */
+    Devices("Устройства"),
     ;
 
     val title: String get() = t(ru)
@@ -392,6 +399,12 @@ data class UiState(
     val cacheBytes: Long = 0,
     /** Что сказать о сети: «запись не отправлена» и т. п.; null — нечего. */
     val netNotice: String? = null,
+    /** Устройства, с которых вошли в аккаунт. */
+    val devices: List<DeviceInfo> = emptyList(),
+    /** Короткое сообщение внизу экрана («Слишком часто…»); null — нечего. */
+    val notice: String? = null,
+    /** Вход на сервер закрыт (вышли с этого устройства на другом) — нужно войти снова. */
+    val signedOut: Boolean = false,
 ) {
     /** Кружки историй друзей (свой — отдельно). */
     fun storyCircles(now: Long): List<StoryCircle> =
@@ -448,9 +461,35 @@ data class UiState(
     fun postsOf(userId: Int): List<Post> = posts.filter { it.author.id == userId }
     val openChat: Chat? get() = chats.firstOrNull { it.id == openChatId }
     /** Счётчик на вкладке «Чаты»: переписки без звука не считаются. */
-    val unreadTotal: Int get() = chats.filterNot { it.muted }.sumOf { it.unread }
+    val unreadTotal: Int get() = chats.filterNot { it.muted || it.request }.sumOf { it.unread }
     /** Список чатов: закреплённые сверху, остальные — по последнему сообщению. */
-    val chatList: List<Chat> get() = chats.sortedByDescending { it.onTop }
+    val chatList: List<Chat> get() = chats.filterNot { it.request }.sortedByDescending { it.onTop }
+
+    /** Запросы на переписку: написали не друзья. */
+    val requestChats: List<Chat> get() = chats.filter { it.request }
+
+    /**
+     * Скрыть ли текст фильтром (скрытые слова, оскорбления, спам): своё и
+     * сказанное другом в переписке на двоих — не скрываем.
+     */
+    fun hiddenReason(text: String, authorId: Int, chat: Chat? = null): HiddenReason? {
+        if (authorId == me.id || authorId == AppViewModel.SYSTEM_AUTHOR) return null
+        if (chat != null && !chat.isGroup && !chat.request && chat.peer.id in following) return null
+        return Moderation.check(text, privacy.moderation)
+    }
+
+    /** «Вера печатает…», «Вера и Марк печатают…» — для группы; для двоих — просто «печатает…». */
+    fun typingTitle(chat: Chat): String? {
+        val ids = chat.typingIds.filter { it != me.id }
+        if (ids.isEmpty()) return if (chat.typing) t("печатает…") else null
+        if (!chat.isGroup) return t("печатает…")
+        val names = ids.mapNotNull { Demo.person(it)?.name?.substringBefore(' ') }
+        return when (names.size) {
+            0 -> t("печатает…")
+            1 -> tf("%s печатает…", names[0])
+            else -> tf("%s и %s печатают…", names[0], names[1])
+        }
+    }
     /**
      * Лента без записей тех, кто в чёрном списке, и без записей закрытых
      * профилей тех, кто вам не друг.
@@ -977,6 +1016,7 @@ class AppViewModel(
         val trimmed = text.trim()
         val built = poll?.build(nextId++)
         if (trimmed.isEmpty() && media.isEmpty() && checkIn == null && built == null) return
+        if (!postLimiter.allow(clock())) return tooOften()
         // Отмечать на фото можно только друзей — остальные отметки отбрасываются
         val friendIds = _state.value.following
         val cleanMedia = media.map { a -> if (a.tags.isEmpty()) a else a.copy(tags = a.tags.filter { it.userId in friendIds }.distinctBy { it.userId }) }
@@ -1147,6 +1187,12 @@ class AppViewModel(
         Telemetry.track(AppEvent.CommentSent)
         val trimmed = text.trim().take(1000)
         if (trimmed.isEmpty() && sticker == null) return
+        val target = _state.value.findPost(postId)
+        if (target != null && target.commentsOff && target.author.id != _state.value.me.id) {
+            _state.update { it.copy(notice = t("Автор выключил комментарии")) }
+            return
+        }
+        if (!commentLimiter.allow(clock())) return tooOften()
         _state.update { s ->
             val comment = Comment(nextId++, s.me, trimmed, createdAt = clock(), replyTo = replyTo, sticker = sticker)
             fun Post.withComment() = if (id == postId) copy(comments = comments + 1, commentList = commentList + comment) else this
@@ -1307,6 +1353,7 @@ class AppViewModel(
                 chats = s.chats.map { if (it.id == id) it.copy(unread = 0) else it },
             )
         }
+        sendRead(id)
     }
 
     fun closeChat() {
@@ -1335,6 +1382,7 @@ class AppViewModel(
         val trimmed = text.trim()
         val built = poll?.build(nextId++)
         if (trimmed.isEmpty() && attachments.isEmpty() && built == null && place == null) return
+        if (!messageLimiter.allow(clock())) return tooOften()
         // Секретная переписка: на сервер ушёл бы только конверт; демо-собеседник его расшифровывает своим ключом
         val secretChat = _state.value.chats.firstOrNull { it.id == chatId }?.takeIf { it.secret }
         if (secretChat != null && trimmed.isNotEmpty()) {
@@ -1347,8 +1395,18 @@ class AppViewModel(
         // На сервер — через очередь. Секретная переписка: уходит только конверт, без вложений
         // (шифрование файлов — следующий шаг), так что сервер ничего не прочтёт
         runCatching {
-            val wire = if (secretChat != null) outgoing.copy(text = if (trimmed.isNotEmpty()) lastEnvelope.orEmpty() else "", attachments = emptyList()) else outgoing
-            if (wire.text.isNotEmpty() || wire.attachments.isNotEmpty() || wire.poll != null || wire.place != null) net.queueMessage(chatId, wire)
+            // Секретная переписка: файлы шифруются на телефоне своим ключом (FileCrypto),
+            // а ключ едет в имени вложения, запечатанный ключом переписки
+            val keys = HashMap<String, String>()
+            val wireAttachments = if (secretChat == null) outgoing.attachments else outgoing.attachments.mapNotNull { a ->
+                val key = ru.wishka.memory.data.FileKey.random().encoded()
+                val sealed = sealFor(secretChat, key) ?: return@mapNotNull null
+                keys[a.id] = key
+                a.copy(name = ru.wishka.memory.data.FileCrypto.SEALED + sealed, mime = "", tags = emptyList())
+            }
+            lastFileKeys = keys
+            val wire = if (secretChat != null) outgoing.copy(text = if (trimmed.isNotEmpty()) lastEnvelope.orEmpty() else "", attachments = wireAttachments) else outgoing
+            if (wire.text.isNotEmpty() || wire.attachments.isNotEmpty() || wire.poll != null || wire.place != null) net.queueMessage(chatId, wire, keys)
             else updateMessage(chatId, outgoing.id) { it.copy(pending = false) }
         }
         refreshNetCounters()
@@ -1633,6 +1691,357 @@ class AppViewModel(
         }
     }
 
+    // ==================== ГРУППЫ ====================
+
+    /**
+     * Новая группа: название и друзья. Номер выбирает телефон (случайный,
+     * сервер примет или ответит 409) — так группа живёт и без сети.
+     * Ответ — номер переписки или текст ошибки (Left/Right не нужен — две функции).
+     */
+    fun createGroup(title: String, memberIds: List<Int>): Int? {
+        val s = _state.value
+        val clean = title.trim().take(ChatGroup.MAX_TITLE)
+        val ids = memberIds.filter { it in s.following && it !in s.blocked && it != s.me.id }.distinct()
+        if (clean.isEmpty() || ids.isEmpty()) return null
+        if (ids.size + 1 > ChatGroup.MAX_MEMBERS) return null
+        var id: Int
+        do { id = 1_000_000 + Random.nextInt(1_000_000_000) } while (s.chats.any { it.id == id })
+        val g = ChatGroup(clean, listOf(s.me.id) + ids, setOf(s.me.id), s.me.id, hue = Random.nextFloat())
+        val first = systemMessage(tf("Вы создали группу «%s»", clean))
+        _state.update { it.copy(chats = listOf(Chat(id, g.asUser(id), listOf(first), group = g)) + it.chats) }
+        runCatching {
+            net.queueCall("POST", "/v1/chats", org.json.JSONObject().put("id", id).put("title", clean).put("members", org.json.JSONArray(g.memberIds)))
+        }
+        kickNet()
+        return id
+    }
+
+    /** Служебная строка в переписке: «Вера добавлена», «Вы создали группу». */
+    private fun systemMessage(text: String) = Message(nextId++, fromMe = false, text = text, time = now(), authorId = SYSTEM_AUTHOR, delivered = true)
+
+    private fun updateGroup(chatId: Int, change: (ChatGroup) -> ChatGroup) {
+        _state.update { s ->
+            s.copy(chats = s.chats.map { c -> val g = c.group; if (c.id != chatId || g == null) c else { val ng = change(g); c.copy(group = ng, peer = ng.asUser(c.id)) } })
+        }
+    }
+
+    private fun isGroupAdmin(chatId: Int): Boolean {
+        val s = _state.value
+        return s.chats.firstOrNull { it.id == chatId }?.group?.isAdmin(s.me.id) == true
+    }
+
+    fun renameGroup(chatId: Int, title: String) {
+        val clean = title.trim().take(ChatGroup.MAX_TITLE)
+        if (clean.isEmpty() || !isGroupAdmin(chatId)) return
+        updateGroup(chatId) { it.copy(title = clean) }
+        append(chatId, systemMessage(tf("Новое название: «%s»", clean)))
+        runCatching { net.queueCall("PATCH", "/v1/chats/$chatId", org.json.JSONObject().put("title", clean), coalesce = "title:$chatId") }
+        kickNet()
+    }
+
+    fun addGroupMembers(chatId: Int, userIds: List<Int>) {
+        if (!isGroupAdmin(chatId)) return
+        val s = _state.value
+        val g = s.chats.firstOrNull { it.id == chatId }?.group ?: return
+        val add = userIds.filter { it !in g.memberIds && it in s.following && it !in s.blocked }.take(ChatGroup.MAX_MEMBERS - g.memberIds.size)
+        if (add.isEmpty()) return
+        updateGroup(chatId) { it.copy(memberIds = it.memberIds + add) }
+        add.forEach { uid ->
+            Demo.person(uid)?.let { p -> append(chatId, systemMessage(tf("%s теперь в группе", p.name.substringBefore(' ')))) }
+            runCatching { net.queueCall("PUT", "/v1/chats/$chatId/members/$uid") }
+        }
+        kickNet()
+    }
+
+    fun removeGroupMember(chatId: Int, userId: Int) {
+        val g = _state.value.chats.firstOrNull { it.id == chatId }?.group ?: return
+        if (!isGroupAdmin(chatId) || userId == g.ownerId || userId !in g.memberIds) return
+        updateGroup(chatId) { it.copy(memberIds = it.memberIds - userId, adminIds = it.adminIds - userId) }
+        Demo.person(userId)?.let { p -> append(chatId, systemMessage(tf("%s больше не в группе", p.name.substringBefore(' ')))) }
+        runCatching { net.queueCall("DELETE", "/v1/chats/$chatId/members/$userId") }
+        kickNet()
+    }
+
+    /** Сделать админом или снять — только создатель. */
+    fun setGroupAdmin(chatId: Int, userId: Int, admin: Boolean) {
+        val s = _state.value
+        val g = s.chats.firstOrNull { it.id == chatId }?.group ?: return
+        if (g.ownerId != s.me.id || userId == g.ownerId || userId !in g.memberIds) return
+        updateGroup(chatId) { it.copy(adminIds = if (admin) it.adminIds + userId else it.adminIds - userId) }
+        runCatching { net.queueCall(if (admin) "PUT" else "DELETE", "/v1/chats/$chatId/admins/$userId") }
+        kickNet()
+    }
+
+    /** Выйти из группы: переписка уходит из списка. */
+    fun leaveGroup(chatId: Int) {
+        val s = _state.value
+        s.chats.firstOrNull { it.id == chatId }?.group ?: return
+        _state.update { st -> st.copy(chats = st.chats.filterNot { it.id == chatId }, openChatId = if (st.openChatId == chatId) null else st.openChatId) }
+        runCatching { net.queueCall("DELETE", "/v1/chats/$chatId/members/${s.me.id}") }
+        kickNet()
+    }
+
+    // ==================== ЖИВОЙ КАНАЛ ====================
+
+    private val typingSentAt = HashMap<Int, Long>()
+
+    /** Печатаю в переписке: собеседникам — «печатает…» (не чаще раза в 3 секунды). */
+    fun typing(chatId: Int) {
+        val now = clock()
+        if (now - (typingSentAt[chatId] ?: 0) < 3_000) return
+        typingSentAt[chatId] = now
+        runCatching { net.realtime.send(RtEvent.Typing(chatId, _state.value.me.id, true)) }
+    }
+
+    /** Открыл переписку — «прочитано» до последнего пришедшего. */
+    private fun sendRead(chatId: Int) {
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        // Запрос ещё не принят — человек не должен знать, что прочитали
+        if (chat.request) return
+        val upTo = chat.messages.filter { !it.fromMe }.maxOfOrNull { it.sentAt } ?: return
+        if (upTo <= 0) return
+        runCatching {
+            if (net.realtime.connected) net.realtime.send(RtEvent.Read(chatId, _state.value.me.id, upTo))
+            else net.queueCall("POST", "/v1/chats/$chatId/read", org.json.JSONObject().put("upTo", upTo), coalesce = "read:$chatId")
+        }
+    }
+
+    /** Событие живого канала: сообщение, «печатает», «прочитано», состав группы. */
+    fun onRealtime(ev: RtEvent) {
+        val s = _state.value
+        when (ev) {
+            is RtEvent.NewMessage -> {
+                val m = runCatching { StateStore.Codec(s.me).messageOf(ev.message) }.getOrNull() ?: return
+                val author = m.authorId
+                if (author == s.me.id || author in s.blocked) return
+                val incoming = m.copy(id = nextId++, fromMe = false, pending = false, delivered = true)
+                val known = s.chats.firstOrNull { it.id == ev.chatId }
+                    ?: s.chats.firstOrNull { !it.isGroup && it.peer.id == author }
+                val chatId = if (known != null) known.id else {
+                    // Новый человек пишет: друзьям — сразу в переписки, остальным — «Запросы»
+                    val person = Demo.person(author) ?: return
+                    val friend = author in s.following
+                    when (s.privacy.messages) {
+                        Audience.Nobody -> return
+                        Audience.Following -> if (!friend) return
+                        Audience.Everyone -> Unit
+                    }
+                    _state.update { it.copy(chats = listOf(Chat(ev.chatId, person, emptyList(), request = !friend)) + it.chats) }
+                    ev.chatId
+                }
+                append(chatId, incoming)
+                // Пришло — значит, больше не печатает
+                _state.update { st -> st.copy(chats = st.chats.map { if (it.id == chatId) it.copy(typingIds = it.typingIds - author) else it }) }
+                val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+                if (_state.value.openChatId == chatId) sendRead(chatId)
+                else if (!chat.muted && !chat.request) {
+                    val shown = if (chat.secret) t("Новое сообщение") else incoming.text
+                    notify(Nudges.message(Demo.person(author) ?: chat.peer, shown, chatId))
+                }
+            }
+            is RtEvent.Typing -> _state.update { st ->
+                st.copy(chats = st.chats.map { c ->
+                    if (c.id != ev.chatId || ev.userId == st.me.id) c
+                    else c.copy(typingIds = if (ev.typing) c.typingIds + ev.userId else c.typingIds - ev.userId)
+                })
+            }
+            is RtEvent.Read -> _state.update { st ->
+                st.copy(chats = st.chats.map { c ->
+                    if (c.id != ev.chatId) c else c.copy(messages = c.messages.map { m ->
+                        if (m.fromMe && m.sentAt in 1..ev.upTo && ev.userId !in m.readBy) m.copy(readBy = m.readBy + ev.userId) else m
+                    })
+                })
+            }
+            is RtEvent.GroupChanged -> {
+                if (s.me.id !in ev.memberIds && ev.memberIds.isNotEmpty()) {
+                    // Нас убрали из группы
+                    _state.update { st -> st.copy(chats = st.chats.filterNot { it.id == ev.chatId && it.isGroup }) }
+                } else updateGroup(ev.chatId) { g ->
+                    g.copy(title = ev.title.ifEmpty { g.title }, memberIds = ev.memberIds.ifEmpty { g.memberIds }, adminIds = ev.adminIds.toSet().ifEmpty { g.adminIds })
+                }
+            }
+        }
+    }
+
+    /** Демо: выдать созревшие события живого канала (в приложении — раз в секунду). */
+    fun tickRealtime(): Int = (net.realtime as? DemoRealtime)?.tick() ?: 0
+
+    /** Подключить живой канал и рассказать демо-серверу, кто в каких переписках. */
+    private fun connectRealtime() {
+        val n = net
+        n.demo?.let { d -> _state.value.chats.forEach { c -> d.registerChat(c.id, c.group?.memberIds ?: listOf(_state.value.me.id, c.peer.id)) } }
+        runCatching { n.realtime.connect { ev -> onRealtime(ev) } }
+    }
+
+    // ==================== ЗАПРОСЫ НА ПЕРЕПИСКУ ====================
+
+    /** Принять: переписка переезжает к остальным, человек видит «прочитано». */
+    fun acceptRequest(chatId: Int) {
+        _state.update { s -> s.copy(chats = s.chats.map { if (it.id == chatId) it.copy(request = false) else it }) }
+        runCatching { net.queueCall("POST", "/v1/chats/$chatId/accept") }
+        sendRead(chatId)
+        kickNet()
+    }
+
+    /** Удалить запрос: человек не узнает. */
+    fun deleteRequest(chatId: Int) {
+        _state.update { s -> s.copy(chats = s.chats.filterNot { it.id == chatId && it.request }, openChatId = if (s.openChatId == chatId) null else s.openChatId) }
+    }
+
+    fun blockRequest(chatId: Int) {
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        deleteRequest(chatId)
+        block(chat.peer.id)
+    }
+
+    // ==================== МОДЕРАЦИЯ ====================
+
+    private val commentLimiter = RateLimiter(10, 60_000)
+    private val messageLimiter = RateLimiter(30, 60_000)
+    private val postLimiter = RateLimiter(10, 10 * 60_000)
+
+    fun addHiddenWord(word: String) {
+        _state.update { it.copy(privacy = it.privacy.copy(hiddenWords = Moderation.addWord(it.privacy.hiddenWords, word))) }
+        pushProfile()
+    }
+
+    fun removeHiddenWord(word: String) {
+        _state.update { it.copy(privacy = it.privacy.copy(hiddenWords = it.privacy.hiddenWords - word)) }
+        pushProfile()
+    }
+
+    /** Выключить или включить комментарии к своей записи. */
+    fun toggleComments(postId: Long) {
+        val me = _state.value.me.id
+        var off = false
+        _state.update { s -> s.copy(posts = s.posts.map { if (it.id == postId && it.author.id == me) it.copy(commentsOff = !it.commentsOff).also { p -> off = p.commentsOff } else it }) }
+        val post = _state.value.posts.firstOrNull { it.id == postId } ?: return
+        if (post.outboxKey.isEmpty()) runCatching { net.queueCall("PATCH", "/v1/posts/$postId", org.json.JSONObject().put("commentsOff", off), coalesce = "comments:$postId") }
+        kickNet()
+    }
+
+    fun dismissNotice() {
+        _state.update { it.copy(notice = null) }
+    }
+
+    private fun tooOften() {
+        _state.update { it.copy(notice = t("Слишком часто — подождите минуту")) }
+    }
+
+    // ==================== ВХОД НА СЕРВЕР И УСТРОЙСТВА ====================
+
+    /** Имя этого телефона для списка устройств («Pixel 8»). */
+    var deviceName: String = "Android"
+
+    /**
+     * Войти на сервер (если ещё не вошли) и сверить профиль. fresh — на
+     * этом телефоне аккаунт новый: берём профиль с сервера, иначе — шлём свой.
+     */
+    fun startSession(login: String, password: String?, fresh: Boolean) {
+        if (!demoReplies) return
+        viewModelScope.launch { runCatching { startSessionNow(login, password, fresh) } }
+    }
+
+    suspend fun startSessionNow(login: String, password: String?, fresh: Boolean) {
+        suspend fun signIn(): Boolean = try {
+            net.signIn(login, password.orEmpty(), deviceName, "android")
+            true
+        } catch (e: NetError) {
+            if (e.kind == NetError.Kind.Auth || e.kind == NetError.Kind.Client) _state.update { it.copy(signedOut = true) }
+            false
+        }
+        if (!net.session.signedIn && !signIn()) return
+        val remote = try { net.api.profile() } catch (e: NetError) {
+            // Сохранённые токены сервер не знает (демо-сервер начинает с нуля при каждом запуске,
+            // настоящий — вышли с этого телефона на другом): войти ещё раз
+            if (e.kind != NetError.Kind.Auth) return
+            net.session.clear()
+            if (!signIn()) return
+            try { net.api.profile() } catch (e2: NetError) { return }
+        }
+        _state.update { it.copy(signedOut = false) }
+        if (remote == null || !fresh) pushProfile() else applyProfile(remote.json)
+    }
+
+    /** Свой профиль и приватность — на сервер (для других своих телефонов). */
+    private fun pushProfile() {
+        val s = _state.value
+        val o = org.json.JSONObject()
+            .put("name", s.me.name).put("bio", s.me.bio).put("city", s.me.city).put("birthday", s.me.birthday)
+            .put("website", s.me.website).put("interests", org.json.JSONArray(s.me.interests))
+            .put("privacy", StateStore.Codec(s.me).privacyJson(s.privacy))
+        runCatching { net.queueCall("PUT", "/v1/me", o, coalesce = "me") }
+        kickNet()
+    }
+
+    /** Профиль с сервера — на новый телефон. */
+    private fun applyProfile(o: org.json.JSONObject) {
+        _state.update { s ->
+            fun str(k: String, d: String) = o.optString(k).ifEmpty { d }
+            val arr = o.optJSONArray("interests")
+            val interests = if (arr == null) s.me.interests else (0 until arr.length()).map { arr.optString(it) }
+            val me = s.me.copy(name = str("name", s.me.name), bio = str("bio", s.me.bio), city = str("city", s.me.city),
+                birthday = str("birthday", s.me.birthday), website = str("website", s.me.website), interests = interests)
+            val privacy = o.optJSONObject("privacy")?.let { StateStore.Codec(me).privacyOf(it) } ?: s.privacy
+            s.withMe(me).copy(privacy = privacy)
+        }
+    }
+
+    fun loadDevices() {
+        if (!demoReplies) return
+        viewModelScope.launch { loadDevicesNow() }
+    }
+
+    suspend fun loadDevicesNow() {
+        try {
+            val list = net.api.devices()
+            _state.update { it.copy(devices = list.sortedWith(compareByDescending<DeviceInfo> { d -> d.current }.thenByDescending { d -> d.lastSeen })) }
+        } catch (e: NetError) {
+            _state.update { it.copy(notice = if (e.kind == NetError.Kind.Offline) t("Нет сети — список устройств загрузится позже") else t("Не удалось загрузить устройства")) }
+            if (e.kind == NetError.Kind.Auth) _state.update { it.copy(signedOut = true) }
+        }
+    }
+
+    fun revokeDevice(id: String) {
+        if (!demoReplies) return
+        viewModelScope.launch { revokeDeviceNow(id) }
+    }
+
+    suspend fun revokeDeviceNow(id: String) {
+        runCatching { net.api.revokeDevice(id) }.onFailure { _state.update { it.copy(notice = t("Не получилось — проверьте сеть")) } }
+        loadDevicesNow()
+    }
+
+    fun revokeOtherDevices() {
+        if (!demoReplies) return
+        viewModelScope.launch {
+            runCatching { net.api.revokeOtherDevices() }.onFailure { _state.update { it.copy(notice = t("Не получилось — проверьте сеть")) } }
+            loadDevicesNow()
+        }
+    }
+
+    // ==================== ФОНОВАЯ ОТПРАВКА ====================
+
+    /**
+     * Пока приложение было закрыто, очередь могла уйти в фоне (NetWorker).
+     * Сверить: записи, которых в очереди уже нет, — отправлены; сообщения
+     * переписок без очереди — тоже.
+     */
+    private fun reconcileOutbox() {
+        val ops = runCatching { net.outbox.all() }.getOrDefault(emptyList())
+        val keys = ops.map { it.key }.toSet()
+        val chatsWithOps = ops.filter { it.kind == OpKind.SendMessage }.map { it.target.toInt() }.toSet()
+        _state.update { s ->
+            s.copy(
+                posts = s.posts.map { if (it.outboxKey.isNotEmpty() && it.outboxKey !in keys) it.copy(outboxKey = "") else it },
+                chats = s.chats.map { c ->
+                    if (c.id in chatsWithOps || c.messages.none { it.pending }) c
+                    else c.copy(messages = c.messages.map { if (it.pending) it.copy(pending = false, delivered = true) else it })
+                },
+            )
+        }
+    }
+
     // ==================== СЕТЬ ====================
 
     /**
@@ -1644,7 +2053,13 @@ class AppViewModel(
         private set
 
     private var feedPager: Pager<Post> = net.feedPager()
+
+    // Демо-сеть по умолчанию (и в тестах) — тоже с живым каналом
+    init {
+        connectRealtime()
+    }
     private var netJob: Job? = null
+    private var tickJob: Job? = null
     private val netKick = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     /** Есть ли сеть у телефона (NetMonitor). */
     private var deviceOnline = true
@@ -1658,6 +2073,8 @@ class AppViewModel(
         feedPager = n.feedPager()
         feedPager.restore()
         publishFeed()
+        reconcileOutbox()
+        connectRealtime()
         refreshNetCounters()
         applyOnline()
     }
@@ -1666,6 +2083,9 @@ class AppViewModel(
     private fun detachNet() {
         netJob?.cancel()
         netJob = null
+        tickJob?.cancel()
+        tickJob = null
+        runCatching { net.realtime.close() }
         net = Net.demo(clock, { _state.value.me })
         feedPager = net.feedPager()
     }
@@ -1726,9 +2146,19 @@ class AppViewModel(
      */
     fun startNetLoop() {
         if (netJob != null || !demoReplies) return
+        // Демо-сервер «присылает» события живого канала — выдаём их раз в секунду
+        tickJob = viewModelScope.launch {
+            while (true) {
+                delay(1_000)
+                runCatching { tickRealtime() }
+            }
+        }
         netJob = viewModelScope.launch {
             while (true) {
-                if (_state.value.netStatus != NetStatus.Offline && net.busy) {
+                // Приложение свёрнуто, а сервер настоящий — очередь отправляет NetWorker,
+                // не мешаем ему (с демо-сервером — только мы)
+                val workerOwns = net.demo == null && !ru.wishka.memory.push.AppVisibility.foreground
+                if (_state.value.netStatus != NetStatus.Offline && net.busy && !workerOwns) {
                     runCatching { pumpNet() }
                 }
                 val wait = if (net.busy) (net.nextAttemptAt() - clock()).coerceIn(1_000, 30_000) else 60_000
@@ -1746,11 +2176,11 @@ class AppViewModel(
                 OpKind.CreatePost -> _state.update { s -> s.copy(posts = s.posts.map { if (it.outboxKey == op.key) it.copy(outboxKey = "") else it }) }
                 OpKind.SendMessage -> {
                     val localId = runCatching { org.json.JSONObject(op.payload).getLong("id") }.getOrNull()
-                    if (localId != null) updateMessage(op.target.toInt(), localId) { it.copy(pending = false) }
+                    val sentAt = answer?.optLong("sentAt") ?: 0L
+                    if (localId != null) updateMessage(op.target.toInt(), localId) { it.copy(pending = false, delivered = true, sentAt = sentAt) }
                 }
                 else -> Unit
             }
-            if (answer != null) runCatching { c.postOf(answer) }
         }
         r.uploads.filter { it.state == UploadState.Done }.forEach(uploadCleanup)
         for (op in r.failed) {
@@ -1767,11 +2197,14 @@ class AppViewModel(
             }
         }
         _state.update {
-            it.copy(netStatus = when {
-                !deviceOnline || it.demoOffline -> NetStatus.Offline
-                r.offline -> NetStatus.ServerDown
-                else -> NetStatus.Online
-            })
+            it.copy(
+                netStatus = when {
+                    !deviceOnline || it.demoOffline -> NetStatus.Offline
+                    r.offline -> NetStatus.ServerDown
+                    else -> NetStatus.Online
+                },
+                signedOut = it.signedOut || r.authLost,
+            )
         }
         refreshNetCounters()
     }
@@ -2191,6 +2624,9 @@ class AppViewModel(
     /** Последний конверт, который ушёл бы на сервер, — для проверки, что текста в нём нет. */
     @Volatile
     var lastEnvelope: String? = null
+
+    /** Ключи файлов последнего секретного сообщения (attachmentId → FileKey) — для проверки. */
+    var lastFileKeys: Map<String, String> = emptyMap()
         private set
 
     fun attachKeys(store: ru.wishka.memory.data.auth.KeyValueStore) {
@@ -2220,6 +2656,8 @@ class AppViewModel(
 
     /** Включить или выключить сквозное шифрование переписки. */
     fun setSecret(chatId: Int, on: Boolean) {
+        // Группы — без сквозного шифрования (ключи на каждого участника — следующий шаг)
+        if (_state.value.chats.firstOrNull { it.id == chatId }?.isGroup == true) return
         if (on) Telemetry.track(AppEvent.SecretChat)
         updateChat(chatId) { it.copy(secret = on, verified = if (on) it.verified else false) }
     }
@@ -3175,6 +3613,7 @@ class AppViewModel(
             // Свои записи в ленте показывают новое имя
             s.withMe(me)
         }
+        pushProfile()
     }
 
     /** Своё фото в профиле; "" — вернуть аватар из букв. */
@@ -3194,6 +3633,7 @@ class AppViewModel(
     /** Приватность. Заявки в друзья от неё не зависят: открыли профиль — они всё так же ждут ответа. */
     fun setPrivacy(privacy: Privacy) {
         _state.update { it.copy(privacy = privacy) }
+        pushProfile()
     }
 
     /**
@@ -3379,6 +3819,9 @@ class AppViewModel(
             if (friends.isNotEmpty()) repeat(2) { add(5) }
             if (mine.isNotEmpty() && friends.isNotEmpty()) add(6)
             if (friends.isNotEmpty() && s.call == null) add(7)
+            // Пишет незнакомый — в «Запросы»; пишут в группе
+            if (requesters.isNotEmpty() && net.demo != null) add(8)
+            if (s.chats.any { it.isGroup } && net.demo != null) repeat(2) { add(9) }
         }
         if (options.isEmpty()) return
         when (options[random.nextInt(options.size)]) {
@@ -3414,8 +3857,28 @@ class AppViewModel(
                 _state.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) it.copy(reposts = it.reposts + 1) else it }) }
                 record(ActivityKind.Repost, fan, post.id, post.text)
             }
-            else -> incomingCall(friends[random.nextInt(friends.size)].id, video = random.nextBoolean())
+            7 -> incomingCall(friends[random.nextInt(friends.size)].id, video = random.nextBoolean())
+            8 -> {
+                val stranger = requesters[random.nextInt(requesters.size)]
+                val text = Demo.strangerTexts[random.nextInt(Demo.strangerTexts.size)]
+                demoDeliver(STRANGER_CHAT_BASE + stranger.id, stranger.id, text, 0)
+            }
+            else -> {
+                val group = s.chats.filter { it.isGroup }.let { it[random.nextInt(it.size)] }
+                val others = group.group!!.memberIds.filter { it != s.me.id && it !in s.blocked }
+                if (others.isEmpty()) return
+                val who = others[random.nextInt(others.size)]
+                net.demo?.realtime?.schedule(RtEvent.Typing(group.id, who, true), 0)
+                demoDeliver(group.id, who, Demo.replies[random.nextInt(Demo.replies.size)], 2_500)
+            }
         }
+    }
+
+    /** Демо: сервер «присылает» сообщение по живому каналу. */
+    private fun demoDeliver(chatId: Int, authorId: Int, text: String, afterMs: Long) {
+        val d = net.demo ?: return
+        val m = Message(0, fromMe = false, text = text, time = now(), authorId = authorId)
+        d.deliver(chatId, StateStore.Codec(_state.value.me).messageJson(m), afterMs)
     }
 
     /** Друг отметил чек-ин: запись в ленте и уведомление — с тем, что вы обсуждали, если такое есть. */
@@ -3806,6 +4269,10 @@ class AppViewModel(
     private fun now(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
 
     companion object {
+        /** Служебные строки переписки (не человек): «Вы создали группу». */
+        const val SYSTEM_AUTHOR = -1
+        /** Демо: номера переписок, которые начинают незнакомые. */
+        const val STRANGER_CHAT_BASE = 2_000_000
         /** Сколько фото и видео можно приложить к одной записи или сообщению. */
         const val MAX_MEDIA = 10
 

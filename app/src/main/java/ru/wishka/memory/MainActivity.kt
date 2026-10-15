@@ -108,12 +108,15 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppVisibility.foreground = true
+        ru.wishka.memory.net.NetWorker.cancel(applicationContext)
     }
 
     override fun onStop() {
         super.onStop()
         AppVisibility.foreground = false
         ru.wishka.memory.telemetry.TelemetrySetup.flush()
+        // Неотправленное уйдёт и при закрытом приложении
+        ru.wishka.memory.net.NetWorker.schedule(applicationContext)
     }
 
     /** Нажали на уведомление, когда приложение уже открыто. */
@@ -191,6 +194,15 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
         onDispose { netMonitor.stop() }
     }
     LaunchedEffect(netMonitor) { netMonitor.online.collect { vm.setDeviceOnline(it) } }
+    // Короткие сообщения модели («Слишком часто…») — тостом
+    val vmState by vm.state.collectAsState()
+    val notice = vmState.notice
+    LaunchedEffect(notice) {
+        notice?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            vm.dismissNotice()
+        }
+    }
     // Знакомство «выберите любимое» — один раз на телефоне, до регистрации
     var onboarded by rememberSaveable { mutableStateOf(device.onboarded) }
     var registerNext by rememberSaveable { mutableStateOf(false) }
@@ -222,14 +234,21 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
             vm.setMediaQuality(device.mediaQuality)
             vm.setDemoOffline(device.demoOffline)
             vm.uploadCleanup = ru.wishka.memory.net.MediaCompressor::cleanup
+            vm.deviceName = android.os.Build.MODEL.orEmpty().ifEmpty { "Android" }
             vm.attachNet(
                 ru.wishka.memory.net.NetSetup.forAccount(
                     context, account.username, { vm.state.value.me }, System::currentTimeMillis,
                     quality = { vm.state.value.mediaQuality }, unmetered = { netMonitor.unmetered.value },
+                    tokens = ru.wishka.memory.data.auth.SecurePrefs(context.applicationContext),
                 ),
             )
             vm.startNetLoop()
+            // Вход на сервер (демо — сразу) и синхронизация профиля между телефонами
+            vm.startSession(account.username, authVm.takePassword(), fresh = saved == null)
+            // Для отправки в фоне: кто вошёл
+            device.setLastAccount(account.username, me.id, me.name)
         } else {
+            device.setLastAccount(null)
             vm.reset()
         }
     }
@@ -561,6 +580,10 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
                     onAuthor = { userId -> vm.closeComments(); vm.openPerson(userId) },
                     onDismiss = vm::closeComments,
                     stickers = state.stickers,
+                    // К своей записи — фильтр: скрытые слова, оскорбления, спам
+                    hiddenOf = { c -> if (post.author.id == state.me.id) state.hiddenReason(c.text, c.author.id) else null },
+                    closed = post.commentsOff,
+                    onToggleClosed = if (post.author.id == state.me.id) ({ vm.toggleComments(id) }) else null,
                 )
             }
         }

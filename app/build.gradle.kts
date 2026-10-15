@@ -172,6 +172,8 @@ dependencies {
 
     // Сеть: запросы к серверу Memory (data/net, net/AndroidNet.kt)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Отправка, пока приложение закрыто (net/NetWorker.kt)
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
 
     // Отчёты о сбоях и статистика — только с согласия (telemetry/TelemetrySetup.kt)
     implementation("io.sentry:sentry-android:8.58.0")

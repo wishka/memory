@@ -8,38 +8,30 @@ struct ChatsScreen: View {
     @State private var confirm: ChatConfirm?
     /// Переписка, для которой открыто меню (долгое нажатие).
     @State private var menuChat: Chat?
-    /// Переключатель «Переписки» / «Звонки».
-    @State private var calls = false
+    /// Раздел: переписки, запросы на переписку или звонки.
+    @State private var section: ChatsSection = .chats
     @State private var notice: String?
+    @State private var newGroup = false
 
-    var body: some View {
+    /// Переписки раздела, отобранные поиском.
+    private var shownChats: [Chat] {
         let state = model.state
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let chats = state.chatList.filter {
+        let source: [Chat] = section == .requests ? state.requestChats : state.chatList
+        return source.filter {
             needle.isEmpty || $0.peer.name.lowercased().contains(needle) || $0.peer.handle.contains(needle)
         }
+    }
+
+    var body: some View {
+        let chats = shownChats
 
         ScrollView {
             LazyVStack(spacing: 0) {
-                ScreenTitle(
-                    title: t("Чаты"),
-                    subtitle: state.unreadTotal > 0 ? tf("Непрочитанных: %s", state.unreadTotal) : t("Все прочитано")
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
+                titleRow
+                sectionChips
 
-                // Переписки или история звонков (с числом пропущенных)
-                let missed = state.callLog.filter { $0.missed && !$0.outgoing }.count
-                HStack(spacing: 8) {
-                    Chip(text: t("Переписки"), active: !calls) { calls = false }
-                    Chip(text: missed > 0 ? tf("Звонки · %s", missed) : t("Звонки"), active: calls) { calls = true }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
-
-                if calls {
+                if section == .calls {
                     CallLogList(model: model) { notice = $0 }
                 } else {
                     GlassField(placeholder: t("Поиск по имени"), text: $query, limit: 40, singleLine: true)
@@ -47,8 +39,17 @@ struct ChatsScreen: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
 
+                    if section == .requests {
+                        Text(t("Пишут не друзья. Пока вы не ответите, они не узнают, что вы прочитали. Скрытые слова и фильтр работают и здесь."))
+                            .textStyle(.bodySmall, Palette.mist)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 4)
+                    }
+
                     if chats.isEmpty {
-                        Text(t("Никого не нашли"))
+                        Text(section == .requests ? t("Запросов нет") : t("Никого не нашли"))
                             .textStyle(.bodySmall, Palette.mist)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(24)
@@ -66,6 +67,7 @@ struct ChatsScreen: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .toast($notice)
+        .sheet(isPresented: $newGroup) { NewGroupSheet(model: model) }
         .glassActions(item: $menuChat, title: { $0.peer.name }) { chat in
             menu(chat, blocked: model.state.isBlocked(chat.peer.id))
         }
@@ -85,6 +87,39 @@ struct ChatsScreen: View {
                 }]
             }
         )
+    }
+
+    /// «Чаты», непрочитанные и кнопка «Новая группа».
+    private var titleRow: some View {
+        let unread = model.state.unreadTotal
+        let subtitle = unread > 0 ? tf("Непрочитанных: %s", unread) : t("Все прочитано")
+        return HStack(spacing: 8) {
+            ScreenTitle(title: t("Чаты"), subtitle: subtitle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+            RoundGlyphButton(icon: .groups, color: Palette.lilac, label: t("Новая группа")) { newGroup = true }
+                .padding(.trailing, 16)
+        }
+    }
+
+    /// Переписки, запросы (если есть или выбраны) и звонки (с числом пропущенных).
+    private var sectionChips: some View {
+        let state = model.state
+        let missed = state.callLog.filter { $0.missed && !$0.outgoing }.count
+        let requests = state.requestChats.count
+        let callsTitle = missed > 0 ? tf("Звонки · %s", missed) : t("Звонки")
+        let requestsTitle = requests > 0 ? tf("Запросы · %s", requests) : t("Запросы")
+        return HStack(spacing: 8) {
+            Chip(text: t("Переписки"), active: section == .chats) { section = .chats }
+            if requests > 0 || section == .requests {
+                Chip(text: requestsTitle, active: section == .requests) { section = .requests }
+            }
+            Chip(text: callsTitle, active: section == .calls) { section = .calls }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
     }
 
     private func menu(_ chat: Chat, blocked: Bool) -> [GlassAction] {
@@ -108,6 +143,11 @@ struct ChatsScreen: View {
         })
         return items
     }
+}
+
+/// Раздел вкладки «Чаты».
+private enum ChatsSection {
+    case chats, requests, calls
 }
 
 /// Подтверждение очистки или удаления переписки.

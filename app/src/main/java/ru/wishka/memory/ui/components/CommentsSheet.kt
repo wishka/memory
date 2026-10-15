@@ -72,6 +72,12 @@ fun CommentsSheet(
     onDismiss: () -> Unit,
     /** Свои стикеры из «Студии» — ответить стикером. */
     stickers: List<ru.wishka.memory.data.Sticker> = emptyList(),
+    /** Скрыто ли фильтром (комментарии к своему); null — показывать. */
+    hiddenOf: (Comment) -> ru.wishka.memory.data.HiddenReason? = { null },
+    /** Автор выключил комментарии — поле ввода прячется. */
+    closed: Boolean = false,
+    /** Своя запись: переключатель «Выключить комментарии». */
+    onToggleClosed: (() -> Unit)? = null,
 ) {
     var choosingSticker by remember { mutableStateOf(false) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -110,6 +116,16 @@ fun CommentsSheet(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 items(comments, key = { it.id }) { c ->
+                    val reason = hiddenOf(c)
+                    var reveal by remember(c.id) { mutableStateOf(false) }
+                    if (reason != null && !reveal) {
+                        Text(
+                            ru.wishka.memory.ui.chats.hiddenTitle(reason) + " · " + t("Показать"),
+                            style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+                            modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClickLabel = t("Показать")) { reveal = true }.padding(8.dp),
+                        )
+                        return@items
+                    }
                     CommentRow(
                         c,
                         mine = c.author.id == myId,
@@ -143,6 +159,22 @@ fun CommentsSheet(
                         contentAlignment = Alignment.Center,
                     ) { Glyph(LineIcon.Close, Palette.Mist, size = 16.dp, description = LineIcon.Close.label) }
                 }
+            }
+            onToggleClosed?.let { toggle ->
+                Text(
+                    if (closed) t("Включить комментарии") else t("Выключить комментарии"),
+                    style = MaterialTheme.typography.labelLarge, color = Palette.Lilac,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(50))
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = toggle).padding(8.dp),
+                )
+            }
+            if (closed && onToggleClosed == null) {
+                Text(
+                    t("Автор выключил комментарии"),
+                    style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+                    modifier = Modifier.padding(20.dp),
+                )
+                return@Column
             }
             MentionSuggestions(text, { text = it.take(1000) }, Modifier.padding(horizontal = 12.dp))
             Row(

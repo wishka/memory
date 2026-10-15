@@ -350,7 +350,11 @@ struct MainScreen: View {
                 onReport: { reportComment(post.commentList, $0) },
                 onLike: { model.toggleCommentLike(id, $0) },
                 onAuthor: openAuthor,
-                stickers: state.stickers
+                stickers: state.stickers,
+                // К своей записи — фильтр: скрытые слова, оскорбления, спам
+                hiddenOf: commentFilter(post),
+                closed: post.commentsOff,
+                onToggleClosed: commentsToggle(post)
             )
         } else if let id = state.commentsPrismId, let prism = state.findPrism(id) {
             CommentsSheet(
@@ -365,6 +369,20 @@ struct MainScreen: View {
                 stickers: state.stickers
             )
         }
+    }
+
+    /// Фильтр комментариев — только к своей записи.
+    private func commentFilter(_ post: Post) -> (Comment) -> HiddenReason? {
+        let state = model.state
+        guard post.author.id == state.me.id else { return { _ in nil } }
+        return { c in state.hiddenReason(c.text, c.author.id) }
+    }
+
+    /// «Выключить / Включить комментарии» — только у своей записи.
+    private func commentsToggle(_ post: Post) -> (() -> Void)? {
+        guard post.author.id == model.state.me.id else { return nil }
+        let postId = post.id
+        return { model.toggleComments(postId) }
     }
 
     @ViewBuilder

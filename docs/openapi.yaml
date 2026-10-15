@@ -125,6 +125,192 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
+  /v1/auth/login:
+    post:
+      summary: Войти с этого устройства
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login: { type: string }
+                password: { type: string }
+                device:
+                  type: object
+                  properties: { name: { type: string }, platform: { enum: [android, ios, web] } }
+      responses:
+        "200":
+          description: Токены
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "401": { description: Неверный логин или пароль }
+  /v1/auth/refresh:
+    post:
+      summary: Новая пара токенов по токену обновления
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [refresh], properties: { refresh: { type: string } } }
+      responses:
+        "200":
+          description: Токены (старый токен обновления больше не действует)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "401": { description: "Сессия закрыта (вышли с этого устройства) — войти заново" }
+  /v1/auth/logout:
+    post:
+      summary: Выйти с этого устройства
+      responses: { "204": { description: Готово } }
+  /v1/devices:
+    get:
+      summary: Устройства, с которых вошли
+      responses:
+        "200":
+          description: Список
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        platform: { type: string }
+                        lastSeen: { type: integer, format: int64 }
+                        current: { type: boolean }
+  /v1/devices/{deviceId}:
+    delete:
+      summary: Выйти на другом устройстве
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses: { "204": { description: Готово }, "404": { description: Нет такого (или это текущее) } }
+  /v1/devices/revoke-others:
+    post:
+      summary: Выйти на всех, кроме этого
+      responses: { "204": { description: Готово } }
+  /v1/me:
+    get:
+      summary: Профиль и приватность (общие для всех телефонов)
+      responses:
+        "200":
+          description: Профиль
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "404": { description: Ещё не сохраняли (первый вход) }
+    put:
+      summary: Сохранить профиль и приватность
+      parameters:
+        - $ref: "#/components/parameters/idempotency"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Profile" }
+      responses:
+        "200":
+          description: Сохранено (updatedAt — время сервера)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+  /v1/chats:
+    post:
+      summary: Новая группа
+      description: Номер выбирает клиент (случайный); занят — 409, клиент выбирает другой.
+      parameters:
+        - $ref: "#/components/parameters/idempotency"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, title, members]
+              properties:
+                id: { type: integer }
+                title: { type: string, maxLength: 60 }
+                members: { type: array, items: { type: integer }, maxItems: 200 }
+      responses:
+        "201":
+          description: Создана
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "409": { description: Номер занят }
+  /v1/chats/{chatId}:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: integer } }
+    patch:
+      summary: Переименовать группу (админ)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { title: { type: string, maxLength: 60 } } }
+      responses:
+        "200":
+          description: Группа
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "403": { description: Не админ }
+  /v1/chats/{chatId}/members/{userId}:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: integer } }
+      - { name: userId, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Добавить участника (админ)
+      responses: { "204": { description: Готово }, "403": { description: Не админ } }
+    delete:
+      summary: Убрать участника (админ) или выйти самому (свой номер)
+      responses: { "204": { description: Готово }, "403": { description: Не админ или это создатель } }
+  /v1/chats/{chatId}/admins/{userId}:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: integer } }
+      - { name: userId, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Сделать админом (только создатель)
+      responses: { "204": { description: Готово } }
+    delete:
+      summary: Снять админа (только создатель)
+      responses: { "204": { description: Готово } }
+  /v1/chats/{chatId}/read:
+    post:
+      summary: Прочитано до (если живой канал не подключён)
+      parameters:
+        - { name: chatId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { upTo: { type: integer, format: int64 } } }
+      responses: { "204": { description: Готово } }
+  /v1/chats/{chatId}/accept:
+    post:
+      summary: Принять запрос на переписку
+      parameters:
+        - { name: chatId, in: path, required: true, schema: { type: integer } }
+      responses: { "204": { description: Готово } }
+  /v1/posts/{postId}:
+    patch:
+      summary: Изменить свою запись (сейчас — включить/выключить комментарии)
+      parameters:
+        - { name: postId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { commentsOff: { type: boolean } } }
+      responses: { "204": { description: Готово } }
   /v1/uploads:
     options:
       summary: Возможности tus
@@ -184,6 +370,33 @@ components:
       schema: { type: string, format: uuid }
       description: Один и тот же при каждом повторе одного действия
   schemas:
+    Tokens:
+      type: object
+      required: [access, refresh, expiresIn, deviceId]
+      properties:
+        access: { type: string, description: Токен доступа (15 минут) }
+        refresh: { type: string, description: Токен обновления (одноразовый) }
+        expiresIn: { type: integer, description: секунды }
+        deviceId: { type: string }
+    Profile:
+      type: object
+      properties:
+        name: { type: string }
+        bio: { type: string }
+        city: { type: string }
+        birthday: { type: string }
+        website: { type: string }
+        interests: { type: array, items: { type: string } }
+        privacy: { type: object, description: "Как Privacy в приложении, включая hiddenWords, hideOffensive, hideSpam" }
+        updatedAt: { type: integer, format: int64 }
+    Group:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        members: { type: array, items: { type: integer } }
+        admins: { type: array, items: { type: integer } }
+        owner: { type: integer }
     PostPage:
       type: object
       required: [items, next]
@@ -229,6 +442,7 @@ components:
         place:
           type: [object, "null"]
           properties: { lat: { type: number }, lon: { type: number }, title: { type: string } }
+        commentsOff: { type: boolean }
     Message:
       type: object
       required: [id, fromMe, text, time]
@@ -244,3 +458,6 @@ components:
         poll: { type: [object, "null"] }
         place: { type: [object, "null"] }
         sentAt: { type: integer, format: int64, description: Время сервера, мс }
+        authorId: { type: integer, description: "Кто написал (в группах)" }
+        delivered: { type: boolean }
+        readBy: { type: array, items: { type: integer } }

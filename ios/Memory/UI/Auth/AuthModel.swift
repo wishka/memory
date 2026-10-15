@@ -23,6 +23,16 @@ final class AuthModel {
 
     @ObservationIgnored private var restoring = false
 
+    /// Пароль последнего входа — один раз, чтобы войти и на сервер (не
+    /// хранится: забирается takePassword() и стирается).
+    @ObservationIgnored private var pendingPassword: String?
+
+    func takePassword() -> String? {
+        let p = pendingPassword
+        pendingPassword = nil
+        return p
+    }
+
     init(auth: LocalAuth = LocalAuth(store: SecureStore()), consents: ConsentStore = ConsentStore()) {
         self.auth = auth
         self.consents = consents
@@ -45,7 +55,7 @@ final class AuthModel {
     }
 
     func login(_ username: String, _ password: String) {
-        run { $0.login(username: username, password: password) }
+        run(onOk: { [weak self] _ in self?.pendingPassword = password }) { $0.login(username: username, password: password) }
     }
 
     /// consented — человек отметил возраст, соглашение и согласие на
@@ -56,6 +66,7 @@ final class AuthModel {
         // Хешируются в фоне, вместе с паролем, а не в главном потоке
         let box = RecoveryCodesBox()
         run(onOk: { [weak self] account in
+            self?.pendingPassword = password
             if consented { consents.accept(account.username) }
             Telemetry.track(.signUp)
             self?.recoveryCodes = box.codes

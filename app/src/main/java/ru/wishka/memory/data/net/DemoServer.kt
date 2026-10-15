@@ -37,6 +37,15 @@ class DemoServer(
     @Volatile var failNext: Int = 0
     @Volatile var dropAfterBytes: Long = -1
 
+    /** Живой канал: сюда сервер «шлёт» события (прочитано, новые сообщения). */
+    @Volatile var realtime: DemoRealtime? = null
+
+    /** Через сколько демо-собеседник «прочитает» (мс). */
+    @Volatile var readDelayMs: Long = 2_500
+
+    /** Сколько живёт токен доступа (мс) — в тестах можно «состарить». */
+    @Volatile var accessTtlMs: Long = 15 * 60_000L
+
     /** Сколько запросов пришло — для тестов и экрана «Данные и сеть». */
     @Volatile var requests: Int = 0
         private set
@@ -49,6 +58,16 @@ class DemoServer(
     private val uploads = HashMap<String, Blob>()
     private var nextId = 6_000_000L
     private var uploadSeq = 0
+
+    // Вход и устройства
+    private class Device(val id: String, val name: String, val platform: String, var lastSeen: Long, var refresh: String, var access: String, var accessUntil: Long)
+    private val devices = mutableListOf<Device>()
+    private var tokenSeq = 0
+    // Профиль (синхронизация между телефонами)
+    private var profile: JSONObject? = null
+    // Участники переписок: кто «прочитает» и кому дойдёт
+    private val members = HashMap<Int, MutableList<Int>>()
+    private val groups = HashMap<Int, JSONObject>()
 
     private class Blob(val length: Long, val meta: String, val file: File?) {
         val memory = ByteArrayOutputStream()
@@ -91,7 +110,55 @@ class DemoServer(
 
     private fun route(r: HttpRequest, path: String): HttpResponse {
         val parts = path.trim('/').split('/')
+        // Вход и всё «своё» — только с токеном
+        if (path.startsWith("/v1/auth/")) return auth(r, path)
+        val needsAuth = path == "/v1/me" || path.startsWith("/v1/devices")
+        val device = deviceOf(r)
+        if (needsAuth && device == null) return HttpResponse(401, body = "Нужен вход".toByteArray())
+        device?.lastSeen = clock()
         return when {
+            path == "/v1/me" && r.method == "GET" -> profile?.let { json(it) } ?: notFound()
+            path == "/v1/me" && r.method == "PUT" -> {
+                val body = bodyJson(r) ?: return HttpResponse(400)
+                profile = body.put("updatedAt", clock())
+                json(profile!!)
+            }
+            path == "/v1/devices" && r.method == "GET" -> json(JSONObject().put("items", JSONArray(devices.map { d ->
+                JSONObject().put("id", d.id).put("name", d.name).put("platform", d.platform).put("lastSeen", d.lastSeen).put("current", d === device)
+            })))
+            path == "/v1/devices/revoke-others" && r.method == "POST" -> {
+                devices.removeAll { it !== device }
+                HttpResponse(204)
+            }
+            parts.size == 3 && parts[1] == "devices" && r.method == "DELETE" -> {
+                if (devices.removeAll { it.id == parts[2] && it !== device }) HttpResponse(204) else notFound()
+            }
+            r.method == "POST" && path == "/v1/chats" -> createChat(r)
+            parts.size == 3 && parts[1] == "chats" && r.method == "PATCH" -> {
+                val id = parts[2].toIntOrNull() ?: return notFound()
+                val g = groups[id] ?: return notFound()
+                bodyJson(r)?.optString("title")?.takeIf { it.isNotBlank() }?.let { g.put("title", it) }
+                groupChanged(id)
+                json(g)
+            }
+            parts.size == 5 && parts[1] == "chats" && (parts[3] == "members" || parts[3] == "admins") -> {
+                val id = parts[2].toIntOrNull() ?: return notFound()
+                val uid = parts[4].toIntOrNull() ?: return notFound()
+                val g = groups[id] ?: return notFound()
+                val key = parts[3]
+                val list = (0 until g.getJSONArray(key).length()).map { g.getJSONArray(key).getInt(it) }.toMutableList()
+                when (r.method) {
+                    "PUT" -> if (uid !in list) list += uid
+                    "DELETE" -> list.remove(uid)
+                    else -> return HttpResponse(405)
+                }
+                g.put(key, JSONArray(list))
+                if (key == "members") members[id] = list.toMutableList()
+                groupChanged(id)
+                HttpResponse(204)
+            }
+            parts.size == 4 && parts[1] == "chats" && parts[3] == "read" && r.method == "POST" -> HttpResponse(204)
+            parts.size == 4 && parts[1] == "chats" && parts[3] == "accept" && r.method == "POST" -> HttpResponse(204)
             r.method == "GET" && path == "/v1/feed" -> page(posts, r)
             r.method == "GET" && parts.size == 4 && parts[1] == "users" && parts[3] == "posts" ->
                 page(posts.filter { it.author.id == parts[2].toIntOrNull() }, r)
@@ -118,6 +185,88 @@ class DemoServer(
     }
 
     private fun notFound() = HttpResponse(404, body = "Не найдено".toByteArray())
+
+    private fun bodyJson(r: HttpRequest): JSONObject? = runCatching { JSONObject(String(r.body ?: ByteArray(0), Charsets.UTF_8)) }.getOrNull()
+
+    // ── Вход ─────────────────────────────────────────────────────────
+
+    private fun deviceOf(r: HttpRequest): Device? {
+        val token = r.header("Authorization")?.removePrefix("Bearer ")?.trim() ?: return null
+        return devices.firstOrNull { it.access == token && it.accessUntil > clock() }
+    }
+
+    private fun tokens(d: Device): JSONObject {
+        d.access = "a.${++tokenSeq}.${d.id}"
+        d.refresh = "r.${++tokenSeq}.${d.id}"
+        d.accessUntil = clock() + accessTtlMs
+        return JSONObject().put("access", d.access).put("refresh", d.refresh).put("expiresIn", accessTtlMs / 1000).put("deviceId", d.id)
+    }
+
+    private fun auth(r: HttpRequest, path: String): HttpResponse = when (path) {
+        "/v1/auth/login" -> {
+            val body = bodyJson(r) ?: JSONObject()
+            if (body.optString("login").isBlank()) HttpResponse(400) else {
+                // Демо: пароль проверяет телефон (LocalAuth); здесь — любой
+                if (devices.isEmpty()) {
+                    // «Другие устройства» этого человека — чтобы было что показать в списке
+                    devices += Device("d-ipad", "iPad", "ios", clock() - 3 * 86_400_000L, "r.old1", "", 0)
+                    devices += Device("d-web", "Chrome · macOS", "web", clock() - 20 * 86_400_000L, "r.old2", "", 0)
+                }
+                val dev = body.optJSONObject("device")
+                val d = Device("d${devices.size + 1}x${clock() % 10000}", dev?.optString("name").orEmpty().ifEmpty { "Телефон" }, dev?.optString("platform").orEmpty(), clock(), "", "", 0)
+                devices += d
+                json(tokens(d))
+            }
+        }
+        "/v1/auth/refresh" -> {
+            val token = bodyJson(r)?.optString("refresh").orEmpty()
+            val d = devices.firstOrNull { it.refresh == token }
+            if (d == null) HttpResponse(401, body = "Сессия закрыта".toByteArray()) else { d.lastSeen = clock(); json(tokens(d)) }
+        }
+        "/v1/auth/logout" -> {
+            deviceOf(r)?.let { devices.remove(it) }
+            HttpResponse(204)
+        }
+        else -> notFound()
+    }
+
+    /** Токен доступа «истёк» — для проверки обновления. */
+    fun expireAccessTokens() = synchronized(lock) { devices.forEach { it.accessUntil = 0 } }
+
+    fun deviceCount(): Int = synchronized(lock) { devices.size }
+
+    // ── Группы ───────────────────────────────────────────────────────
+
+    /** Демо: сервер узнаёт участников переписок, которые были до него. */
+    fun registerChat(chatId: Int, memberIds: List<Int>) = synchronized(lock) { members.getOrPut(chatId) { memberIds.toMutableList() } }
+
+    private fun createChat(r: HttpRequest): HttpResponse {
+        val key = r.header("Idempotency-Key")
+        if (key != null) byKey[key]?.let { return json(it, 200) }
+        val body = bodyJson(r) ?: return HttpResponse(400)
+        val id = body.optInt("id")
+        if (id <= 0) return HttpResponse(400, body = "Нужен id".toByteArray())
+        if (groups.containsKey(id)) return HttpResponse(409)
+        val memberArr = body.optJSONArray("members") ?: JSONArray()
+        val list = (0 until memberArr.length()).map { memberArr.getInt(it) }.distinct().take(ru.wishka.memory.data.ChatGroup.MAX_MEMBERS)
+        val g = JSONObject().put("id", id).put("title", body.optString("title").take(ru.wishka.memory.data.ChatGroup.MAX_TITLE))
+            .put("members", JSONArray(list)).put("admins", JSONArray(listOf(me().id))).put("owner", me().id)
+        groups[id] = g
+        members[id] = list.toMutableList()
+        if (key != null) byKey[key] = g
+        return json(g, 201)
+    }
+
+    private fun groupChanged(id: Int) {
+        val g = groups[id] ?: return
+        fun ints(k: String) = (0 until g.getJSONArray(k).length()).map { g.getJSONArray(k).getInt(it) }
+        realtime?.schedule(RtEvent.GroupChanged(id, g.optString("title"), ints("members"), ints("admins")), 0)
+    }
+
+    /** Демо: кто-то со стороны пишет — через живой канал, как настоящий сервер. */
+    fun deliver(chatId: Int, message: JSONObject, afterMs: Long = 0) {
+        realtime?.schedule(RtEvent.NewMessage(chatId, message.put("sentAt", clock() + afterMs)), afterMs)
+    }
 
     private fun json(o: JSONObject, code: Int = 200, headers: Map<String, String> = emptyMap()) =
         HttpResponse(code, headers + ("Content-Type" to Api.JSON), o.toString().toByteArray(Charsets.UTF_8))
@@ -165,9 +314,14 @@ class DemoServer(
             ?: return HttpResponse(400)
         val c = codec()
         val m = runCatching { c.messageOf(body) }.getOrNull() ?: return HttpResponse(422)
-        val saved = c.messageJson(m.copy(id = nextId++, pending = false)).put("sentAt", clock())
+        val sentAt = clock()
+        val saved = c.messageJson(m.copy(id = nextId++, pending = false, delivered = true, authorId = me().id, sentAt = sentAt))
         messages.getOrPut(chat) { mutableListOf() } += saved
         if (key != null) byKey[key] = saved
+        // Демо: участники «читают» через пару секунд — событием живого канала
+        members[chat].orEmpty().filter { it != me().id }.forEachIndexed { i, uid ->
+            realtime?.schedule(RtEvent.Read(chat, uid, sentAt), readDelayMs + i * 700L)
+        }
         return json(saved, 201)
     }
 

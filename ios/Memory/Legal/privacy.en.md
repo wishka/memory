@@ -16,6 +16,9 @@ This policy applies to the Memory app on Android and iPhone and to the website [
 - **Live streams**: video, audio and the stream chat are delivered to viewers while the stream is on and are not stored after it ends.
 - **Stories** are visible to friends for 24 hours (or only to “Close friends” — only you see that list), then stay in your archive. The author sees who viewed the story and who sent a heart.
 - **Calls**: voice and video go to the other person during the call and are not recorded. The call history keeps who, when, voice or video, and duration. Who can call you is set in Settings → Privacy.
+- **Sign-in and devices**: device name and type, when it was last used, and sign-in tokens (stored encrypted on the phone). Why: to show you your devices and let you sign out of any of them.
+- **Groups and chats**: group members and roles are visible to group members; “read” and “typing” are visible to the people you chat with. Message requests from people who aren't your friends don't show them you've read anything until you accept.
+- **Hidden words and filter** run on the phone: your hidden-words list is stored with your privacy settings (so it works on all your phones) and is never shown to anyone.
 - **Geolocation**: only when you send a location yourself, or mark a treasure, a find or an outing in Together. There is no background geolocation.
 - **Technical data**: device model and OS version, language, push notification token. Why: to deliver notifications.
 - **Crash reports and usage statistics**: only if you separately turn them on in Settings → Privacy → Crashes and statistics (off by default). A crash report contains the error type and the place in the code, without your posts or chats; emails, usernames and long numbers are removed from it. Statistics are daily event counters ("posts published: 3") without any texts. Why: to fix crashes and understand which features are used.

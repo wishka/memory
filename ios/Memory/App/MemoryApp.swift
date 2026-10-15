@@ -13,6 +13,8 @@ struct MemoryApp: App {
         // Отчёты о сбоях и статистика — до любого экрана; без согласия ничего не уходит
         TelemetrySetup.initialize()
         Telemetry.track(.appOpen)
+        // Отправка в фоне (BGProcessingTask) — регистрируется до конца запуска
+        BackgroundNet.register()
     }
 
     var body: some Scene {
@@ -191,8 +193,13 @@ struct RootView: View {
                 model.startDemoLife()
                 // Сеть аккаунта: очередь, загрузки и сохранённое — в своей базе
                 attachNet(account.username)
+                // Вход на сервер (демо — сразу) и синхронизация профиля между телефонами
+                model.startSession(login: account.username, password: auth.takePassword(), fresh: saved == nil)
+                // Для отправки в фоне: кто вошёл
+                device.setLastAccount(account.username, meId: model.state.me.id, meName: model.state.me.name)
                 push.requestPermission()
             } else {
+                device.setLastAccount(nil)
                 model.reset()
             }
         }
@@ -239,9 +246,22 @@ struct RootView: View {
         }
         // Свернули приложение — накопленная за день статистика сохраняется (если её разрешили)
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { TelemetrySetup.flush() }
-            // Тему телефона могли сменить, пока приложение было свёрнуто
-            if phase == .active { ThemeState.shared.systemDark = MemoryApp.systemIsDark() }
+            if phase == .background {
+                TelemetrySetup.flush()
+                // Неотправленное уйдёт и в свёрнутом (а позже — и в закрытом) приложении
+                if loadedFor != nil { BackgroundNet.shared.enteredBackground(model) }
+            }
+            if phase == .active {
+                // Тему телефона могли сменить, пока приложение было свёрнуто
+                ThemeState.shared.systemDark = MemoryApp.systemIsDark()
+                BackgroundNet.shared.becameActive()
+            }
+        }
+        // Короткие сообщения модели («Слишком часто…») — тостом
+        .onChange(of: model.state.notice) { _, notice in
+            guard let notice else { return }
+            linkNotice = notice
+            model.dismissNotice()
         }
         // Заставка, знакомство, вход и документы — на ночном небе: всегда тёмные
         .onAppear { ThemeState.shared.stageDark = stage != .main }
@@ -292,12 +312,17 @@ struct RootView: View {
         netModel.setMediaQuality(device.mediaQuality)
         netModel.setDemoOffline(device.demoOffline)
         netModel.uploadCleanup = { job in MediaCompressor.cleanup(job) }
+        // Имя телефона — в списке устройств, с которых вошли
+        let deviceName = UIDevice.current.name
+        netModel.deviceName = deviceName.isEmpty ? UIDevice.current.model : deviceName
         let net = NetSetup.forAccount(
             login: login,
             me: { [weak netModel] in netModel?.state.me ?? Demo.me },
             clock: { Json.ms(Date()) },
             quality: { [weak netModel] in netModel?.state.mediaQuality ?? .standard },
-            unmetered: { monitor.unmetered }
+            unmetered: { monitor.unmetered },
+            // Токены входа — в Связке ключей
+            tokens: SecureStore()
         )
         netModel.attachNet(net)
         netModel.startNetLoop()

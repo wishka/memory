@@ -159,9 +159,23 @@ fun SettingsScreen(
         }
         when (page) {
             SettingsPage.Main -> mainPage(vm, state, version, account)
-            SettingsPage.Security -> item { SecurityPage(account) }
+            SettingsPage.Security -> {
+                item { SecurityPage(account) }
+                item {
+                    Card { NavRow(LineIcon.Lock, t("Устройства"), t("где вы вошли")) { vm.openSettings(SettingsPage.Devices); vm.loadDevices() } }
+                }
+            }
+            SettingsPage.Devices -> item { DevicesPage(vm, state) }
+            SettingsPage.HiddenWords -> item { HiddenWordsPage(vm, state) }
             SettingsPage.Privacy -> {
                 item { PrivacyPage(state.privacy, vm::setPrivacy) { vm.openLegal(LegalDoc.Recommendations) } }
+                item {
+                    Card {
+                        NavRow(LineIcon.Eye, t("Скрытые слова и фильтр"), if (state.privacy.hiddenWords.isEmpty()) "" else "${state.privacy.hiddenWords.size}") {
+                            vm.openSettings(SettingsPage.HiddenWords)
+                        }
+                    }
+                }
                 // Право на доступ к своим данным: архив со всем, что хранится
                 account.data?.let { d -> item { MyDataCard(d) } }
                 // Отчёты о сбоях и статистика — только с согласия
@@ -514,6 +528,83 @@ private fun UploadRow(u: ru.wishka.memory.data.net.UploadJob, vm: AppViewModel) 
                 trackColor = Palette.Line,
             )
         }
+    }
+}
+
+// ==================== СКРЫТЫЕ СЛОВА ====================
+
+/**
+ * Скрытые слова, оскорбления, спам: в комментариях к своим записям, в
+ * группах и запросах на переписку такое сворачивается («Показать»).
+ */
+@Composable
+private fun HiddenWordsPage(vm: AppViewModel, state: UiState) {
+    var word by remember { mutableStateOf("") }
+    val p = state.privacy
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Card {
+            SwitchRow(t("Скрывать оскорбления"), p.hideOffensive) { vm.setPrivacy(p.copy(hideOffensive = it)) }
+            Divider()
+            SwitchRow(t("Скрывать спам"), p.hideSpam) { vm.setPrivacy(p.copy(hideSpam = it)) }
+        }
+        Hint(t("Скрытое не удаляется: оно свёрнуто, и его можно открыть. Ваше и сказанное друзьями в личной переписке фильтр не трогает."))
+        Caption(t("Свои слова"), Modifier.padding(horizontal = 24.dp))
+        Card {
+            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GlassField(word, { word = it.take(ru.wishka.memory.data.Moderation.MAX_WORD) }, t("Слово или фраза"), singleLine = true, modifier = Modifier.weight(1f).glass(RoundedCornerShape(50)))
+                GlowButton(t("Добавить"), enabled = word.isNotBlank(), onClick = { vm.addHiddenWord(word); word = "" })
+            }
+            p.hiddenWords.forEach { w ->
+                Divider()
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(w, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink, modifier = Modifier.weight(1f))
+                    Box(
+                        Modifier.size(36.dp).clip(CircleShape).clickable(onClickLabel = tf("Убрать «%s»", w), role = androidx.compose.ui.semantics.Role.Button) { vm.removeHiddenWord(w) },
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(LineIcon.Close, Palette.Mist, size = 16.dp, description = tf("Убрать «%s»", w)) }
+                }
+            }
+        }
+        Hint(t("Слово ловится и в формах: «кот» скроет «коты», но не «скот». Работает на всех ваших телефонах."))
+    }
+}
+
+// ==================== УСТРОЙСТВА ====================
+
+@Composable
+private fun DevicesPage(vm: AppViewModel, state: UiState) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (state.signedOut) {
+            Hint(t("Вход на сервер закрыт — возможно, вы вышли с этого телефона на другом. Выйдите и войдите снова: неотправленное сохранится."))
+        }
+        Card {
+            if (state.devices.isEmpty()) {
+                Text(t("Загружаем…"), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, modifier = Modifier.padding(16.dp))
+            }
+            state.devices.forEachIndexed { i, d ->
+                if (i > 0) Divider()
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Glyph(if (d.platform == "web") LineIcon.Globe else LineIcon.Phone, Palette.Lilac, size = 22.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(d.name, style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+                        Text(
+                            if (d.current) t("этот телефон") else tf("был в сети %s", ru.wishka.memory.data.agoTitle(ru.wishka.memory.data.minutesSince(d.lastSeen, 0))),
+                            style = MaterialTheme.typography.labelSmall, color = if (d.current) Palette.Lilac else Palette.Mist,
+                        )
+                    }
+                    if (!d.current) GhostButton(t("Выйти"), onClick = { vm.revokeDevice(d.id) })
+                }
+            }
+        }
+        if (state.devices.count { !it.current } > 0) {
+            Card {
+                Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+                    GhostButton(t("Выйти на всех, кроме этого"), onClick = vm::revokeOtherDevices)
+                }
+            }
+        }
+        Hint(t("Не узнаёте устройство — выйдите с него и смените пароль в «Безопасности»."))
     }
 }
 
