@@ -61,19 +61,19 @@ final class AppModelTests: XCTestCase {
     func testStoriesShowOnlyFollowed() {
         let vm = AppModel(demoReplies: false)
         let s = vm.state
-        XCTAssertFalse(s.stories.isEmpty)
-        XCTAssertTrue(s.stories.allSatisfy { s.following.contains($0.author.id) })
+        XCTAssertFalse(s.friendPosts.isEmpty)
+        XCTAssertTrue(s.friendPosts.allSatisfy { s.following.contains($0.author.id) })
         // Заявка Тимуру (5): пока не принята — его записей нет; принял — есть;
         // удалили из друзей — снова нет
-        XCTAssertFalse(s.stories.contains { $0.author.id == 5 })
+        XCTAssertFalse(s.friendPosts.contains { $0.author.id == 5 })
         vm.toggleFriend(5)
         XCTAssertTrue(vm.state.sentRequests.contains(5))
-        XCTAssertFalse(vm.state.stories.contains { $0.author.id == 5 })
+        XCTAssertFalse(vm.state.friendPosts.contains { $0.author.id == 5 })
         vm.acceptSentRequest(5)
-        XCTAssertTrue(vm.state.stories.contains { $0.author.id == 5 })
+        XCTAssertTrue(vm.state.friendPosts.contains { $0.author.id == 5 })
         vm.toggleFriend(5)
         XCTAssertFalse(vm.state.following.contains(5))
-        XCTAssertFalse(vm.state.stories.contains { $0.author.id == 5 })
+        XCTAssertFalse(vm.state.friendPosts.contains { $0.author.id == 5 })
         // Себя в друзья не добавить
         vm.toggleFriend(vm.state.me.id)
         XCTAssertFalse(vm.state.following.contains(vm.state.me.id))
@@ -432,12 +432,12 @@ final class AppModelTests: XCTestCase {
 
     func testBlockHidesPostsAndUnfollows() throws {
         let vm = AppModel()
-        let author = try XCTUnwrap(vm.state.stories.first?.author)
+        let author = try XCTUnwrap(vm.state.friendPosts.first?.author)
         vm.block(author.id)
         XCTAssertTrue(vm.state.isBlocked(author.id))
         XCTAssertFalse(vm.state.following.contains(author.id))
         XCTAssertFalse(vm.state.feed.contains { $0.author.id == author.id })
-        XCTAssertFalse(vm.state.stories.contains { $0.author.id == author.id })
+        XCTAssertFalse(vm.state.friendPosts.contains { $0.author.id == author.id })
         XCTAssertEqual(vm.state.blockedPeople.map(\.id), [author.id])
         vm.unblock(author.id)
         XCTAssertTrue(vm.state.feed.contains { $0.author.id == author.id })
@@ -475,7 +475,7 @@ final class AppModelTests: XCTestCase {
         vm.toggleGroupMute(group.id)
         vm.setPrivacy(Privacy(messages: .following, showOnline: false))
         vm.setNotifications(Notifications(all: false))
-        vm.block(try XCTUnwrap(vm.state.stories.first?.author.id))
+        vm.block(try XCTUnwrap(vm.state.friendPosts.first?.author.id))
         vm.setAvatar("a.jpg")
         // Через JSON — как в файле на телефоне
         let data = try JSONEncoder().encode(vm.snapshot())

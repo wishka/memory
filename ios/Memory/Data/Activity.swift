@@ -19,11 +19,15 @@ enum ActivityKind: String, Codable, CaseIterable {
     case pollVotes = "votes"
     case groupJoin = "join"
     case live = "live"
+    case repost = "repost"
+    case tagged = "tagged"
+    case storyReply = "story_reply"
+    case missedCall = "missed_call"
 
     var id: String { rawValue }
 
     /// Такие события сливаются в одно: «Вера и ещё 3 оценили вашу запись».
-    var groups: Bool { self == .like || self == .prismLike || self == .commentLike || self == .groupJoin }
+    var groups: Bool { self == .like || self == .prismLike || self == .commentLike || self == .groupJoin || self == .repost }
 
     static func of(_ id: String) -> ActivityKind? { ActivityKind(rawValue: id) }
 }
@@ -209,6 +213,14 @@ enum Activity {
             return tf(verb("%s вступили в вашу группу", "%s вступил в вашу группу", "%s вступила в вашу группу"), names) + quote
         case .live:
             return tf(verb("%s начали прямой эфир", "%s начал прямой эфир", "%s начала прямой эфир"), names) + quote
+        case .repost:
+            return tf(verb("%s поделились вашей записью", "%s поделился вашей записью", "%s поделилась вашей записью"), names) + quote
+        case .tagged:
+            return tf(verb("%s отметили вас на фото", "%s отметил вас на фото", "%s отметила вас на фото"), names) + quote
+        case .storyReply:
+            return tf(verb("%s ответили на вашу историю", "%s ответил на вашу историю", "%s ответила на вашу историю"), names) + quote
+        case .missedCall:
+            return tf("Пропущенный звонок: %s", names)
         }
     }
 

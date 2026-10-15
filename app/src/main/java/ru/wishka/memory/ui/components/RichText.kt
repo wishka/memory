@@ -50,6 +50,16 @@ class LinkActions(
     val onCopyLink: (Post) -> Unit = {},
     /** «Изменить» свою запись. */
     val onEdit: (Post) -> Unit = {},
+    /** «Репост» — своя лента, можно со своими словами. */
+    val onRepost: (Post) -> Unit = {},
+    /** «Отправить в чат». */
+    val onSendToChat: (Post) -> Unit = {},
+    /** Нажали на оригинал внутри репоста. */
+    val onOpenRef: (ru.wishka.memory.data.PostRef) -> Unit = {},
+    /** Страница человека — из отметок на фото. */
+    val onPerson: (Int) -> Unit = {},
+    /** Убрать отметку с собой на фото записи. */
+    val onUntagMe: (Post) -> Unit = {},
 )
 
 val LocalLinkActions = staticCompositionLocalOf<LinkActions?> { null }

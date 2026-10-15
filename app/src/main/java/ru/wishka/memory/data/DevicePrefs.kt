@@ -15,6 +15,13 @@ class DevicePrefs(context: Context) {
     fun load() {
         L10n.choice = Lang.entries.firstOrNull { it.code == prefs.getString("lang", null) } ?: Lang.System
         L10n.textScale = prefs.getFloat("textScale", 1f).coerceIn(TEXT_SCALES.first(), TEXT_SCALES.last())
+        ru.wishka.memory.ui.theme.ThemeState.mode = ru.wishka.memory.ui.theme.ThemeMode.of(prefs.getString("theme", null))
+    }
+
+    /** Оформление — на этом телефоне, как язык и размер текста. */
+    fun setTheme(mode: ru.wishka.memory.ui.theme.ThemeMode) {
+        ru.wishka.memory.ui.theme.ThemeState.mode = mode
+        prefs.edit().putString("theme", mode.id).apply()
     }
 
     fun setLanguage(lang: Lang) {

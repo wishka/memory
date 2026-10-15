@@ -167,6 +167,7 @@ fun SettingsScreen(
             SettingsPage.Notifications -> item { NotificationsPage(vm, state) }
             SettingsPage.TextSize -> item { TextSizePage(prefs) }
             SettingsPage.Language -> item { LanguagePage(prefs) }
+            SettingsPage.Theme -> item { ThemePage(prefs) }
             SettingsPage.About -> item { AboutPage(version, vm) }
             SettingsPage.Growth -> item { GrowthPage(vm, state, version) }
             SettingsPage.Sounds -> item { SoundsPage(vm, state) }
@@ -221,6 +222,8 @@ private fun LazyListScope.mainPage(vm: AppViewModel, state: UiState, version: St
             NavRow(LineIcon.Image, t("Фон переписок"), state.backdrop.kind.title) { vm.openSettings(SettingsPage.Wallpaper) }
             Divider()
             NavRow(LineIcon.TextSize, t("Размер текста"), textScaleTitle(L10n.textScale)) { vm.openSettings(SettingsPage.TextSize) }
+            Divider()
+            NavRow(LineIcon.Eye, t("Оформление"), themeTitle(ru.wishka.memory.ui.theme.ThemeState.mode)) { vm.openSettings(SettingsPage.Theme) }
             Divider()
             NavRow(LineIcon.Globe, t("Язык"), L10n.choice.title) { vm.openSettings(SettingsPage.Language) }
             Divider()
@@ -357,6 +360,30 @@ private fun PasswordField(value: String, onChange: (String) -> Unit, placeholder
     )
 }
 
+// ==================== ОФОРМЛЕНИЕ ====================
+
+private fun themeTitle(mode: ru.wishka.memory.ui.theme.ThemeMode): String = when (mode) {
+    ru.wishka.memory.ui.theme.ThemeMode.System -> t("Как в системе")
+    ru.wishka.memory.ui.theme.ThemeMode.Dark -> t("Тёмное")
+    ru.wishka.memory.ui.theme.ThemeMode.Light -> t("Светлое")
+}
+
+/** Как в системе, тёмное «ночное» или светлое «рассветное». */
+@Composable
+private fun ThemePage(prefs: DevicePrefs) {
+    val current = ru.wishka.memory.ui.theme.ThemeState.mode
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Card {
+            ru.wishka.memory.ui.theme.ThemeMode.entries.forEach { mode ->
+                ChoiceRow(themeTitle(mode), mode == current) { prefs.setTheme(mode) }
+            }
+        }
+        Hint(
+            t("«Как в системе» — днём светлое, ночью тёмное, если так настроен телефон. PRISM, эфиры, звонки и фото на весь экран всегда тёмные.")
+        )
+    }
+}
+
 // ==================== ПРИВАТНОСТЬ ====================
 
 @Composable
@@ -381,6 +408,10 @@ private fun PrivacyPage(privacy: Privacy, onChange: (Privacy) -> Unit, onRecsDoc
                 FadeLine()
                 AudiencePicker(t("Кто может написать мне"), null, privacy.messages) {
                     onChange(privacy.copy(messages = it))
+                }
+                FadeLine()
+                AudiencePicker(t("Кто может мне звонить"), null, privacy.calls) {
+                    onChange(privacy.copy(calls = it))
                 }
                 FadeLine()
                 AudiencePicker(t("Кто может комментировать записи"), null, privacy.comments) {

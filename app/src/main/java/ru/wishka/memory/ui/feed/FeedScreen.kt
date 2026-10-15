@@ -122,6 +122,7 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 tracks = state.tracks,
                 packs = state.stickerPacks,
                 recentGifs = state.recentGifs,
+                friends = state.friends,
             )
         }
         // Новичку — гид по приложению, пока карточку не скрыли
@@ -231,6 +232,8 @@ fun PostCard(
     onReport: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var placeOpen by remember { mutableStateOf(false) }
+    var tagsOpen by remember { mutableStateOf(false) }
     // Ссылка на запись и правка своей — в меню любой карточки, где бы она ни была
     val links = ru.wishka.memory.ui.components.LocalLinkActions.current
     GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
@@ -286,11 +289,26 @@ fun PostCard(
                 }
             }
             post.checkIn?.let { CheckInBadge(it) }
+            post.place?.let { place -> PlaceLine(place) { placeOpen = true } }
+            post.repostOf?.let { ref ->
+                if (post.text.isEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Glyph(LineIcon.Repost, Palette.Lilac, size = 16.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(t("поделился записью").let { if (ru.wishka.memory.data.Nudges.female(post.author)) t("поделилась записью") else it }, style = MaterialTheme.typography.labelLarge, color = Palette.Lilac)
+                    }
+                }
+            }
             if (post.text.isNotEmpty()) {
                 ru.wishka.memory.ui.components.RichText(post.text)
             }
+            post.repostOf?.let { ref ->
+                ru.wishka.memory.ui.components.PostRefCard(ref, onOpen = { links?.onOpenRef?.invoke(ref) }, modifier = Modifier.fillMaxWidth())
+            }
             post.poll?.let { poll -> PollCard(poll, onVote = { onVote?.invoke(it) }, modifier = Modifier.fillMaxWidth(), onClose = onClosePoll) }
             PostMedia(post.media.filter { it.kind != MediaKind.Document && !it.sticker }, onOpen = onOpenMedia)
+            val tagged = post.media.flatMap { it.tags }.map { it.userId }.distinct()
+            if (tagged.isNotEmpty()) TaggedLine(tagged) { tagsOpen = true }
             StickerRow(post.media.filter { it.sticker })
             PostFiles(post.media.filter { it.kind == MediaKind.Document })
             post.artSeed?.let { seed ->
@@ -339,7 +357,40 @@ fun PostCard(
                         modifier = Modifier.padding(start = 6.dp),
                     )
                 }
+                if (links != null && post.artSeed == null) {
+                    Spacer(Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable(role = androidx.compose.ui.semantics.Role.Button) { links.onRepost(post) }
+                            .semantics(mergeDescendants = true) { contentDescription = tf("Репосты: %s", post.reposts) }
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Glyph(LineIcon.Repost, Palette.Mist, size = 22.dp)
+                        if (post.reposts > 0) {
+                            Text("${post.reposts}", style = MaterialTheme.typography.labelLarge, color = Palette.Mist, modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable(onClickLabel = t("Отправить в чат"), role = androidx.compose.ui.semantics.Role.Button) { links.onSendToChat(post) },
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(LineIcon.Send, Palette.Mist, size = 20.dp, description = t("Отправить в чат")) }
+                }
             }
         }
+    }
+    if (placeOpen) post.place?.let { ru.wishka.memory.ui.components.PlaceViewer(it, onClose = { placeOpen = false }) }
+    if (tagsOpen) {
+        TaggedDialog(
+            post.media.flatMap { it.tags }.map { it.userId }.distinct(),
+            onPerson = { tagsOpen = false; links?.onPerson?.invoke(it) },
+            meId = links?.meId,
+            onUntagMe = { tagsOpen = false; links?.onUntagMe?.invoke(post) },
+        ) { tagsOpen = false }
     }
 }

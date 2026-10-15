@@ -38,6 +38,7 @@ struct ProfileSectionScreen: View {
         case .shelf: return ""
         case .premium: return ""
         case .requests: return plural(state.followRequests.count, "заявка", "заявки", "заявок")
+        case .tagged: return plural(state.taggedPosts.count, "запись", "записи", "записей")
         }
     }
 
@@ -103,6 +104,21 @@ struct ProfileSectionScreen: View {
                         GhostButton(title: t("Отменить")) { model.toggleFriend(person.id) }
                     }
                 }
+            }
+        case .tagged:
+            // Записи, где друзья отметили меня на фото
+            let tagged = state.taggedPosts
+            if tagged.isEmpty { empty(t("Здесь будут записи, где друзья отметили вас на фото.")) }
+            ForEach(tagged) { post in
+                PostCard(
+                    post: post,
+                    onLike: { model.likeAny(post.id) },
+                    onAuthor: { model.openPerson(post.author.id) },
+                    onComments: { model.openComments(post.id) },
+                    onOpenMedia: model.openMedia,
+                    onVote: { model.votePost(post.id, $0) },
+                    onClosePoll: nil
+                )
             }
         case .music, .stickers, .recap, .shelf, .premium:
             // «Моя музыка», «Студия», «Итоги», «Полка» и «Memory+» — свои экраны (MainScreen), сюда не попадают

@@ -111,6 +111,18 @@ enum Nudges {
         return Nudge(kind: .reactions, title: person.name, text: text, target: .post, targetId: post.id)
     }
 
+    /// Входящий звонок, пока приложение свёрнуто.
+    static func incomingCall(_ friend: User, video: Bool) -> Nudge {
+        Nudge(kind: .messages, title: friend.name, text: video ? t("Видеозвонок") : t("Звонок"),
+              target: .person, targetId: Int64(friend.id))
+    }
+
+    /// Пропущенный звонок — нажатие открывает переписку.
+    static func missedCall(_ friend: User, video: Bool, chatId: Int) -> Nudge {
+        Nudge(kind: .messages, title: friend.name, text: video ? t("Пропущенный видеозвонок") : t("Пропущенный звонок"),
+              target: .chat, targetId: Int64(chatId))
+    }
+
     /// Друг начал прямой эфир. targetId — друг: нажатие откроет его эфир, если он ещё идёт.
     static func liveStarted(_ friend: User, _ title: String) -> Nudge {
         Nudge(kind: .friends, title: friend.name,

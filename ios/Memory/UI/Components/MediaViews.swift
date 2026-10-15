@@ -155,6 +155,8 @@ struct DocumentRow: View {
 struct MediaViewer: View {
     let attachment: Attachment
     let onClose: () -> Void
+    /// Нажали на имя отметки на фото — страница человека; nil — имена не нажимаются.
+    var onPerson: ((Int) -> Void)? = nil
     @State private var player: AVPlayer?
 
     var body: some View {
@@ -175,6 +177,10 @@ struct MediaViewer: View {
                     }
                 }
                 .ignoresSafeArea()
+            }
+            // Кто отмечен на фото — имена поверх снимка и значок «Отмечено: N»
+            if attachment.kind == .photo {
+                PhotoTagsLayer(attachment: attachment, onPerson: onPerson)
             }
             RoundGlyphButton(icon: .close, strong: true, action: onClose)
                 .padding(12)
@@ -380,6 +386,8 @@ struct AttachButton: View {
 struct PendingAttachments: View {
     let items: [Attachment]
     let onRemove: (Attachment) -> Void
+    /// Нажатие на фото — отметить людей; nil — плитки не нажимаются.
+    var onTag: ((Attachment) -> Void)? = nil
 
     var body: some View {
         if !items.isEmpty {
@@ -390,9 +398,14 @@ struct PendingAttachments: View {
                             if item.kind == .document {
                                 DocumentRow(attachment: item).frame(width: 180, height: 64)
                             } else {
-                                MediaTile(attachment: item, maxPixel: 256)
+                                let taggable = onTag != nil && item.kind == .photo && !item.sticker && !item.isGif
+                                MediaTile(attachment: item, maxPixel: 256, onTap: taggable ? { onTag?(item) } : nil)
                                     .frame(width: 64, height: 64)
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .overlay(alignment: .bottomLeading) {
+                                        TagCountBadge(count: item.tags.count).padding(3)
+                                    }
+                                    .accessibilityHint(taggable ? LineIcon.personTag.label : "")
                             }
                             Button { onRemove(item) } label: {
                                 Glyph(kind: .close, color: Palette.ink, size: 14)

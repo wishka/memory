@@ -155,6 +155,10 @@ struct PostCard: View {
     var onReport: (() -> Void)? = nil
 
     @State private var showMenu = false
+    /// Место записи на карте во весь экран.
+    @State private var placeOpen: SharedPlace?
+    /// Список отмеченных на фото.
+    @State private var tagsOpen = false
     /// Ссылка на запись и правка своей — в меню любой карточки, где бы она ни была.
     @Environment(\.linkActions) private var links
 
@@ -205,14 +209,31 @@ struct PostCard: View {
                 if let checkIn = post.checkIn {
                     CheckInBadge(checkIn: checkIn)
                 }
+                if let place = post.place {
+                    PlaceLine(place: place) { placeOpen = place }
+                }
+                // Репост без своих слов — «поделился записью» над оригиналом
+                if post.repostOf != nil && post.text.isEmpty {
+                    HStack(spacing: 6) {
+                        Glyph(kind: .repost, color: Palette.lilac, size: 16)
+                        Text(Nudges.female(post.author) ? t("поделилась записью") : t("поделился записью"))
+                            .textStyle(.labelLarge, Palette.lilac)
+                    }
+                }
                 if !post.text.isEmpty {
                     RichText(text: post.text)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if let ref = post.repostOf {
+                    PostRefCard(ref: ref) { links?.onOpenRef(ref) }
                 }
                 if let poll = post.poll {
                     PollCard(poll: poll, onVote: { onVote?($0) }, onClose: onClosePoll)
                 }
                 PostMediaView(media: post.media.filter { $0.kind != .document && !$0.sticker }, onOpen: onOpenMedia)
+                if !tagged.isEmpty {
+                    TaggedLine(userIds: tagged) { tagsOpen = true }
+                }
                 StickerRow(stickers: post.media.filter(\.sticker))
                 PostFiles(files: post.media.filter { $0.kind == .document })
                 if let seed = post.artSeed {
@@ -248,12 +269,60 @@ struct PostCard: View {
                     .buttonStyle(.plain)
                     .disabled(onComments == nil)
                     .accessibilityLabel(tf("Комментарии: %s", post.comments))
+                    // Репост в свою ленту и «Отправить в чат» — у записей, не у PRISM-картинок
+                    if let links, post.artSeed == nil {
+                        Button { links.onRepost(post) } label: {
+                            HStack(spacing: 6) {
+                                Glyph(kind: .repost, color: Palette.mist, size: 22)
+                                if post.reposts > 0 {
+                                    Text("\(post.reposts)").textStyle(.labelLarge, Palette.mist)
+                                }
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tf("Репосты: %s", post.reposts))
+                        Spacer(minLength: 0)
+                        Button { links.onSendToChat(post) } label: {
+                            Glyph(kind: .send, color: Palette.mist, size: 20)
+                                .frame(width: 36, height: 36)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(t("Отправить в чат"))
+                    }
                 }
             }
             .padding(16)
         }
         .cardPadding()
         .glassActions($showMenu, cancel: true, actions: menuItems)
+        .fullScreenCover(item: $placeOpen) { place in
+            PlaceViewer(place: place) { placeOpen = nil }
+        }
+        .sheet(isPresented: $tagsOpen) {
+            TaggedSheet(
+                userIds: tagged,
+                onPerson: { id in
+                    tagsOpen = false
+                    links?.onPerson(id)
+                },
+                meId: links?.meId,
+                onUntagMe: {
+                    tagsOpen = false
+                    links?.onUntagMe(post)
+                },
+                onClose: { tagsOpen = false }
+            )
+        }
+    }
+
+    /// Кто отмечен на фото записи — без повторов, по порядку.
+    private var tagged: [Int] {
+        var seen = Set<Int>()
+        return post.media.flatMap(\.tags).map(\.userId).filter { seen.insert($0).inserted }
     }
 
     @ViewBuilder

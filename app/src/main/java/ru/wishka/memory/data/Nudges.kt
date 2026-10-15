@@ -109,6 +109,14 @@ object Nudges {
         return Nudge(NudgeKind.Reactions, person.name, text, NudgeTarget.Post, post.id)
     }
 
+    /** Входящий звонок, пока приложение свёрнуто. */
+    fun incomingCall(friend: User, video: Boolean): Nudge =
+        Nudge(NudgeKind.Messages, friend.name, if (video) t("Видеозвонок") else t("Звонок"), NudgeTarget.Person, friend.id.toLong())
+
+    /** Пропущенный звонок — нажатие открывает переписку. */
+    fun missedCall(friend: User, video: Boolean, chatId: Int): Nudge =
+        Nudge(NudgeKind.Messages, friend.name, if (video) t("Пропущенный видеозвонок") else t("Пропущенный звонок"), NudgeTarget.Chat, chatId.toLong())
+
     /** Друг начал прямой эфир — нажатие открывает эфир. */
     fun liveStarted(friend: User, title: String): Nudge =
         Nudge(NudgeKind.Friends, friend.name, tf(g(friend, "%s начал эфир: %s", "%s начала эфир: %s"), firstName(friend), title), NudgeTarget.Person, friend.id.toLong())

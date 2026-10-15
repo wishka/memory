@@ -215,7 +215,7 @@ final class PrismCameraModel: NSObject, AVCaptureFileOutputRecordingDelegate {
 }
 
 /// Камера внутри экрана.
-private struct CameraPreview: UIViewRepresentable {
+private struct PrismCameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
 
     func makeUIView(context: Context) -> PreviewUIView {
@@ -262,7 +262,7 @@ struct PrismCamera: View {
         ZStack {
             Palette.void.ignoresSafeArea()
             if camera.allowed {
-                CameraPreview(session: camera.session).ignoresSafeArea()
+                PrismCameraPreview(session: camera.session).ignoresSafeArea()
             } else {
                 Text(t("Нет доступа к камере. Разрешите его в настройках телефона или выберите видео из галереи."))
                     .textStyle(.body, Palette.mist)

@@ -7,6 +7,9 @@ struct MemoryApp: App {
 
     init() {
         Fonts.register()
+        // Оформление — до первого экрана, чтобы не мигало
+        DevicePrefs().load()
+        ThemeState.shared.systemDark = MemoryApp.systemIsDark()
         // Отчёты о сбоях и статистика — до любого экрана; без согласия ничего не уходит
         TelemetrySetup.initialize()
         Telemetry.track(.appOpen)
@@ -15,9 +18,13 @@ struct MemoryApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .preferredColorScheme(.dark)
-                .tint(Palette.lilac)
         }
+    }
+
+    /// Тема телефона. preferredColorScheme меняет тему окна, а не экрана —
+    /// поэтому системная читается с экрана, а не из окружения SwiftUI.
+    static func systemIsDark() -> Bool {
+        UIScreen.main.traitCollection.userInterfaceStyle != .light
     }
 }
 
@@ -132,6 +139,10 @@ struct RootView: View {
             }
         }
         .toast($linkNotice)
+        // Светлая тема — по выбору в «Оформлении»; что всегда ночное — тёмное.
+        // Здесь, а не в сцене: тело экрана следит за ThemeState и перерисовывается
+        .preferredColorScheme(ThemeState.shared.light ? .light : .dark)
+        .tint(Palette.lilac)
         .animation(.easeInOut(duration: 0.5), value: stage)
         // Вошедший человек — в профиль и в свои записи; его записи,
         // переписка и закладки — из файла на телефоне
@@ -169,6 +180,8 @@ struct RootView: View {
                     pendingLink = nil
                     open(link)
                 }
+                // Истории друзей и их «Актуальное» — в демо появляются сами
+                model.ensureDemoStories()
                 // Сохранённое на месте — можно считать итоги и оживлять демо
                 model.checkRecapReady()
                 model.startDemoLife()
@@ -191,6 +204,8 @@ struct RootView: View {
             }
         }
         .task {
+            // Входящий звонок: приложение открыто — он и так во весь экран
+            model.isForeground = { UIApplication.shared.applicationState == .active }
             // Уведомления: приложение открыто — плашкой сверху, свёрнуто — системным
             model.onNudge = { nudge in
                 if UIApplication.shared.applicationState == .active {
@@ -213,7 +228,12 @@ struct RootView: View {
         // Свернули приложение — накопленная за день статистика сохраняется (если её разрешили)
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { TelemetrySetup.flush() }
+            // Тему телефона могли сменить, пока приложение было свёрнуто
+            if phase == .active { ThemeState.shared.systemDark = MemoryApp.systemIsDark() }
         }
+        // Заставка, знакомство, вход и документы — на ночном небе: всегда тёмные
+        .onAppear { ThemeState.shared.stageDark = stage != .main }
+        .onChange(of: stage) { _, current in ThemeState.shared.stageDark = current != .main }
         // Пуш, пока приложение открыто, — плашкой (если раздел не выключен)
         .onChange(of: push.incoming) { _, nudge in
             guard let nudge else { return }

@@ -120,6 +120,11 @@ struct PersonScreen: View {
                     .cardPadding()
                 }
 
+                // «Актуальное» человека — видно тем, кто видит его истории (друзьям)
+                if !hidden && !blocked && state.following.contains(person.id) {
+                    HighlightsRow(model: model, ownerId: person.id)
+                }
+
                 if hidden && !blocked {
                     GlassCard {
                         HStack(spacing: 12) {

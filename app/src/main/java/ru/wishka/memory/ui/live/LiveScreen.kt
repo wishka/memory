@@ -101,59 +101,52 @@ fun LiveBadge(modifier: Modifier = Modifier) {
     )
 }
 
-/**
- * Строка над «Историями»: «Начать эфир» и эфиры друзей, которые идут
- * сейчас. Свой идущий эфир — первым, вернуться в него.
- */
+/** Кружок «Эфир» в ряду историй: начать свой или вернуться в идущий. */
 @Composable
-fun LiveRow(vm: AppViewModel, state: UiState) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+fun LiveStartCircle(vm: AppViewModel, state: UiState) {
+    val mine = state.myLive
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(72.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(role = Role.Button) { if (mine != null) vm.returnToMyLive() else vm.openLiveStart() }
+            .padding(vertical = 4.dp),
     ) {
-        item(key = "start") {
-            val mine = state.myLive
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .width(76.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable(role = Role.Button) { if (mine != null) vm.returnToMyLive() else vm.openLiveStart() }
-                    .padding(vertical = 4.dp),
-            ) {
-                Box(
-                    Modifier.size(60.dp).clip(CircleShape).glass(CircleShape, strong = mine != null),
-                    contentAlignment = Alignment.Center,
-                ) { Glyph(if (mine != null) LineIcon.Video else LineIcon.Plus, Palette.Lilac, size = 26.dp) }
-                Text(
-                    if (mine != null) t("Мой эфир") else t("Эфир"),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Palette.Ink,
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+        Box(
+            Modifier.padding(4.dp).size(54.dp).clip(CircleShape).glass(CircleShape, strong = mine != null),
+            contentAlignment = Alignment.Center,
+        ) { Glyph(if (mine != null) LineIcon.Video else LineIcon.Plus, Palette.Lilac, size = 24.dp) }
+        Text(
+            if (mine != null) t("Мой эфир") else t("Эфир"),
+            style = MaterialTheme.typography.labelLarge,
+            color = Palette.Ink,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+/** Кружок эфира друга с меткой «В ЭФИРЕ». */
+@Composable
+fun LiveCircle(vm: AppViewModel, state: UiState, live: LiveStream) {
+    val person = host(state, live)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(72.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(role = Role.Button) { vm.watchLive(live.id) }
+            .semantics(mergeDescendants = true) { contentDescription = tf("%s в эфире: %s", person.name, live.title) }
+            .padding(vertical = 4.dp),
+    ) {
+        Box(contentAlignment = Alignment.BottomCenter) {
+            Box(Modifier.border(2.dp, Brush.sweepGradient(listOf(Palette.PearlPink, Palette.Orchid, Palette.PearlPink)), CircleShape).padding(4.dp)) {
+                Avatar(person, size = 54.dp)
             }
+            LiveBadge()
         }
-        items(state.visibleLives, key = { "live" + it.id }) { live ->
-            val person = host(state, live)
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .width(76.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable(role = Role.Button) { vm.watchLive(live.id) }
-                    .semantics(mergeDescendants = true) { contentDescription = tf("%s в эфире: %s", person.name, live.title) }
-                    .padding(vertical = 4.dp),
-            ) {
-                Box(contentAlignment = Alignment.BottomCenter) {
-                    Box(Modifier.border(2.dp, Brush.sweepGradient(listOf(Palette.PearlPink, Palette.Orchid, Palette.PearlPink)), CircleShape).padding(4.dp)) {
-                        Avatar(person, size = 52.dp)
-                    }
-                    LiveBadge(Modifier.padding(bottom = 0.dp))
-                }
-                Text(person.name.substringBefore(' '), style = MaterialTheme.typography.labelLarge, color = Palette.Ink, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
-            }
-        }
+        Text(person.name.substringBefore(' '), style = MaterialTheme.typography.labelLarge, color = Palette.Ink, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -215,7 +208,7 @@ fun LiveScreen(vm: AppViewModel, state: UiState, live: LiveStream) {
     BackHandler { vm.back() }
 
     Box(Modifier.fillMaxSize().background(Palette.Void)) {
-        if (mine) HostCamera(Modifier.fillMaxSize()) else {
+        if (mine) ru.wishka.memory.ui.components.CameraPreview(Modifier.fillMaxSize()) else {
             Nebula(live.seed, Modifier.fillMaxSize())
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Avatar(person, size = 96.dp)
@@ -324,46 +317,6 @@ private fun LiveInput(vm: AppViewModel, mine: Boolean) {
                     .clickable(role = Role.Button) { vm.sendHeart() },
                 contentAlignment = Alignment.Center,
             ) { Glyph(LineIcon.HeartFilled, Palette.Ink, description = t("Сердечко")) }
-        }
-    }
-}
-
-/** Своя камера — фронтальная, как в видеозвонке; просит разрешение, если его нет. */
-@Composable
-private fun HostCamera(modifier: Modifier) {
-    val context = LocalContext.current
-    val owner = LocalLifecycleOwner.current
-    fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
-    var allowed by remember { mutableStateOf(granted(Manifest.permission.CAMERA)) }
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
-        allowed = r[Manifest.permission.CAMERA] == true || granted(Manifest.permission.CAMERA)
-    }
-    LaunchedEffect(Unit) {
-        if (!allowed || !granted(Manifest.permission.RECORD_AUDIO)) ask.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
-    }
-    val controller = remember {
-        LifecycleCameraController(context).apply {
-            setEnabledUseCases(CameraController.IMAGE_CAPTURE)
-            cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-        }
-    }
-    LaunchedEffect(allowed) { if (allowed) controller.bindToLifecycle(owner) }
-    DisposableEffect(Unit) { onDispose { controller.unbind() } }
-    Box(modifier) {
-        if (allowed) {
-            AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
-                PreviewView(ctx).apply {
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
-                    this.controller = controller
-                }
-            })
-        } else {
-            Text(
-                t("Нет доступа к камере. Разрешите его в настройках телефона."),
-                style = MaterialTheme.typography.bodyLarge,
-                color = Palette.Mist,
-                modifier = Modifier.align(Alignment.Center).padding(32.dp),
-            )
         }
     }
 }

@@ -13,6 +13,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import ru.wishka.memory.data.Activity
+import ru.wishka.memory.data.ActiveCall
+import ru.wishka.memory.data.CallPhase
+import ru.wishka.memory.data.CallRecord
+import ru.wishka.memory.data.CallTransport
+import ru.wishka.memory.data.Calls
+import ru.wishka.memory.data.DemoCallTransport
+import ru.wishka.memory.data.Highlight
+import ru.wishka.memory.data.PostRef
+import ru.wishka.memory.data.Stories
+import ru.wishka.memory.data.Story
+import ru.wishka.memory.data.StoryCircle
+import ru.wishka.memory.data.StoryViewer
 import ru.wishka.memory.data.DemoLiveTransport
 import ru.wishka.memory.data.LiveComment
 import ru.wishka.memory.data.LiveStream
@@ -119,6 +131,8 @@ enum class ProfileSection(private val ru: String) {
     Requests("Заявки в друзья"),
     /** Memory+: тарифы, пробный период, смена тарифа. */
     Premium("Memory+"),
+    /** Записи, где меня отметили на фото. */
+    Tagged("Отметки"),
     ;
 
     /** Название на выбранном языке. */
@@ -141,6 +155,8 @@ enum class SettingsPage(private val ru: String) {
     Legal("Документы"),
     /** Гид по Memory: главы → темы с шагами. */
     Guide("Гид по Memory"),
+    /** Оформление: как в системе, тёмное или светлое. */
+    Theme("Оформление"),
     ;
 
     val title: String get() = t(ru)
@@ -313,7 +329,46 @@ data class UiState(
     val liveSummary: LiveStream? = null,
     /** Ведущий нажал «назад» — спросить, закончить ли эфир. */
     val confirmEndLive: Boolean = false,
+    /** Истории: свои (и в архиве) и друзей — за сутки и из «Актуального». */
+    val stories: List<Story> = emptyList(),
+    /** Какие истории я уже смотрел. */
+    val seenStories: Set<Long> = emptySet(),
+    /** «Близкие друзья»: им видны истории «для близких». */
+    val closeFriends: Set<Int> = emptySet(),
+    /** «Актуальное»: свои подборки и подборки друзей. */
+    val highlights: List<Highlight> = emptyList(),
+    /** Открыт просмотр историй. */
+    val storyViewer: StoryViewer? = null,
+    /** Открыта новая история. */
+    val storyComposer: Boolean = false,
+    /** Кто посмотрел мою историю — открыт список. */
+    val storyViewersOf: Long? = null,
+    /** История звонков. */
+    val callLog: List<CallRecord> = emptyList(),
+    /** Звонок, который идёт сейчас. */
+    val call: ActiveCall? = null,
+    /** Репост: какую запись репостят (открыта шторка). */
+    val repostingPostId: Long? = null,
+    /** «Отправить в чат»: какую запись отправляют (открыт выбор переписки). */
+    val sharingPostId: Long? = null,
 ) {
+    /** Кружки историй друзей (свой — отдельно). */
+    fun storyCircles(now: Long): List<StoryCircle> =
+        Stories.rings(
+            stories.filter { st -> st.authorId in following && st.authorId !in blocked && Stories.visible(st, me.id, true, true) },
+            Demo.people, me.id, seenStories, now,
+        )
+
+    /** Свои истории за сутки — по порядку. */
+    fun myActiveStories(now: Long): List<Story> = stories.filter { it.authorId == me.id && it.active(now) }.sortedBy { it.createdAt }
+
+    /** Архив своих историй — новые сверху. */
+    val storyArchive: List<Story> get() = stories.filter { it.authorId == me.id }.sortedByDescending { it.createdAt }
+
+    fun highlightsOf(userId: Int): List<Highlight> = highlights.filter { it.ownerId == userId && it.storyIds.isNotEmpty() }
+
+    fun story(id: Long): Story? = stories.firstOrNull { it.id == id }
+
     /** Эфир на экране. */
     val watchingLive: LiveStream? get() = watchingLiveId?.let { id -> myLive?.takeIf { it.id == id } ?: lives.firstOrNull { it.id == id } }
 
@@ -383,10 +438,15 @@ data class UiState(
         (if (user.id in following) listOf(me) else emptyList()) +
             Demo.people.filter { it.id != user.id && it.id !in blocked }
     val myPosts: List<Post> get() = posts.filter { it.author.id == me.id }
-    /** «Истории»: свои записи и записи друзей — новые сверху, как и в ленте. */
-    val stories: List<Post> get() = posts.filter { (it.author.id in following || it.author.id == me.id) && it.author.id !in blocked }
+    /** Вкладка «Истории» под кружками: свои записи и записи друзей — новые сверху, как и в ленте. */
+    val friendPosts: List<Post> get() = posts.filter { (it.author.id in following || it.author.id == me.id) && it.author.id !in blocked }
     /** Мои друзья — люди. */
     val friends: List<User> get() = Demo.people.filter { it.id in following }
+
+    /** Записи, где меня отметили на фото, — «Отметки» в профиле. */
+    val taggedPosts: List<Post>
+        get() = (posts + groups.flatMap { it.posts }).filter { p -> p.author.id !in blocked && p.media.any { a -> a.tags.any { it.userId == me.id } } }
+            .distinctBy { it.id }.sortedByDescending { it.createdAt }
     /** «Сохранённое» в профиле: PRISM в закладках. */
     val savedPrisms: List<Prism> get() = prisms.filter { it.saved }
     fun track(id: String): MusicTrack? = tracks.firstOrNull { it.id == id }
@@ -680,6 +740,12 @@ class AppViewModel(
         val s = _state.value
         return when {
             s.creatingPrism -> { closePrismCreator(); true }
+            // Во время звонка «назад» не сбрасывает звонок — для этого красная кнопка
+            s.call != null -> true
+            s.storyViewersOf != null -> { closeStoryViewers(); true }
+            s.storyViewer != null -> { closeStories(); true }
+            s.storyComposer -> { closeStoryComposer(); true }
+            s.repostingPostId != null || s.sharingPostId != null -> { closeRepost(); true }
             s.watchingLiveId != null && s.myLive?.id == s.watchingLiveId -> { _state.update { it.copy(confirmEndLive = true) }; true }
             s.watchingLiveId != null -> { leaveLive(); true }
             s.liveStarting -> { closeLiveStart(); true }
@@ -749,6 +815,10 @@ class AppViewModel(
             ActivityKind.Live ->
                 if (s.lives.any { it.id == g.targetId && it.live }) watchLive(g.targetId)
                 else g.actors.firstOrNull()?.let { openPerson(it.id) }
+            ActivityKind.Repost, ActivityKind.Tagged ->
+                if (s.findPost(g.targetId) != null) _state.update { it.copy(openPostId = g.targetId) } else g.actors.firstOrNull()?.let { openPerson(it.id) }
+            ActivityKind.StoryReply, ActivityKind.MissedCall ->
+                g.actors.firstOrNull()?.let { a -> s.chats.firstOrNull { it.peer.id == a.id }?.let { openChat(it.id) } ?: openPerson(a.id) }
         }
     }
 
@@ -839,15 +909,18 @@ class AppViewModel(
     }
 
     /** Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем. */
-    fun publish(text: String, media: List<Attachment> = emptyList(), checkIn: CheckIn? = null, poll: PollDraft? = null) {
+    fun publish(text: String, media: List<Attachment> = emptyList(), checkIn: CheckIn? = null, poll: PollDraft? = null, place: SharedPlace? = null) {
         Telemetry.track(AppEvent.PostPublished)
         val trimmed = text.trim()
         val built = poll?.build(nextId++)
         if (trimmed.isEmpty() && media.isEmpty() && checkIn == null && built == null) return
+        // Отмечать на фото можно только друзей — остальные отметки отбрасываются
+        val friendIds = _state.value.following
+        val cleanMedia = media.map { a -> if (a.tags.isEmpty()) a else a.copy(tags = a.tags.filter { it.userId in friendIds }.distinctBy { it.userId }) }
         media.filter { it.isGif }.forEach(::rememberGif)
         _state.update { s ->
             val next = s.copy(
-                posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn, poll = built)) + s.posts,
+                posts = listOf(Post(nextId++, s.me, trimmed, 0, media = cleanMedia.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn, poll = built, place = place)) + s.posts,
                 // Чек-ин сам засчитывается в общие цели «Вместе»
                 together = if (checkIn != null) s.together.afterCheckIn(checkIn) else s.together,
                 growth = if (checkIn != null) s.growth.logged(GrowthEvent(GrowthEventType.CheckIn, clock(), checkIn.activity)) else s.growth,
@@ -1224,6 +1297,449 @@ class AppViewModel(
                 if (!chat.muted && _state.value.openChatId != chatId) notify(Nudges.message(chat.peer, if (chat.secret) t("Новое сообщение") else reply, chatId))
             }
         }
+    }
+
+    // ==================== ИСТОРИИ ====================
+
+    fun openStoryComposer() {
+        _state.update { it.copy(storyComposer = true) }
+    }
+
+    fun closeStoryComposer() {
+        _state.update { it.copy(storyComposer = false) }
+    }
+
+    /**
+     * Новая история: фото или видео либо текст на градиенте. closeFriends —
+     * только для «Близких друзей». Ответ — текст ошибки или null.
+     */
+    fun publishStory(media: Attachment?, text: String, bg: Int, closeFriends: Boolean): String? {
+        val clean = text.trim().take(Stories.MAX_TEXT)
+        if (media == null && clean.isEmpty()) return t("Добавьте фото, видео или текст")
+        Telemetry.track(AppEvent.StoryPublished)
+        val story = Story(nextId++, _state.value.me.id, clock(), media, clean, bg.coerceIn(0, Stories.BACKGROUNDS.lastIndex), closeFriends = closeFriends)
+        _state.update { it.copy(stories = it.stories + story, storyComposer = false) }
+        return null
+    }
+
+    /** Открыть истории человека; дальше — по кругу остальных с историями. */
+    fun openStories(authorId: Int) {
+        val s = _state.value
+        val now = clock()
+        val circles = s.storyCircles(now)
+        val order = (if (s.myActiveStories(now).isNotEmpty()) listOf(s.me.id) else emptyList()) + circles.map { it.user.id }
+        if (authorId !in order) return
+        val list = storiesOf(authorId)
+        _state.update { it.copy(storyViewer = StoryViewer(order, authorId, Stories.startIndex(list, it.seenStories))) }
+        currentStory()?.let { seeStory(it.id) }
+    }
+
+    /** Открыть подборку «Актуального». */
+    fun openHighlight(highlightId: Long) {
+        val h = _state.value.highlights.firstOrNull { it.id == highlightId } ?: return
+        if (h.storyIds.none { _state.value.story(it) != null }) return
+        _state.update { it.copy(storyViewer = StoryViewer(listOf(h.ownerId), h.ownerId, 0, highlightId)) }
+    }
+
+    fun closeStories() {
+        _state.update { it.copy(storyViewer = null, storyViewersOf = null) }
+    }
+
+    /** Истории, которые сейчас листаются у этого автора. */
+    fun storiesOf(authorId: Int): List<Story> {
+        val s = _state.value
+        val v = s.storyViewer
+        if (v?.highlightId != null) {
+            val h = s.highlights.firstOrNull { it.id == v.highlightId } ?: return emptyList()
+            return h.storyIds.mapNotNull { s.story(it) }
+        }
+        val now = clock()
+        return if (authorId == s.me.id) s.myActiveStories(now)
+        else s.storyCircles(now).firstOrNull { it.user.id == authorId }?.stories.orEmpty()
+    }
+
+    fun currentStory(): Story? {
+        val v = _state.value.storyViewer ?: return null
+        return storiesOf(v.author).getOrNull(v.index)
+    }
+
+    /** Следующая история; кончились у автора — к следующему автору; у всех — закрыть. */
+    fun nextStory() {
+        val v = _state.value.storyViewer ?: return
+        val list = storiesOf(v.author)
+        if (v.index + 1 < list.size) {
+            _state.update { it.copy(storyViewer = v.copy(index = v.index + 1)) }
+        } else {
+            val next = v.authorIds.getOrNull(v.authorIds.indexOf(v.author) + 1)
+            if (next == null || v.highlightId != null) { closeStories(); return }
+            val nextList = storiesOf(next)
+            _state.update { it.copy(storyViewer = v.copy(author = next, index = Stories.startIndex(nextList, it.seenStories))) }
+        }
+        currentStory()?.let { seeStory(it.id) }
+    }
+
+    fun previousStory() {
+        val v = _state.value.storyViewer ?: return
+        if (v.index > 0) {
+            _state.update { it.copy(storyViewer = v.copy(index = v.index - 1)) }
+        } else {
+            val prev = v.authorIds.getOrNull(v.authorIds.indexOf(v.author) - 1)
+            if (prev != null && v.highlightId == null) _state.update { it.copy(storyViewer = v.copy(author = prev, index = 0)) }
+        }
+    }
+
+    /** История показана: отметить просмотренной (и, если чужая, — что я её видел). */
+    fun seeStory(storyId: Long) {
+        val me = _state.value.me.id
+        _state.update { s ->
+            s.copy(
+                seenStories = s.seenStories + storyId,
+                stories = s.stories.map { if (it.id == storyId && it.authorId != me) Stories.view(it, me, clock()) else it },
+            )
+        }
+    }
+
+    /** Сердечко на чужую историю: автору — «❤️» в переписку с цитатой истории. */
+    fun likeStory(storyId: Long) {
+        val story = _state.value.story(storyId) ?: return
+        val me = _state.value.me.id
+        if (story.authorId == me || story.views.any { it.userId == me && it.liked }) return
+        _state.update { s -> s.copy(stories = s.stories.map { if (it.id == storyId) Stories.view(it, me, clock(), liked = true) else it }) }
+        replyToStory(storyId, "❤️")
+    }
+
+    /** Ответ на историю — сообщением автору, с цитатой истории над ним. */
+    fun replyToStory(storyId: Long, text: String) {
+        val story = _state.value.story(storyId) ?: return
+        val clean = text.trim().take(1000)
+        if (clean.isEmpty() || story.authorId == _state.value.me.id) return
+        val chatId = chatWith(story.authorId) ?: return
+        append(chatId, Message(nextId++, fromMe = true, text = clean, time = now(), story = Stories.ref(story)))
+    }
+
+    /** Переписка с человеком: есть — её номер, нет — создать (не открывая). */
+    private fun chatWith(userId: Int): Int? {
+        val person = Demo.person(userId) ?: return null
+        _state.value.chats.firstOrNull { it.peer.id == userId }?.let { return it.id }
+        val id = (_state.value.chats.maxOfOrNull { it.id } ?: 0) + 1
+        _state.update { s -> s.copy(chats = listOf(Chat(id, person, emptyList())) + s.chats) }
+        return id
+    }
+
+    /** Удалить свою историю — и из «Актуального». Файл удаляет экран. */
+    fun deleteStory(storyId: Long) {
+        val me = _state.value.me.id
+        _state.update { s ->
+            s.copy(
+                stories = s.stories.filterNot { it.id == storyId && it.authorId == me },
+                highlights = s.highlights.map { h -> if (h.ownerId == me) h.copy(storyIds = h.storyIds - storyId, coverId = if (h.coverId == storyId) (h.storyIds - storyId).firstOrNull() ?: 0 else h.coverId) else h }
+                    .filter { it.ownerId != me || it.storyIds.isNotEmpty() },
+            )
+        }
+        val v = _state.value.storyViewer ?: return
+        if (storiesOf(v.author).isEmpty()) closeStories()
+        else if (v.index >= storiesOf(v.author).size) _state.update { it.copy(storyViewer = v.copy(index = storiesOf(v.author).lastIndex)) }
+    }
+
+    fun openStoryViewers(storyId: Long) {
+        _state.update { it.copy(storyViewersOf = storyId) }
+    }
+
+    fun closeStoryViewers() {
+        _state.update { it.copy(storyViewersOf = null) }
+    }
+
+    /** Добавить друга в «Близкие друзья» или убрать. */
+    fun toggleCloseFriend(userId: Int) {
+        if (userId !in _state.value.following) return
+        _state.update { s -> s.copy(closeFriends = if (userId in s.closeFriends) s.closeFriends - userId else s.closeFriends + userId) }
+    }
+
+    /** Новая подборка «Актуального» из своих историй. Ответ — её номер или null. */
+    fun createHighlight(title: String, storyIds: List<Long>): Long? {
+        val s = _state.value
+        val mine = storyIds.filter { id -> s.stories.any { it.id == id && it.authorId == s.me.id } }.distinct()
+        if (mine.isEmpty()) return null
+        val h = Highlight(nextId++, s.me.id, title.trim().take(Stories.MAX_TITLE).ifEmpty { t("Актуальное") }, mine)
+        _state.update { it.copy(highlights = it.highlights + h) }
+        return h.id
+    }
+
+    fun renameHighlight(id: Long, title: String) = updateHighlight(id) { it.copy(title = title.trim().take(Stories.MAX_TITLE).ifEmpty { it.title }) }
+
+    fun addToHighlight(id: Long, storyId: Long) = updateHighlight(id) { if (storyId in it.storyIds) it else it.copy(storyIds = it.storyIds + storyId) }
+
+    fun removeFromHighlight(id: Long, storyId: Long) = updateHighlight(id) { it.copy(storyIds = it.storyIds - storyId, coverId = if (it.coverId == storyId) (it.storyIds - storyId).firstOrNull() ?: 0 else it.coverId) }
+
+    fun setHighlightCover(id: Long, storyId: Long) = updateHighlight(id) { if (storyId in it.storyIds) it.copy(coverId = storyId) else it }
+
+    fun deleteHighlight(id: Long) {
+        val me = _state.value.me.id
+        _state.update { s -> s.copy(highlights = s.highlights.filterNot { it.id == id && it.ownerId == me }) }
+    }
+
+    private fun updateHighlight(id: Long, change: (Highlight) -> Highlight) {
+        val me = _state.value.me.id
+        _state.update { s ->
+            s.copy(highlights = s.highlights.map { if (it.id == id && it.ownerId == me) change(it) else it }.filter { it.ownerId != me || it.storyIds.isNotEmpty() })
+        }
+    }
+
+    /**
+     * Демо-истории друзей: у кого нет свежей — появляется; у друзей без
+     * «Актуального» — пара подборок из старых историй. Вызывается после входа.
+     */
+    fun ensureDemoStories(random: Random = Random.Default) {
+        val s = _state.value
+        val now = clock()
+        val added = mutableListOf<Story>()
+        val hs = mutableListOf<Highlight>()
+        for (f in Demo.people) {
+            if (s.stories.none { it.authorId == f.id && it.active(now) } && random.nextInt(3) != 0) {
+                repeat(1 + random.nextInt(3)) { i ->
+                    added += demoStory(f.id, now - random.nextLong(10 * 60_000, 20 * 60 * 60_000L) + i, random, close = random.nextInt(5) == 0)
+                }
+            }
+            if (s.highlights.none { it.ownerId == f.id }) {
+                listOf(t("Путешествия"), t("Друзья"), t("Еда")).shuffled(random).take(1 + random.nextInt(2)).forEach { title ->
+                    val old = List(2 + random.nextInt(3)) { demoStory(f.id, now - random.nextLong(3L, 60L) * Stories.TTL_MS, random) }
+                    added += old
+                    hs += Highlight(nextId++, f.id, title, old.map { it.id })
+                }
+            }
+        }
+        if (added.isEmpty() && hs.isEmpty()) return
+        _state.update { it.copy(stories = it.stories + added, highlights = it.highlights + hs) }
+    }
+
+    private fun demoStory(authorId: Int, at: Long, random: Random, close: Boolean = false): Story =
+        Story(
+            nextId++, authorId, at,
+            text = if (random.nextInt(3) == 0) t(Stories.demoTexts[random.nextInt(Stories.demoTexts.size)]) else "",
+            bg = random.nextInt(Stories.BACKGROUNDS.size), seed = random.nextInt(1000), closeFriends = close,
+        )
+
+    /**
+     * Демо-жизнь историй: друг выкладывает новую, мою историю смотрят
+     * (близкие — «для близких»), иногда отвечают на неё в личку.
+     */
+    fun storyEvent(friend: User, random: Random) {
+        val s = _state.value
+        val now = clock()
+        val mine = s.myActiveStories(now)
+        when {
+            mine.isNotEmpty() && random.nextInt(3) != 0 -> {
+                val story = mine[random.nextInt(mine.size)]
+                if (story.closeFriends && friend.id !in s.closeFriends) return
+                val liked = random.nextInt(4) == 0
+                _state.update { st -> st.copy(stories = st.stories.map { if (it.id == story.id) Stories.view(it, friend.id, now, liked) else it }) }
+                if (random.nextInt(5) == 0) {
+                    val text = t(listOf("Красота!", "Где это?", "Хочу туда же", "😍")[random.nextInt(4)])
+                    val chatId = chatWith(friend.id) ?: return
+                    append(chatId, Message(nextId++, fromMe = false, text = text, time = now(), story = Stories.ref(story)))
+                    record(ActivityKind.StoryReply, friend, story.id, text)
+                    if (_state.value.openChatId != chatId) notify(Nudges.message(friend, text, chatId))
+                }
+            }
+            s.stories.none { it.authorId == friend.id && it.active(now) } ->
+                _state.update { it.copy(stories = it.stories + demoStory(friend.id, now, random, close = random.nextInt(5) == 0)) }
+        }
+        // Чужие истории старше суток, не попавшие в «Актуальное», больше не нужны
+        pruneStories(now)
+    }
+
+    /** Убрать чужие истории, которые истекли и не лежат в «Актуальном». */
+    fun pruneStories(now: Long = clock()) {
+        val me = _state.value.me.id
+        _state.update { s ->
+            val kept = s.highlights.flatMap { it.storyIds }.toSet()
+            val stories = s.stories.filter { it.authorId == me || it.active(now) || it.id in kept }
+            if (stories.size == s.stories.size) s else s.copy(stories = stories, seenStories = s.seenStories intersect stories.map { it.id }.toSet())
+        }
+    }
+
+    // ==================== РЕПОСТЫ ====================
+
+    /** Копия записи для репоста или сообщения; у репоста без слов — сам оригинал. */
+    fun postRef(post: Post): PostRef {
+        val root = post.repostOf?.takeIf { post.text.isBlank() && post.media.isEmpty() }
+        if (root != null) return root
+        return PostRef(
+            post.id, post.author.id, post.author.name, post.text.take(500),
+            photo = post.media.firstOrNull { it.kind == MediaKind.Photo && !it.sticker }?.path.orEmpty(),
+            seed = post.artSeed ?: 0, createdAt = post.createdAt,
+        )
+    }
+
+    fun openRepost(postId: Long) {
+        _state.update { it.copy(repostingPostId = postId, sharingPostId = null) }
+    }
+
+    fun openSendToChat(postId: Long) {
+        _state.update { it.copy(sharingPostId = postId, repostingPostId = null) }
+    }
+
+    fun closeRepost() {
+        _state.update { it.copy(repostingPostId = null, sharingPostId = null) }
+    }
+
+    /**
+     * Репост в свою ленту: оригинал карточкой, comment — свои слова (может
+     * быть пустым). Закрытые профили и свои записи без слов не репостятся.
+     */
+    fun repost(postId: Long, comment: String = ""): String? {
+        val s = _state.value
+        val post = s.findPost(postId) ?: return t("Запись не найдена")
+        if (post.author.closed && post.author.id != s.me.id) return t("Записями закрытого профиля нельзя поделиться")
+        val ref = postRef(post)
+        if (ref.authorId == s.me.id && comment.isBlank()) return t("Добавьте пару слов к своей записи")
+        Telemetry.track(AppEvent.Reposted)
+        val mine = Post(nextId++, s.me, comment.trim().take(2000), 0, createdAt = clock(), repostOf = ref)
+        _state.update { st ->
+            fun bump(p: Post) = if (p.id == ref.postId) p.copy(reposts = p.reposts + 1) else p
+            st.copy(
+                posts = listOf(mine) + st.posts.map(::bump),
+                groups = st.groups.map { g -> g.copy(posts = g.posts.map(::bump)) },
+                repostingPostId = null,
+            )
+        }
+        return null
+    }
+
+    /** Отправить запись в переписку — карточкой, со своими словами. */
+    fun sendPostToChat(postId: Long, chatId: Int, text: String = "") {
+        val post = _state.value.findPost(postId) ?: return
+        Telemetry.track(AppEvent.LinkShared)
+        append(chatId, Message(nextId++, fromMe = true, text = text.trim().take(1000), time = now(), post = postRef(post)))
+        _state.update { it.copy(sharingPostId = null) }
+    }
+
+    /** Нажали на запись внутри репоста или сообщения. false — её нет на этом телефоне. */
+    fun openPostRef(ref: PostRef): Boolean = openLink(LinkTarget.PostLink(ref.postId))
+
+    // ==================== ОТМЕТКИ ====================
+
+    /** Записи, где меня отметили на фото (у себя на телефоне — в своих и друзей). */
+    val taggedPosts: List<Post> get() = _state.value.taggedPosts
+
+    /** Убрать отметку с собой на чужом фото (с сервером — запрос автору записи не нужен). */
+    fun untagMe(postId: Long) {
+        val me = _state.value.me.id
+        fun clean(p: Post) = if (p.id != postId) p else p.copy(media = p.media.map { a -> a.copy(tags = a.tags.filter { it.userId != me }) })
+        _state.update { s -> s.copy(posts = s.posts.map(::clean), groups = s.groups.map { g -> g.copy(posts = g.posts.map(::clean)) }) }
+    }
+
+    // ==================== ЗВОНКИ ====================
+
+    /** Связь звонков: демо, пока нет сервера. */
+    var callTransport: CallTransport = DemoCallTransport
+
+    private var callJob: Job? = null
+
+    /** Позвонить. Ответ — текст ошибки или null. */
+    fun startCall(peerId: Int, video: Boolean): String? {
+        val s = _state.value
+        if (s.call != null) return t("Звонок уже идёт")
+        if (peerId in s.blocked) return t("Вы заблокировали этого человека")
+        Demo.person(peerId) ?: return t("Не удалось позвонить")
+        Telemetry.track(if (video) AppEvent.VideoCall else AppEvent.VoiceCall)
+        val call = ActiveCall(nextId++, peerId, video, outgoing = true, phase = CallPhase.Calling, startedAt = clock(), cameraOn = video)
+        callTransport.connect(call.room, "", video)
+        _state.update { it.copy(call = call, openChatId = it.openChatId) }
+        if (demoReplies) {
+            callJob?.cancel()
+            callJob = viewModelScope.launch {
+                // Демо: чаще всего друг отвечает через пару секунд, иногда — нет
+                if (Random.nextInt(8) == 0) { delay(12_000); callTimeout() } else { delay(Random.nextLong(2_000, 5_000)); callAnswered() }
+            }
+        }
+        return null
+    }
+
+    /** Собеседник ответил — разговор пошёл. */
+    fun callAnswered() {
+        val c = _state.value.call ?: return
+        if (c.phase != CallPhase.Calling) return
+        _state.update { it.copy(call = c.copy(phase = CallPhase.Active, connectedAt = clock())) }
+    }
+
+    /** Звонят мне (демо — друг; с сервером — пуш). Ничего не делает, если звонки от него запрещены. */
+    fun incomingCall(peerId: Int, video: Boolean) {
+        val s = _state.value
+        if (s.call != null || !Calls.allowed(peerId, s.following, s.blocked, s.privacy.calls)) return
+        val person = Demo.person(peerId) ?: return
+        val call = ActiveCall(nextId++, peerId, video, outgoing = false, phase = CallPhase.Incoming, startedAt = clock(), cameraOn = video)
+        _state.update { it.copy(call = call) }
+        if (demoReplies) {
+            callJob?.cancel()
+            callJob = viewModelScope.launch { delay(Calls.RING_MS); callTimeout() }
+        }
+        // Приложение открыто — звонок и так на весь экран; свёрнуто — уведомлением
+        if (!ru.wishka.memory.push.AppVisibility.foreground) notify(Nudges.incomingCall(person, video))
+    }
+
+    /** Принять входящий. */
+    fun acceptCall() {
+        val c = _state.value.call ?: return
+        if (c.phase != CallPhase.Incoming) return
+        callJob?.cancel()
+        callTransport.connect(c.room, "", c.video)
+        _state.update { it.copy(call = c.copy(phase = CallPhase.Active, connectedAt = clock())) }
+    }
+
+    /** Отклонить входящий. */
+    fun declineCall() {
+        val c = _state.value.call ?: return
+        if (c.phase != CallPhase.Incoming) return
+        finishCall(Calls.record(c, clock(), declined = true))
+    }
+
+    /** Положить трубку / отменить исходящий. */
+    fun endCall() {
+        val c = _state.value.call ?: return
+        finishCall(Calls.record(c, clock()))
+    }
+
+    /** Никто не ответил: исходящий — «нет ответа», входящий — пропущенный. */
+    fun callTimeout() {
+        val c = _state.value.call ?: return
+        if (c.phase == CallPhase.Active) return
+        val record = Calls.record(c, clock())
+        finishCall(record)
+        if (!c.outgoing) {
+            Demo.person(c.peerId)?.let { person ->
+                record(ActivityKind.MissedCall, person, c.id)
+                notify(Nudges.missedCall(person, c.video, chatWith(c.peerId) ?: 0))
+            }
+        }
+    }
+
+    private fun finishCall(record: CallRecord) {
+        callJob?.cancel()
+        callTransport.hangUp()
+        val chatId = chatWith(record.peerId)
+        _state.update { it.copy(call = null, callLog = Calls.add(it.callLog, record)) }
+        // Строка звонка — в переписке с человеком
+        if (chatId != null) append(chatId, Message(nextId++, fromMe = record.outgoing, text = "", time = now(), call = record))
+    }
+
+    fun toggleMute() = updateCall { c -> c.copy(muted = !c.muted).also { callTransport.setMuted(it.muted) } }
+
+    fun toggleCamera() = updateCall { c -> c.copy(cameraOn = !c.cameraOn).also { callTransport.setCamera(it.cameraOn, it.frontCamera) } }
+
+    fun flipCamera() = updateCall { c -> c.copy(frontCamera = !c.frontCamera).also { callTransport.setCamera(it.cameraOn, it.frontCamera) } }
+
+    fun toggleSpeaker() = updateCall { it.copy(speaker = !it.speaker) }
+
+    private fun updateCall(change: (ActiveCall) -> ActiveCall) {
+        _state.update { s -> s.call?.let { s.copy(call = change(it)) } ?: s }
+    }
+
+    /** Перезвонить из истории звонков или переписки. */
+    fun callBack(record: CallRecord) = startCall(record.peerId, record.video)
+
+    fun clearCallLog() {
+        _state.update { it.copy(callLog = emptyList()) }
     }
 
     // ==================== ЭФИРЫ ====================
@@ -2569,6 +3085,9 @@ class AppViewModel(
             if (mine.isNotEmpty()) repeat(2) { add(2) }
             if (requesters.isNotEmpty()) add(3)
             if (friends.isNotEmpty()) add(4)
+            if (friends.isNotEmpty()) repeat(2) { add(5) }
+            if (mine.isNotEmpty() && friends.isNotEmpty()) add(6)
+            if (friends.isNotEmpty() && s.call == null) add(7)
         }
         if (options.isEmpty()) return
         when (options[random.nextInt(options.size)]) {
@@ -2595,7 +3114,16 @@ class AppViewModel(
                 }
             }
             3 -> receiveFriendRequest(requesters[random.nextInt(requesters.size)].id)
-            else -> friendGoesLive(friends[random.nextInt(friends.size)], random)
+            4 -> friendGoesLive(friends[random.nextInt(friends.size)], random)
+            5 -> storyEvent(friends[random.nextInt(friends.size)], random)
+            6 -> {
+                // Друг репостнул вашу запись
+                val post = mine[random.nextInt(mine.size)]
+                val fan = friends[random.nextInt(friends.size)]
+                _state.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) it.copy(reposts = it.reposts + 1) else it }) }
+                record(ActivityKind.Repost, fan, post.id, post.text)
+            }
+            else -> incomingCall(friends[random.nextInt(friends.size)].id, video = random.nextBoolean())
         }
     }
 
@@ -2920,6 +3448,8 @@ class AppViewModel(
             it.guideRead, it.guideHidden, it.subscription,
             activity = it.activity, activitySeen = it.activitySeen,
             searchHistory = it.searchHistory,
+            stories = it.stories, seenStories = it.seenStories, closeFriends = it.closeFriends,
+            highlights = it.highlights, callLog = it.callLog,
         )
     }
 
@@ -2972,6 +3502,11 @@ class AppViewModel(
                 activity = snapshot.activity,
                 activitySeen = snapshot.activitySeen,
                 searchHistory = snapshot.searchHistory,
+                stories = snapshot.stories,
+                seenStories = snapshot.seenStories,
+                closeFriends = snapshot.closeFriends,
+                highlights = snapshot.highlights,
+                callLog = snapshot.callLog,
             ).withMe(s.me)
         }
         refreshPlan()
@@ -3050,6 +3585,11 @@ data class Snapshot(
     val activity: List<ActivityItem> = emptyList(),
     val activitySeen: Long = 0,
     val searchHistory: List<String> = emptyList(),
+    val stories: List<Story> = emptyList(),
+    val seenStories: Set<Long> = emptySet(),
+    val closeFriends: Set<Int> = emptySet(),
+    val highlights: List<Highlight> = emptyList(),
+    val callLog: List<CallRecord> = emptyList(),
 )
 
 /** Переключить «нравится» у комментария с номером commentId. */

@@ -175,8 +175,10 @@ enum Search {
         }
         let ws = words(query)
         return newestFirst(posts.filter { p in
-            let extra = p.checkIn.map { $0.subject + " " + $0.displayTitle } ?? ""
-            let body = norm(p.text + " " + extra)
+            let extra: String = p.checkIn.map { $0.subject + " " + $0.displayTitle } ?? ""
+            let place: String = p.place?.title ?? ""
+            let original: String = p.repostOf?.text ?? ""
+            let body = norm([p.text, extra, place, original].joined(separator: " "))
             return ws.allSatisfy { body.contains($0) }
         })
     }

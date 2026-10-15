@@ -26,6 +26,10 @@ enum class AppEvent(val id: String) {
     LiveWatched("live_watched"),
     SecretChat("secret_chat"),
     Disappearing("disappearing_set"),
+    StoryPublished("story_published"),
+    Reposted("reposted"),
+    VoiceCall("voice_call"),
+    VideoCall("video_call"),
 }
 
 /** Отчёт о сбое: когда, какая ошибка и где — без данных человека (см. Scrub). */

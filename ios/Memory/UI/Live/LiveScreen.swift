@@ -22,63 +22,66 @@ struct LiveBadge: View {
     }
 }
 
-/// Строка над «Историями»: «Начать эфир» и эфиры друзей, которые идут
-/// сейчас. Свой идущий эфир — первым, вернуться в него. То же — LiveRow в LiveScreen.kt.
-struct LiveRow: View {
+/// Кружок «Эфир» в ряду историй: начать свой или вернуться в идущий.
+/// То же — LiveStartCircle в LiveScreen.kt.
+struct LiveStartCircle: View {
     let model: AppModel
 
     var body: some View {
-        let state = model.state
-        let mine = state.myLive
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 14) {
-                Button {
-                    if mine != nil { model.returnToMyLive() } else { model.openLiveStart() }
-                } label: {
-                    VStack(spacing: 4) {
-                        Glyph(kind: mine != nil ? .video : .plus, color: Palette.lilac, size: 26)
-                            .frame(width: 60, height: 60)
-                            .glass(Circle(), strong: mine != nil)
-                        Text(mine != nil ? t("Мой эфир") : t("Эфир"))
-                            .textStyle(.labelLarge)
-                            .lineLimit(1)
-                    }
-                    .frame(width: 76)
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                ForEach(state.visibleLives) { live in
-                    let person = liveHost(state, live)
-                    Button { model.watchLive(live.id) } label: {
-                        VStack(spacing: 4) {
-                            ZStack(alignment: .bottom) {
-                                Avatar(user: person, size: 52)
-                                    .padding(4)
-                                    .overlay(
-                                        Circle().strokeBorder(
-                                            AngularGradient(colors: [Palette.pearlPink, Palette.orchid, Palette.pearlPink], center: .center),
-                                            lineWidth: 2
-                                        )
-                                    )
-                                LiveBadge()
-                            }
-                            Text(person.firstName)
-                                .textStyle(.labelLarge)
-                                .lineLimit(1)
-                        }
-                        .frame(width: 76)
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(tf("%s в эфире: %s", person.name, live.title))
-                    .accessibilityAddTraits(.isButton)
-                }
+        let mine = model.state.myLive
+        Button {
+            if mine != nil { model.returnToMyLive() } else { model.openLiveStart() }
+        } label: {
+            VStack(spacing: 4) {
+                Glyph(kind: mine != nil ? .video : .plus, color: Palette.lilac, size: 24)
+                    .frame(width: 54, height: 54)
+                    .glass(Circle(), strong: mine != nil)
+                    .padding(4)
+                Text(mine != nil ? t("Мой эфир") : t("Эфир"))
+                    .textStyle(.labelLarge)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 16)
+            .frame(width: 72)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(mine != nil ? t("Мой эфир") : t("Эфир"))
+    }
+}
+
+/// Кружок эфира друга с меткой «В ЭФИРЕ». То же — LiveCircle в LiveScreen.kt.
+struct LiveCircle: View {
+    let model: AppModel
+    let live: LiveStream
+
+    var body: some View {
+        let person = liveHost(model.state, live)
+        Button { model.watchLive(live.id) } label: {
+            VStack(spacing: 4) {
+                ZStack(alignment: .bottom) {
+                    Avatar(user: person, size: 54)
+                        .padding(4)
+                        .overlay(
+                            Circle().strokeBorder(
+                                AngularGradient(colors: [Palette.pearlPink, Palette.orchid, Palette.pearlPink], center: .center),
+                                lineWidth: 2
+                            )
+                        )
+                    LiveBadge()
+                }
+                Text(person.firstName)
+                    .textStyle(.labelLarge)
+                    .lineLimit(1)
+            }
+            .frame(width: 72)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(tf("%s в эфире: %s", person.name, live.title))
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -151,7 +154,7 @@ struct LiveScreen: View {
         ZStack {
             Palette.void.ignoresSafeArea()
             if mine {
-                HostCamera().ignoresSafeArea()
+                CameraPreview().ignoresSafeArea()
             } else {
                 Nebula(seed: live.seed).ignoresSafeArea()
                 VStack(spacing: 0) {
@@ -314,83 +317,6 @@ private struct LiveChat: View {
                 }
             }
         }
-    }
-}
-
-/// Своя камера — фронтальная, как в видеозвонке; просит разрешение, если его нет.
-@Observable
-final class LiveCameraModel {
-    let session = AVCaptureSession()
-    private(set) var allowed = true
-    @ObservationIgnored private let queue = DispatchQueue(label: "memory.live.camera")
-
-    func start() {
-        Task { @MainActor in
-            let video = await AVCaptureDevice.requestAccess(for: .video)
-            _ = await AVCaptureDevice.requestAccess(for: .audio)
-            allowed = video
-            guard video else { return }
-            let session = self.session
-            queue.async {
-                if session.inputs.isEmpty {
-                    session.beginConfiguration()
-                    session.sessionPreset = .high
-                    if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
-                       let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) {
-                        session.addInput(input)
-                    }
-                    session.commitConfiguration()
-                }
-                if !session.isRunning { session.startRunning() }
-            }
-        }
-    }
-
-    func stop() {
-        let session = self.session
-        queue.async {
-            if session.isRunning { session.stopRunning() }
-        }
-    }
-}
-
-private struct HostCamera: View {
-    @State private var camera = LiveCameraModel()
-
-    var body: some View {
-        ZStack {
-            Color.black
-            if camera.allowed {
-                LivePreview(session: camera.session)
-            } else {
-                Text(t("Нет доступа к камере. Разрешите его в настройках телефона."))
-                    .textStyle(.body, Palette.mist)
-                    .multilineTextAlignment(.center)
-                    .padding(32)
-            }
-        }
-        .onAppear { camera.start() }
-        .onDisappear { camera.stop() }
-    }
-}
-
-/// Картинка с камеры (AVCaptureVideoPreviewLayer).
-private struct LivePreview: UIViewRepresentable {
-    let session: AVCaptureSession
-
-    func makeUIView(context: Context) -> PreviewView {
-        let view = PreviewView()
-        view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
-        view.backgroundColor = .black
-        return view
-    }
-
-    func updateUIView(_ view: PreviewView, context: Context) {}
-
-    final class PreviewView: UIView {
-        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
     }
 }
 

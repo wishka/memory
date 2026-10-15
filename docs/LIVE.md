@@ -1,4 +1,4 @@
-# Эфиры, шифрование, отчёты о сбоях, ссылки
+# Эфиры, звонки, шифрование, отчёты о сбоях, ссылки
 
 Что в Memory уже работает на телефоне и что подключается вместе с сервером.
 
@@ -24,6 +24,32 @@
    iPhone: пакет `client-sdk-swift` (Swift Package Manager в Xcode),
    `LiveKitTransport: LiveTransport`.
 5. Экран зрителя вместо демо-картинки показывает видеодорожку ведущего.
+
+## Звонки (LiveKit)
+
+Сейчас звонки — **демо**: экран звонка, кнопки, история звонков,
+пропущенные и строка звонка в переписке работают; друг «отвечает» через
+пару секунд, голос и видео никуда не уходят. Своя камера в окошке —
+настоящая.
+
+Экран знает только `CallTransport` (`data/Calls.kt`, `Data/Calls.swift`):
+`connect(room, token, video)`, `setMuted`, `setCamera(on, front)`,
+`hangUp()`. Сейчас — `DemoCallTransport`.
+
+Подключение — тот же сервер LiveKit, что у эфиров:
+
+1. На сервере Memory — `POST /calls/token`: комната `call-<id>` на двоих;
+   токен выдаётся, только если собеседник разрешил вам звонить
+   (`Privacy.calls`: все / друзья / никто) и не заблокировал вас.
+2. Входящий звонок — пуш: на Android high-priority FCM с
+   `full-screen intent` (foreground service типа `phoneCall`,
+   разрешения `CAMERA`, `RECORD_AUDIO`), на iPhone — VoIP-пуш
+   (PushKit) + CallKit (`UIBackgroundModes: voip` добавить в Info.plist
+   через Xcode, вместе с подключением).
+3. `LiveKitCallTransport : CallTransport` → `vm.callTransport = …`;
+   вместо демо-картинки собеседника — его видеодорожка.
+4. Ответ, отказ, «нет ответа» — события комнаты; `callAnswered()` /
+   `callTimeout()` у модели уже есть.
 
 ## Сквозное шифрование переписки
 

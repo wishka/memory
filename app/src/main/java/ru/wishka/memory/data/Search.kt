@@ -103,7 +103,7 @@ object Search {
         }
         val ws = words(query)
         return posts.filter { p ->
-            val body = norm(p.text + " " + (p.checkIn?.let { it.subject + " " + it.displayTitle } ?: ""))
+            val body = norm(p.text + " " + (p.checkIn?.let { it.subject + " " + it.displayTitle } ?: "") + " " + (p.place?.title ?: "") + " " + (p.repostOf?.text ?: ""))
             ws.all { it in body }
         }.sortedByDescending { it.createdAt }
     }

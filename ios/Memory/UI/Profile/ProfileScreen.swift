@@ -79,6 +79,8 @@ struct ProfileScreen: View {
                 .cardPadding()
 
                 if !editing {
+                    // «Актуальное»: подборки своих историй
+                    HighlightsRow(model: model, ownerId: me.id)
                     ShowcaseCard(model: model)
                     ShelfCard(model: model)
                     RecapCard(model: model)
@@ -120,6 +122,14 @@ struct ProfileScreen: View {
                             Button { model.openProfileSection(.saved) } label: {
                                 SettingRow(icon: .bookmark, title: t("Сохранённое")) {
                                     Text("\(state.savedPrisms.count)").textStyle(.bodySmall, Palette.mist)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            FadeLine().padding(.horizontal, 16)
+                            Button { model.openProfileSection(.tagged) } label: {
+                                SettingRow(icon: .personTag, title: t("Отметки на фото")) {
+                                    Text("\(state.taggedPosts.count)").textStyle(.bodySmall, Palette.mist)
                                 }
                                 .contentShape(Rectangle())
                             }

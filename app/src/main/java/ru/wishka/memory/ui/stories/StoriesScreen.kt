@@ -56,7 +56,7 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
     var only by rememberSaveable { mutableStateOf<Int?>(null) }
     // Выбранный больше не друг — фильтр снимается сам
     val selected = only?.takeIf { it in state.following }
-    val posts = state.stories.filter { selected == null || it.author.id == selected }
+    val posts = state.friendPosts.filter { selected == null || it.author.id == selected }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -72,42 +72,32 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
             )
         }
 
-        // Прямые эфиры: начать свой и смотреть друзей
-        item(key = "lives") { ru.wishka.memory.ui.live.LiveRow(vm, state) }
+        // Истории (сутки), свой эфир и эфиры друзей — одним рядом кружков
+        item(key = "stories") { StoriesRow(vm, state) }
 
+        // Под историями — записи друзей; фильтр по человеку
         if (state.friends.isNotEmpty()) {
+            item {
+                Text(
+                    t("Записи друзей").uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.Mist,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            }
             item {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    item { ru.wishka.memory.ui.components.Chip(t("Все"), active = selected == null) { only = null } }
                     items(state.friends, key = { it.id }) { person ->
-                        StoryRing(
-                            person,
-                            active = selected == null || selected == person.id,
-                            onClick = { only = if (selected == person.id) null else person.id },
-                            onLongClick = { vm.openPerson(person.id) },
-                        )
+                        ru.wishka.memory.ui.components.Chip(person.name.substringBefore(' '), active = selected == person.id) {
+                            only = if (selected == person.id) null else person.id
+                        }
                     }
                 }
             }
-        }
-
-        // Своя история: те же чек-ины, стикеры и фото, что и в ленте
-        item {
-            PostComposer(
-                stickers = state.stickers,
-                templates = state.checkInTemplates,
-                onPublish = vm::publish,
-                onCreateTemplate = vm::createCheckInTemplate,
-                onDeleteTemplate = vm::deleteCheckInTemplate,
-                onOpenStudio = { vm.openProfileSection(ProfileSection.Stickers) },
-                tracks = state.tracks,
-                packs = state.stickerPacks,
-                recentGifs = state.recentGifs,
-                placeholder = t("Что у вас сейчас?"),
-                hint = t("Видно в Историях и в Ленте"),
-            )
         }
 
         if (posts.isEmpty()) {

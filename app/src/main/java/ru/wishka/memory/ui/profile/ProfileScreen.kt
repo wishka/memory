@@ -214,6 +214,8 @@ fun ProfileScreen(
         }
 
         if (!editing) {
+            // «Актуальное»: подборки своих историй
+            item(key = "highlights") { ru.wishka.memory.ui.stories.HighlightsRow(vm, state, state.me.id) }
             item { ShowcaseCard(vm, state) }
             item { ShelfCard(vm, state) }
             item { RecapCard(vm, state) }
@@ -252,6 +254,12 @@ fun ProfileScreen(
                         Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Saved) }) {
                             SettingRow(LineIcon.Bookmark, t("Сохранённое")) {
                                 Text("${state.savedPrisms.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                            }
+                        }
+                        FadeLine(Modifier.padding(horizontal = 16.dp))
+                        Box(Modifier.clickable { vm.openProfileSection(ProfileSection.Tagged) }) {
+                            SettingRow(LineIcon.PersonTag, t("Отметки на фото")) {
+                                Text("${state.taggedPosts.size}", style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
                             }
                         }
                         FadeLine(Modifier.padding(horizontal = 16.dp))

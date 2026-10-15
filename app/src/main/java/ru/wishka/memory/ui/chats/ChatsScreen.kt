@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.Chat
+import ru.wishka.memory.ui.calls.callLogItems
 import ru.wishka.memory.ui.components.MemoryMenu
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.messagePreview
@@ -55,6 +56,9 @@ import ru.wishka.memory.ui.theme.Palette
 @Composable
 fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
     var query by rememberSaveable { mutableStateOf("") }
+    var calls by rememberSaveable { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val missed = state.callLog.count { it.missed && !it.outgoing && it.at > 0 }
     val needle = query.trim().lowercase()
     val chats = state.chatList.filter {
         needle.isEmpty() || it.peer.name.lowercase().contains(needle) || it.peer.handle.contains(needle)
@@ -70,6 +74,22 @@ fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
                 if (state.unreadTotal > 0) tf("Непрочитанных: %s", state.unreadTotal) else t("Все прочитано"),
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
+        }
+        item {
+            androidx.compose.foundation.layout.Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ru.wishka.memory.ui.components.Chip(t("Переписки"), active = !calls) { calls = false }
+                ru.wishka.memory.ui.components.Chip(
+                    if (missed > 0) tf("Звонки · %s", missed) else t("Звонки"),
+                    active = calls,
+                ) { calls = true }
+            }
+        }
+        if (calls) {
+            callLogItems(vm, state) { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
+            return@LazyColumn
         }
         item {
             GlassField(

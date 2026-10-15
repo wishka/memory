@@ -149,12 +149,30 @@ enum GuideContent {
             tip: nil, action: .feed
         ))
         topics.append(GuideTopic(
+            id: "repost", title: GuideText(ru: "Репост и «Отправить в чат»", en: "Repost and “Send to chat”", hy: "Վերահրապարակում և «Ուղարկել զրույցին»"),
+            steps: [
+                GuideText(ru: "Под записью — значок репоста: запись появится у вас в ленте карточкой, можно добавить свои слова.", en: "Under a post is the repost icon: it appears in your feed as a card, and you can add your own words.", hy: "Գրառման տակ վերահրապարակման պատկերակն է․ այն կհայտնվի ձեր լրահոսում քարտով, կարող եք ավելացնել ձեր խոսքերը։"),
+                GuideText(ru: "Самолётик справа — отправить запись кому-то в переписку.", en: "The paper plane on the right sends the post to someone’s chat.", hy: "Աջ կողմի ինքնաթիռիկը՝ գրառումն ուղարկել որևէ մեկի զրույցին։"),
+                GuideText(ru: "Нажатие на карточку внутри репоста открывает оригинал.", en: "Tapping the card inside a repost opens the original.", hy: "Վերահրապարակման ներսի քարտին սեղմելով՝ կբացվի բնօրինակը։"),
+            ],
+            tip: GuideText(ru: "Записями закрытого профиля поделиться нельзя.", en: "Posts from a private profile can’t be shared.", hy: "Փակ պրոֆիլի գրառումներով հնարավոր չէ կիսվել։"), action: .feed
+        ))
+        topics.append(GuideTopic(
             id: "photos", title: GuideText(ru: "Фото и видео на весь экран", en: "Full-screen photos and videos", hy: "Լուսանկարներ և տեսանյութեր ամբողջ էկրանով"),
             steps: [
                 GuideText(ru: "Нажмите на фото или видео — откроется на весь экран.", en: "Tap a photo or video to open it full screen.", hy: "Սեղմեք լուսանկարին կամ տեսանյութին, և այն կբացվի ամբողջ էկրանով։"),
                 GuideText(ru: "Двумя пальцами — увеличить, двойное касание — увеличить в этой точке.", en: "Pinch to zoom; double-tap to zoom in at that spot.", hy: "Երկու մատով՝ մեծացնել, կրկնակի հպումով՝ մեծացնել այդ կետում։"),
             ],
             tip: nil, action: nil
+        ))
+        topics.append(GuideTopic(
+            id: "place-tags", title: GuideText(ru: "Место и отметки на фото", en: "Place and photo tags", hy: "Վայր և նշումներ լուսանկարներում"),
+            steps: [
+                GuideText(ru: "Значок глобуса в новой записи — добавить место: название и, по желанию, точку «где я сейчас».", en: "The globe icon in a new post adds a place: a name and, optionally, a “where I am now” pin.", hy: "Նոր գրառման գլոբուսի պատկերակը՝ ավելացնել վայր․ անվանում և, ցանկության դեպքում, «որտեղ եմ հիմա» կետ։"),
+                GuideText(ru: "Нажмите на добавленное фото, коснитесь человека и выберите друга — так он будет отмечен.", en: "Tap an added photo, touch a person and choose a friend to tag them.", hy: "Սեղմեք ավելացված լուսանկարին, հպեք մարդուն և ընտրեք ընկեր՝ նրան նշելու համար։"),
+                GuideText(ru: "Записи, где отметили вас, — в профиле, «Отметки на фото».", en: "Posts where you’re tagged are in your profile under “Photo tags”.", hy: "Գրառումները, որտեղ ձեզ նշել են, պրոֆիլում են՝ «Նշումներ լուսանկարներում»։"),
+            ],
+            tip: GuideText(ru: "Отмечать можно только друзей.", en: "You can only tag friends.", hy: "Կարելի է նշել միայն ընկերներին։"), action: .feed
         ))
         topics.append(GuideTopic(
             id: "pins", title: GuideText(ru: "Закладки и витрина профиля", en: "Saved posts and profile showcase", hy: "Էջանիշներ և պրոֆիլի ցուցափեղկ"),
@@ -180,19 +198,46 @@ enum GuideContent {
     private static func chapter2() -> GuideChapter {
         var topics: [GuideTopic] = []
         topics.append(GuideTopic(
-            id: "view", title: GuideText(ru: "Что здесь", en: "What’s here", hy: "Ինչ կա այստեղ"),
+            id: "view", title: GuideText(ru: "Смотреть истории", en: "Watching stories", hy: "Դիտել պատմությունները"),
             steps: [
-                GuideText(ru: "Ваши записи и записи друзей — без чужих людей.", en: "Your posts and your friends’ — no strangers.", hy: "Ձեր և ընկերների գրառումները՝ առանց անծանոթների։"),
-                GuideText(ru: "Сверху — друзья в кольцах: нажатие показывает записи одного человека, долгое нажатие — его страницу.", en: "Friends in rings at the top: tap to see one person’s posts, long-press for their page.", hy: "Վերևում՝ ընկերները օղակներում․ սեղմելով՝ կտեսնեք մեկ մարդու գրառումները, երկար սեղմելով՝ նրա էջը։"),
+                GuideText(ru: "Вверху «Историй» — кружки друзей. Цветное кольцо — есть новые, серое — всё просмотрено, зелёное — история «для близких».", en: "At the top of Stories are friends’ circles. A colored ring means new stories, grey — all seen, green — a close-friends story.", hy: "«Պատմություններ»-ի վերևում ընկերների շրջանակներն են։ Գունավոր օղակ՝ նորեր կան, մոխրագույն՝ բոլորը դիտված են, կանաչ՝ «մտերիմների համար» պատմություն։"),
+                GuideText(ru: "Касание справа — дальше, слева — назад, удержание — пауза. Истории идут по кругу от друга к другу.", en: "Tap the right side to go forward, the left to go back, hold to pause. Stories run from one friend to the next.", hy: "Հպեք աջ կողմին՝ առաջ, ձախին՝ հետ, պահեք՝ դադար։ Պատմությունները հերթով անցնում են ընկերից ընկեր։"),
+                GuideText(ru: "Внизу — ответ: он придёт автору в переписку вместе с самой историей. Сердечко — тоже ответ.", en: "Reply at the bottom: it goes to the author’s chat together with the story. The heart is a reply too.", hy: "Ներքևում՝ պատասխան․ այն կգնա հեղինակի զրույցին՝ պատմության հետ միասին։ Սրտիկը նույնպես պատասխան է։"),
             ],
             tip: nil, action: .stories
         ))
         topics.append(GuideTopic(
             id: "new", title: GuideText(ru: "Новая история", en: "A new story", hy: "Նոր պատմություն"),
             steps: [
-                GuideText(ru: "Поле вверху — то же, что в Ленте: фото, стикеры, чек-ины.", en: "The field at the top works like the Feed’s: photos, stickers, check-ins.", hy: "Վերևի դաշտը նույնն է, ինչ Լրահոսում՝ լուսանկարներ, ստիկերներ, չեք-իններ։"),
+                GuideText(ru: "Нажмите на свой кружок с «+»: фото или видео, или просто текст на цветном фоне.", en: "Tap your own circle with “+”: a photo or video, or just text on a colored background.", hy: "Սեղմեք ձեր «+»-ով շրջանակին՝ լուսանկար կամ տեսանյութ, կամ պարզապես տեքստ գունավոր ֆոնի վրա։"),
+                GuideText(ru: "Выберите, кому: «Все друзья» или «Близкие друзья».", en: "Choose who sees it: “All friends” or “Close friends”.", hy: "Ընտրեք՝ ում համար․ «Բոլոր ընկերները» կամ «Մտերիմ ընկերներ»։"),
+                GuideText(ru: "История видна сутки, потом остаётся только у вас — в архиве.", en: "A story is visible for a day, then stays only with you, in the archive.", hy: "Պատմությունը տեսանելի է մեկ օր, հետո մնում է միայն ձեզ մոտ՝ արխիվում։"),
             ],
-            tip: nil, action: nil
+            tip: nil, action: .stories
+        ))
+        topics.append(GuideTopic(
+            id: "viewers", title: GuideText(ru: "Кто посмотрел", en: "Who viewed", hy: "Ով է դիտել"),
+            steps: [
+                GuideText(ru: "Откройте свою историю и нажмите «Просмотры» внизу — там все, кто её видел, и кто поставил сердечко.", en: "Open your story and tap “Views” at the bottom — everyone who saw it, and who sent a heart.", hy: "Բացեք ձեր պատմությունը և սեղմեք ներքևի «Դիտումներ»-ին՝ բոլորը, ով տեսել է, և ով սրտիկ է ուղարկել։"),
+                GuideText(ru: "В меню «⋯» своей истории — «Удалить историю» и «В «Актуальное»».", en: "Your story’s “⋯” menu has “Delete story” and “Add to highlights”.", hy: "Ձեր պատմության «⋯» ընտրացանկում՝ «Ջնջել պատմությունը» և «Ավելացնել ընտրվածին»։"),
+            ],
+            tip: nil, action: .stories
+        ))
+        topics.append(GuideTopic(
+            id: "highlights", title: GuideText(ru: "«Актуальное»", en: "Highlights", hy: "Ընտրված"),
+            steps: [
+                GuideText(ru: "Подборки историй в профиле — они не исчезают через сутки.", en: "Story collections on your profile — they don’t disappear after a day.", hy: "Պատմությունների հավաքածուներ պրոֆիլում՝ մեկ օր անց չեն անհետանում։"),
+                GuideText(ru: "Профиль → «Новая подборка»: дайте название и выберите истории из архива. Долгое нажатие на подборку — изменить или удалить.", en: "Profile → “New collection”: give it a name and pick stories from the archive. Long-press a collection to edit or delete it.", hy: "Պրոֆիլ → «Նոր հավաքածու»՝ անվանեք և ընտրեք պատմություններ արխիվից։ Երկար սեղմեք հավաքածուին՝ խմբագրելու կամ ջնջելու համար։"),
+            ],
+            tip: GuideText(ru: "«Актуальное» видят те же, кто видит ваши истории, — друзья.", en: "Highlights are seen by the same people who see your stories — your friends.", hy: "Ընտրվածը տեսնում են նույն մարդիկ, ովքեր տեսնում են ձեր պատմությունները՝ ընկերները։"), action: .profile
+        ))
+        topics.append(GuideTopic(
+            id: "close-friends", title: GuideText(ru: "Близкие друзья", en: "Close friends", hy: "Մտերիմ ընկերներ"),
+            steps: [
+                GuideText(ru: "В новой истории выберите «Близкие друзья» → «Изменить список» и отметьте людей.", en: "In a new story choose “Close friends” → “Edit list” and pick people.", hy: "Նոր պատմության մեջ ընտրեք «Մտերիմ ընկերներ» → «Խմբագրել ցանկը» և նշեք մարդկանց։"),
+                GuideText(ru: "Истории «для близких» видят только они; у них кольцо зелёное.", en: "Close-friends stories are seen only by them; they get a green ring.", hy: "«Մտերիմների համար» պատմությունները տեսնում են միայն նրանք․ օղակը կանաչ է։"),
+            ],
+            tip: GuideText(ru: "Никто не узнает, в списке он или нет.", en: "Nobody is told whether they’re on the list.", hy: "Ոչ ոք չի իմանա՝ ցանկում է, թե ոչ։"), action: .stories
         ))
         topics.append(GuideTopic(
             id: "live", title: GuideText(ru: "Прямой эфир", en: "Live stream", hy: "Ուղիղ եթեր"),
@@ -203,9 +248,16 @@ enum GuideContent {
             ],
             tip: GuideText(ru: "Эфир не сохраняется: он есть, пока идёт. Пока сервера нет, видео видит только ведущий — это демо.", en: "Streams aren’t saved — they exist only while live. Until the server is ready, only the host sees the video — it’s a demo.", hy: "Եթերը չի պահպանվում՝ այն կա, քանի դեռ ընթանում է։ Քանի դեռ սերվեր չկա, տեսանյութը տեսնում է միայն վարողը — սա դեմո է։"), action: .stories
         ))
+        topics.append(GuideTopic(
+            id: "friends-posts", title: GuideText(ru: "Записи друзей", en: "Friends’ posts", hy: "Ընկերների գրառումները"),
+            steps: [
+                GuideText(ru: "Ниже историй — записи только друзей, без чужих людей. Кнопки с именами оставляют одного человека.", en: "Below the stories are posts from friends only. Name chips filter to one person.", hy: "Պատմություններից ներքև՝ միայն ընկերների գրառումները։ Անուններով կոճակները թողնում են մեկ մարդու։"),
+            ],
+            tip: nil, action: .stories
+        ))
         return GuideChapter(id: "stories", emoji: "🌙",
                             title: GuideText(ru: "Истории", en: "Stories", hy: "Պատմություններ"),
-                            lead: GuideText(ru: "Записи друзей — отдельно от общей ленты", en: "Friends’ posts, apart from the main feed", hy: "Ընկերների գրառումները՝ ընդհանուր լրահոսից առանձին"),
+                            lead: GuideText(ru: "Истории на сутки, «Актуальное», близкие друзья и эфиры", en: "Stories for a day, highlights, close friends and live streams", hy: "Պատմություններ մեկ օրով, ընտրված, մտերիմ ընկերներ և եթերներ"),
                             topics: topics)
     }
 
@@ -317,6 +369,15 @@ enum GuideContent {
                 GuideText(ru: "Выбирайте из коллекции — космос, туманность, сияние, кристаллы — или своё фото.", en: "Pick from the collection — space, nebula, aurora, crystals — or your own photo.", hy: "Ընտրեք հավաքածուից՝ տիեզերք, միգամածություն, բևեռափայլ, բյուրեղներ, կամ ձեր լուսանկարը։"),
             ],
             tip: nil, action: .wallpaper
+        ))
+        topics.append(GuideTopic(
+            id: "calls", title: GuideText(ru: "Звонки", en: "Calls", hy: "Զանգեր"),
+            steps: [
+                GuideText(ru: "В переписке вверху — трубка (голосовой звонок) и камера (видеозвонок).", en: "In a chat, the phone (voice call) and camera (video call) icons are at the top.", hy: "Զրույցում վերևում՝ հեռախոս (ձայնային զանգ) և տեսախցիկ (տեսազանգ)։"),
+                GuideText(ru: "Во время звонка: микрофон, камера, смена камеры, громкая связь и красная кнопка — завершить.", en: "During a call: microphone, camera, switch camera, speaker and the red button to hang up.", hy: "Զանգի ժամանակ՝ խոսափող, տեսախցիկ, տեսախցիկի փոխում, բարձրախոս և կարմիր կոճակը՝ ավարտել։"),
+                GuideText(ru: "«Чаты» → «Звонки» — история звонков; нажатие — перезвонить.", en: "Chats → “Calls” is the call history; tap to call back.", hy: "«Զրույցներ» → «Զանգեր»՝ զանգերի պատմությունը․ սեղմեք՝ հետ զանգելու համար։"),
+            ],
+            tip: GuideText(ru: "Пока сервера нет, звонки — демо: экран и история работают, голос и видео пойдут позже. Кто может звонить — в «Приватности».", en: "Until the server is ready, calls are a demo: the screen and history work, voice and video come later. Who can call you is in Privacy.", hy: "Քանի դեռ սերվեր չկա, զանգերը դեմո են․ էկրանը և պատմությունն աշխատում են, ձայնն ու տեսանյութը՝ ավելի ուշ։ Ով կարող է զանգել՝ «Գաղտնիություն»-ում։"), action: .chats
         ))
         return GuideChapter(id: "chats", emoji: "💬",
                             title: GuideText(ru: "Чаты", en: "Chats", hy: "Զրույցներ"),
@@ -660,6 +721,13 @@ enum GuideContent {
                 GuideText(ru: "Размер текста — от мелкого до огромного.", en: "Text size — from small to huge.", hy: "Տեքստի չափ՝ մանրից մինչև հսկայական։"),
             ],
             tip: GuideText(ru: "Язык и размер текста хранятся на телефоне, остальное — в аккаунте.", en: "Language and text size are stored on the phone; everything else belongs to the account.", hy: "Լեզուն և տեքստի չափը պահվում են հեռախոսում, մնացածը՝ հաշվում։"), action: .language
+        ))
+        topics.append(GuideTopic(
+            id: "theme", title: GuideText(ru: "Светлая и тёмная тема", en: "Light and dark theme", hy: "Բաց և մուգ թեմա"),
+            steps: [
+                GuideText(ru: "Настройки → «Оформление»: «Как в системе», «Тёмное» или «Светлое».", en: "Settings → “Look”: “System default”, “Dark” or “Light”.", hy: "Կարգավորումներ → «Տեսք»՝ «Ինչպես համակարգում», «Մուգ» կամ «Բաց»։"),
+            ],
+            tip: GuideText(ru: "PRISM, эфиры, звонки, истории и фото на весь экран всегда тёмные — так лучше видно.", en: "PRISM, live streams, calls, stories and full-screen photos are always dark — they look better that way.", hy: "PRISM-ը, եթերները, զանգերը, պատմությունները և լիաէկրան լուսանկարները միշտ մուգ են՝ այդպես ավելի լավ է երևում։"), action: .settings
         ))
         topics.append(GuideTopic(
             id: "screen-reader", title: GuideText(ru: "Экранный диктор", en: "Screen reader", hy: "Էկրանի ընթերցիչ"),

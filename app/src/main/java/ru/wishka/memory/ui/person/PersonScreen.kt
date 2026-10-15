@@ -203,6 +203,11 @@ fun PersonScreen(vm: AppViewModel, state: UiState, person: User, contentPadding:
             }
         }
 
+        // «Актуальное» человека — видно тем, кто видит его истории (друзьям)
+        if (!hidden && !blocked && person.id in state.following) item(key = "highlights") {
+            ru.wishka.memory.ui.stories.HighlightsRow(vm, state, person.id)
+        }
+
         if (hidden && !blocked) item {
             GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {

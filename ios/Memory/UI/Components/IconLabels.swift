@@ -75,6 +75,12 @@ extension LineIcon {
         case .together: return t("Вместе")
         case .poll: return t("Опрос")
         case .gif: return t("Гифки")
+        case .phone: return t("Позвонить")
+        case .hangUp: return t("Завершить звонок")
+        case .repost: return t("Репост")
+        case .personTag: return t("Отметить людей")
+        case .micOff: return t("Микрофон выключен")
+        case .videoOff: return t("Камера выключена")
         }
     }
 }

@@ -8,6 +8,9 @@ struct ChatsScreen: View {
     @State private var confirm: ChatConfirm?
     /// Переписка, для которой открыто меню (долгое нажатие).
     @State private var menuChat: Chat?
+    /// Переключатель «Переписки» / «Звонки».
+    @State private var calls = false
+    @State private var notice: String?
 
     var body: some View {
         let state = model.state
@@ -26,28 +29,43 @@ struct ChatsScreen: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
-                GlassField(placeholder: t("Поиск по имени"), text: $query, limit: 40, singleLine: true)
-                    .glass(Capsule())
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-
-                if chats.isEmpty {
-                    Text(t("Никого не нашли"))
-                        .textStyle(.bodySmall, Palette.mist)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(24)
+                // Переписки или история звонков (с числом пропущенных)
+                let missed = state.callLog.filter { $0.missed && !$0.outgoing }.count
+                HStack(spacing: 8) {
+                    Chip(text: t("Переписки"), active: !calls) { calls = false }
+                    Chip(text: missed > 0 ? tf("Звонки · %s", missed) : t("Звонки"), active: calls) { calls = true }
+                    Spacer(minLength: 0)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
 
-                ForEach(chats) { chat in
-                    // Долгое нажатие — меню переписки
-                    ChatRow(chat: chat, onOpen: { model.openChat(chat.id) }, onMenu: { menuChat = chat })
-                    FadeLine().padding(.horizontal, 24)
+                if calls {
+                    CallLogList(model: model) { notice = $0 }
+                } else {
+                    GlassField(placeholder: t("Поиск по имени"), text: $query, limit: 40, singleLine: true)
+                        .glass(Capsule())
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+
+                    if chats.isEmpty {
+                        Text(t("Никого не нашли"))
+                            .textStyle(.bodySmall, Palette.mist)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(24)
+                    }
+
+                    ForEach(chats) { chat in
+                        // Долгое нажатие — меню переписки
+                        ChatRow(chat: chat, onOpen: { model.openChat(chat.id) }, onMenu: { menuChat = chat })
+                        FadeLine().padding(.horizontal, 24)
+                    }
                 }
             }
             .padding(.top, 12)
             .padding(.bottom, tabBarSpace)
         }
         .scrollDismissesKeyboard(.interactively)
+        .toast($notice)
         .glassActions(item: $menuChat, title: { $0.peer.name }) { chat in
             menu(chat, blocked: model.state.isBlocked(chat.peer.id))
         }

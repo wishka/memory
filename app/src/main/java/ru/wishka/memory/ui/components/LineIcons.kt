@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -26,7 +27,7 @@ import androidx.compose.ui.unit.dp
  * залитые — рядом с тонким Unbounded они выглядят чужими. Здесь всё
  * рисуется линией в 1.5dp, с кристаллом-ромбом как общим мотивом.
  */
-enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic, Together, Poll, Gif }
+enum class LineIcon { Reply, Forward, ChevronDown, Pushpin, Feed, Stories, Prism, Share, Bookmark, BookmarkFilled, Attach, Camera, Video, Image, Document, Trash, Play, Close, Groups, Pin, Gift, Link, Music, Calendar, Exit, Chats, Profile, Heart, HeartFilled, Comment, Send, Back, Edit, Plus, Bell, Info, Gear, Shield, Lock, Block, TextSize, Globe, BellOff, More, Eye, Check, Flash, Flip, Scissors, Speed, Crop, Filter, Sliders, Text, Sticker, Volume, Rotate, Mirror, Pause, Copy, Flag, Search, Brush, Smile, Undo, Grid, Award, Mic, Together, Poll, Gif, Phone, HangUp, Repost, PersonTag, MicOff, VideoOff }
 
 
 /**
@@ -578,6 +579,59 @@ fun Glyph(kind: LineIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                 for ((i, w) in listOf(0.64f, 0.40f, 0.52f).withIndex()) {
                     drawRoundRect(color, Offset(s * 0.18f, s * (0.22f + i * 0.22f)), Size(s * w, s * 0.12f), CornerRadius(s * 0.06f), style = stroke)
                 }
+            }
+            LineIcon.Phone, LineIcon.HangUp -> {
+                // Трубка; «положить» — та же трубка, повёрнутая горизонтально
+                val handset = Path().apply {
+                    moveTo(s * 0.26f, s * 0.16f)
+                    lineTo(s * 0.38f, s * 0.14f); lineTo(s * 0.44f, s * 0.32f); lineTo(s * 0.36f, s * 0.40f)
+                    quadraticTo(s * 0.44f, s * 0.58f, s * 0.60f, s * 0.64f)
+                    lineTo(s * 0.68f, s * 0.56f); lineTo(s * 0.86f, s * 0.62f); lineTo(s * 0.84f, s * 0.74f)
+                    quadraticTo(s * 0.80f, s * 0.86f, s * 0.66f, s * 0.84f)
+                    quadraticTo(s * 0.22f, s * 0.72f, s * 0.16f, s * 0.34f)
+                    quadraticTo(s * 0.14f, s * 0.20f, s * 0.26f, s * 0.16f)
+                    close()
+                }
+                if (kind == LineIcon.HangUp) {
+                    rotate(135f, Offset(s * 0.5f, s * 0.5f)) { drawPath(handset, color, style = stroke) }
+                } else drawPath(handset, color, style = stroke)
+            }
+            LineIcon.Repost -> {
+                // Две стрелки по кругу: туда и обратно
+                drawPath(Path().apply {
+                    moveTo(s * 0.18f, s * 0.46f); lineTo(s * 0.18f, s * 0.32f); lineTo(s * 0.76f, s * 0.32f)
+                }, color, style = stroke)
+                drawPath(Path().apply { moveTo(s * 0.64f, s * 0.20f); lineTo(s * 0.78f, s * 0.32f); lineTo(s * 0.64f, s * 0.44f) }, color, style = stroke)
+                drawPath(Path().apply {
+                    moveTo(s * 0.82f, s * 0.54f); lineTo(s * 0.82f, s * 0.68f); lineTo(s * 0.24f, s * 0.68f)
+                }, color, style = stroke)
+                drawPath(Path().apply { moveTo(s * 0.36f, s * 0.56f); lineTo(s * 0.22f, s * 0.68f); lineTo(s * 0.36f, s * 0.80f) }, color, style = stroke)
+            }
+            LineIcon.PersonTag -> {
+                // Человек в рамке-ярлыке
+                drawCircle(color, s * 0.11f, Offset(s * 0.5f, s * 0.38f), style = stroke)
+                drawArc(color, startAngle = 200f, sweepAngle = 140f, useCenter = false,
+                    topLeft = Offset(s * 0.30f, s * 0.52f), size = Size(s * 0.40f, s * 0.36f), style = stroke)
+                drawPath(Path().apply {
+                    moveTo(s * 0.5f, s * 0.08f); lineTo(s * 0.86f, s * 0.20f); lineTo(s * 0.86f, s * 0.86f)
+                    lineTo(s * 0.14f, s * 0.86f); lineTo(s * 0.14f, s * 0.20f); close()
+                }, color, style = stroke)
+            }
+            LineIcon.MicOff -> {
+                drawRoundRect(color, topLeft = Offset(s * 0.38f, s * 0.12f), size = Size(s * 0.24f, s * 0.44f),
+                    cornerRadius = CornerRadius(s * 0.12f, s * 0.12f), style = stroke)
+                drawArc(color, startAngle = 0f, sweepAngle = 180f, useCenter = false,
+                    topLeft = Offset(s * 0.26f, s * 0.24f), size = Size(s * 0.48f, s * 0.48f), style = stroke)
+                drawLine(color, Offset(s * 0.5f, s * 0.72f), Offset(s * 0.5f, s * 0.86f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(s * 0.16f, s * 0.14f), Offset(s * 0.84f, s * 0.86f), stroke.width, StrokeCap.Round)
+            }
+            LineIcon.VideoOff -> {
+                drawRoundRect(color, topLeft = Offset(s * 0.1f, s * 0.28f), size = Size(s * 0.56f, s * 0.44f),
+                    cornerRadius = CornerRadius(s * 0.08f, s * 0.08f), style = stroke)
+                drawPath(Path().apply {
+                    moveTo(s * 0.66f, s * 0.44f); lineTo(s * 0.9f, s * 0.32f); lineTo(s * 0.9f, s * 0.68f); lineTo(s * 0.66f, s * 0.56f)
+                }, color, style = stroke)
+                drawLine(color, Offset(s * 0.12f, s * 0.14f), Offset(s * 0.88f, s * 0.86f), stroke.width, StrokeCap.Round)
             }
             LineIcon.Gif -> {
                 // Кадр с ромбом-искрой: живая картинка
