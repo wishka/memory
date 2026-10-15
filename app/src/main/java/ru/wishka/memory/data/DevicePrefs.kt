@@ -32,6 +32,17 @@ class DevicePrefs(context: Context) {
         prefs.edit().putString("mediaQuality", q.id).apply()
     }
 
+    /** Кто вошёл последним — для отправки в фоне (NetWorker). */
+    val lastLogin: String? get() = prefs.getString("lastLogin", null)
+    val lastMeId: Int get() = prefs.getInt("lastMeId", 0)
+    val lastMeName: String get() = prefs.getString("lastMeName", null).orEmpty()
+
+    fun setLastAccount(login: String?, meId: Int = 0, meName: String = "") {
+        val e = prefs.edit()
+        if (login == null) e.remove("lastLogin") else e.putString("lastLogin", login).putInt("lastMeId", meId).putString("lastMeName", meName)
+        e.apply()
+    }
+
     /** Демо: «как будто нет сети». */
     val demoOffline: Boolean get() = prefs.getBoolean("demoOffline", false)
 

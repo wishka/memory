@@ -52,6 +52,8 @@ class StateStore(private val context: Context) {
         fun messageOf(o: JSONObject): Message = message(o)
         fun attachmentJson(a: Attachment): JSONObject = attachment(a)
         fun attachmentOf(o: JSONObject): Attachment = attachment(o)
+        fun privacyJson(p: Privacy): JSONObject = privacy(p)
+        fun privacyOf(o: JSONObject): Privacy = privacy(o)
 
         fun json(s: Snapshot): JSONObject = JSONObject()
             .put("version", VERSION)
@@ -416,6 +418,7 @@ class StateStore(private val context: Context) {
             .put("showOnline", p.showOnline).put("showBirthday", p.showBirthday)
             .put("closedProfile", p.closedProfile).put("personalRecs", p.personalRecs)
             .put("calls", p.calls.name)
+            .put("hiddenWords", JSONArray(p.hiddenWords)).put("hideOffensive", p.hideOffensive).put("hideSpam", p.hideSpam)
 
         private fun privacy(o: JSONObject) = Privacy(
             profileInfo = audience(o.optString("profileInfo")),
@@ -427,6 +430,9 @@ class StateStore(private val context: Context) {
             closedProfile = o.optBoolean("closedProfile", false),
             personalRecs = o.optBoolean("personalRecs", true),
             calls = audience(o.optString("calls")),
+            hiddenWords = o.optJSONArray("hiddenWords").strs(),
+            hideOffensive = o.optBoolean("hideOffensive", true),
+            hideSpam = o.optBoolean("hideSpam", true),
         )
 
         private fun audience(name: String) = Audience.entries.firstOrNull { it.name == name } ?: Audience.Everyone
@@ -468,7 +474,7 @@ class StateStore(private val context: Context) {
             .put("createdAt", p.createdAt).put("editedAt", p.editedAt)
             .put("repostOf", p.repostOf?.let { postRef(it) } ?: JSONObject.NULL).put("reposts", p.reposts)
             .put("place", p.place?.let { JSONObject().put("lat", it.lat).put("lon", it.lon).put("title", it.title) } ?: JSONObject.NULL)
-            .put("outboxKey", p.outboxKey)
+            .put("outboxKey", p.outboxKey).put("commentsOff", p.commentsOff)
             .put("checkIn", p.checkIn?.let { checkIn(it) } ?: JSONObject.NULL)
             .put("poll", p.poll?.let { poll(it) } ?: JSONObject.NULL)
             .put("media", JSONArray(p.media.map { attachment(it) }))
@@ -493,6 +499,7 @@ class StateStore(private val context: Context) {
             reposts = o.optInt("reposts"),
             place = o.optJSONObject("place")?.let { SharedPlace(it.optDouble("lat", 0.0), it.optDouble("lon", 0.0), it.optString("title")) },
             outboxKey = o.optString("outboxKey"),
+            commentsOff = o.optBoolean("commentsOff"),
         )
 
         private fun postRef(r: PostRef) = JSONObject()
@@ -560,6 +567,7 @@ class StateStore(private val context: Context) {
             .put("post", m.post?.let { postRef(it) } ?: JSONObject.NULL)
             .put("call", m.call?.let { call(it) } ?: JSONObject.NULL)
             .put("pending", m.pending)
+            .put("authorId", m.authorId).put("delivered", m.delivered).put("readBy", JSONArray(m.readBy)).put("sentAt", m.sentAt)
 
         private fun message(o: JSONObject) = Message(
             o.getLong("id"), o.getBoolean("fromMe"), o.getString("text"), o.getString("time"),
@@ -577,6 +585,10 @@ class StateStore(private val context: Context) {
             post = o.optJSONObject("post")?.let { postRef(it) },
             call = o.optJSONObject("call")?.let { call(it) },
             pending = o.optBoolean("pending"),
+            authorId = o.optInt("authorId"),
+            delivered = o.optBoolean("delivered"),
+            readBy = o.optJSONArray("readBy").ints(),
+            sentAt = o.optLong("sentAt"),
         )
 
         private fun poll(p: Poll) = JSONObject()
@@ -601,9 +613,22 @@ class StateStore(private val context: Context) {
             .put("secret", c.secret).put("verified", c.verified).put("disappearMs", c.disappearMs)
             .put("backdrop", c.backdrop?.let { backdrop(it) } ?: JSONObject.NULL)
             .put("messages", JSONArray(c.messages.map { message(it) }))
+            .put("request", c.request)
+            .put("group", c.group?.let { g ->
+                JSONObject().put("title", g.title).put("members", JSONArray(g.memberIds)).put("admins", JSONArray(g.adminIds.toList()))
+                    .put("owner", g.ownerId).put("hue", g.hue.toDouble())
+            } ?: JSONObject.NULL)
 
-        private fun chat(o: JSONObject) = Chat(
-            o.getInt("id"), person(o.getInt("peer")),
+        private fun chat(o: JSONObject): Chat {
+            val group = o.optJSONObject("group")?.let { g ->
+                ChatGroup(g.optString("title"), g.optJSONArray("members").ints(), g.optJSONArray("admins").ints().toSet(), g.optInt("owner"), g.optDouble("hue", 0.62).toFloat())
+            }
+            val id = o.getInt("id")
+            return chatBody(o, id, group?.asUser(id) ?: person(o.getInt("peer"))).copy(group = group, request = o.optBoolean("request"))
+        }
+
+        private fun chatBody(o: JSONObject, id: Int, peer: User) = Chat(
+            id, peer,
             o.getJSONArray("messages").objects().map { message(it) },
             unread = o.optInt("unread"),
             pinnedId = if (o.isNull("pinnedId")) null else o.getLong("pinnedId"),

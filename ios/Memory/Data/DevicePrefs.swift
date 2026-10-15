@@ -23,6 +23,22 @@ struct DevicePrefs {
         defaults.set(q.rawValue, forKey: "mediaQuality")
     }
 
+    /// Кто вошёл последним — для отправки в фоне (BackgroundNet).
+    var lastLogin: String? { defaults.string(forKey: "lastLogin") }
+    var lastMeId: Int { defaults.integer(forKey: "lastMeId") }
+    var lastMeName: String { defaults.string(forKey: "lastMeName") ?? "" }
+
+    /// nil — вышли: в фоне отправлять некому.
+    func setLastAccount(_ login: String?, meId: Int = 0, meName: String = "") {
+        guard let login else {
+            defaults.removeObject(forKey: "lastLogin")
+            return
+        }
+        defaults.set(login, forKey: "lastLogin")
+        defaults.set(meId, forKey: "lastMeId")
+        defaults.set(meName, forKey: "lastMeName")
+    }
+
     /// Демо: «как будто нет сети».
     var demoOffline: Bool { defaults.bool(forKey: "demoOffline") }
 

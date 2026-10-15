@@ -59,6 +59,179 @@ final class URLSessionTransport: Transport {
     }
 }
 
+/// Живой канал — WebSocket /v1/realtime (docs/REALTIME.md): сервер шлёт
+/// сообщения, «печатает», «прочитано». Оборвался — переподключение с
+/// паузой 1, 2, 4… с (Backoff), пока не закроем сами. Сервер закрыл кодом
+/// 4401 (токен истёк) — сначала обновить токен. То же — OkHttpRealtime в AndroidNet.kt.
+final class URLSessionRealtime: NSObject, Realtime, URLSessionWebSocketDelegate {
+    /// Токен доступа — из сессии Net (ставит NetSetup).
+    var token: () -> String? = { nil }
+    /// Обновить токен (сервер закрыл канал кодом 4401) — ставит NetSetup.
+    var refresh: (() async -> Void)?
+
+    private let url: URL?
+    private let lock = NSLock()
+    private var session: URLSession?
+    private var socket: URLSessionWebSocketTask?
+    private var open = false
+    private var closed = true
+    private var listener: ((RtEvent) -> Void)?
+    private var attempt = 0
+    /// Номер подключения: обрыв старого не перезапускает новое дважды.
+    private var generation = 0
+
+    init(baseURL: String) {
+        var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        // https → wss, http → ws
+        if trimmed.hasPrefix("http") { trimmed = "ws" + String(trimmed.dropFirst(4)) }
+        self.url = URL(string: trimmed + "/v1/realtime")
+        super.init()
+    }
+
+    var connected: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return open
+    }
+
+    func connect(_ onEvent: @escaping (RtEvent) -> Void) {
+        lock.lock()
+        listener = onEvent
+        closed = false
+        attempt = 0
+        lock.unlock()
+        start()
+    }
+
+    private func currentSession() -> URLSession {
+        lock.lock()
+        defer { lock.unlock() }
+        if let session { return session }
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = false
+        let made = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        session = made
+        return made
+    }
+
+    private func start() {
+        guard let url else { return }
+        lock.lock()
+        if closed {
+            lock.unlock()
+            return
+        }
+        generation += 1
+        let gen = generation
+        lock.unlock()
+        var request = URLRequest(url: url)
+        if let tok = token() { request.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization") }
+        let task = currentSession().webSocketTask(with: request)
+        lock.lock()
+        socket = task
+        lock.unlock()
+        task.resume()
+        receive(task, gen)
+    }
+
+    private func receive(_ task: URLSessionWebSocketTask, _ gen: Int) {
+        task.receive { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let message):
+                self.handle(message)
+                self.receive(task, gen)
+            case .failure:
+                let code: Int = task.closeCode.rawValue
+                self.dropped(gen, code: code)
+            }
+        }
+    }
+
+    private func handle(_ message: URLSessionWebSocketTask.Message) {
+        let text: String?
+        switch message {
+        case .string(let s): text = s
+        case .data(let d): text = String(decoding: d, as: UTF8.self)
+        @unknown default: text = nil
+        }
+        guard let text, let event = RtEvent.parse(text) else { return }
+        lock.lock()
+        let l = listener
+        lock.unlock()
+        l?(event)
+    }
+
+    /// Соединение оборвалось или его закрыл сервер: переподключиться с паузой.
+    private func dropped(_ gen: Int, code: Int) {
+        lock.lock()
+        if gen != generation || closed {
+            lock.unlock()
+            return
+        }
+        // Повторный обрыв того же подключения (receive и делегат) — один раз
+        generation += 1
+        open = false
+        socket = nil
+        let wait: Int64 = Backoff.delayMs(attempt, jitter: Double.random(in: 0..<1))
+        attempt += 1
+        lock.unlock()
+        let renew = refresh
+        let expired = code == 4401
+        Task { [weak self] in
+            if expired, let renew { await renew() }
+            let nanos = UInt64(max(wait, 0)) * 1_000_000
+            try? await Task.sleep(nanoseconds: nanos)
+            self?.start()
+        }
+    }
+
+    func send(_ event: RtEvent) {
+        lock.lock()
+        let task = socket
+        lock.unlock()
+        let text = Json.string(event.json())
+        task?.send(.string(text)) { _ in }
+    }
+
+    func close() {
+        lock.lock()
+        closed = true
+        open = false
+        generation += 1
+        let task = socket
+        let s = session
+        socket = nil
+        session = nil
+        listener = nil
+        lock.unlock()
+        task?.cancel(with: .normalClosure, reason: nil)
+        // Делегат держит сессию, сессия — делегата: без invalidate не освободятся
+        s?.invalidateAndCancel()
+    }
+
+    // MARK: URLSessionWebSocketDelegate
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol proto: String?) {
+        lock.lock()
+        if webSocketTask === socket {
+            open = true
+            attempt = 0
+        }
+        lock.unlock()
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        lock.lock()
+        let current = webSocketTask === socket
+        let gen = generation
+        lock.unlock()
+        if current { dropped(gen, code: closeCode.rawValue) }
+    }
+}
+
 /// Офлайн-кэш в SQLite: одна таблица «ключ — значение — когда — порядок».
 /// Своя база на каждый аккаунт (net-<логин>.sqlite в Application Support).
 /// Та же схема, что SqliteCache в AndroidNet.kt.
@@ -297,7 +470,8 @@ enum NetSetup {
         me: @escaping () -> User,
         clock: @escaping () -> Int64,
         quality: @escaping () -> MediaQuality,
-        unmetered: @escaping () -> Bool
+        unmetered: @escaping () -> Bool,
+        tokens: KeyValueStore? = nil
     ) -> Net {
         let safe = login.filter { $0.isLetter || $0.isNumber || $0 == "." || $0 == "_" }
         // База не открылась (нет места, испорчена) — хотя бы в памяти, чтобы приложение работало
@@ -318,9 +492,23 @@ enum NetSetup {
         } else {
             transport = URLSessionTransport(baseURL: apiURL)
         }
-        return Net(
+        let realtime: URLSessionRealtime? = usesDemo ? nil : URLSessionRealtime(baseURL: apiURL)
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let net = Net(
             transport: transport, cache: cache, clock: clock, me: me,
-            prepare: { job in await MediaCompressor.prepare(job, quality: quality(), wifi: unmetered()) }
+            tokens: tokens, login: login,
+            prepare: { job in await MediaCompressor.prepare(job, quality: quality(), wifi: unmetered()) },
+            realtime: realtime,
+            tempDir: cacheDir.appendingPathComponent("uploads", isDirectory: true)
         )
+        // Живой канал входит тем же токеном, что и запросы
+        if let realtime {
+            realtime.token = { [weak net] in net?.session.access }
+            realtime.refresh = { [weak net] in
+                guard let net else { return }
+                _ = try? await net.api.refreshTokens()
+            }
+        }
+        return net
     }
 }

@@ -40,6 +40,8 @@ struct ChatScreen: View {
     @State private var showingSafety = false
     /// Выбор срока исчезающих сообщений.
     @State private var choosingDisappear = false
+    /// «О группе» — шторкой.
+    @State private var groupInfo = false
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pending.isEmpty
@@ -61,42 +63,9 @@ struct ChatScreen: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(chat.messages) { message in
-                            Bubble(
-                                message: message,
-                                peerName: chat.peer.firstName,
-                                onReply: { replyTo = model.replyRef(chat.id, message) },
-                                onForward: { forwarding = message },
-                                pinned: chat.pinnedId == message.id,
-                                onPin: { model.togglePin(chat.id, message.id) },
-                                onQuote: { id in
-                                    // Нажатие на цитату — к исходному сообщению
-                                    withAnimation { proxy.scrollTo(id, anchor: .center) }
-                                },
-                                onOpen: open,
-                                onDelete: { forEveryone in
-                                    model.deleteMessage(chat.id, message.id, forEveryone: forEveryone)
-                                },
-                                onVote: { poll, i in model.voteMessage(chat.id, poll.id, i) },
-                                onClosePoll: { poll in model.closeMessagePoll(chat.id, poll.id) },
-                                onPlace: { viewingPlace = $0 },
-                                onProduct: { ref in
-                                    if !model.openProduct(ref.groupId, ref.productId) {
-                                        notice = t("Этого товара уже нет в витрине")
-                                    }
-                                },
-                                onReport: { model.reportMessage(chat.id, message) },
-                                onPost: { ref in
-                                    if !model.openPostRef(ref) {
-                                        notice = t("Этой записи нет на этом телефоне — возможно, её удалили.")
-                                    }
-                                },
-                                onCallBack: { record in
-                                    if let error = model.callBack(record) { notice = error }
-                                }
-                            )
-                            .id(message.id)
+                            bubble(message, proxy).id(message.id)
                         }
-                        if chat.typing {
+                        if chat.typing || !chat.typingIds.isEmpty {
                             TypingBubble().id("typing")
                         }
                         Color.clear.frame(height: 1).id("bottom")
@@ -110,6 +79,9 @@ struct ChatScreen: View {
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
                 .onChange(of: chat.typing) { _, _ in
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: chat.typingIds.isEmpty) { _, _ in
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
                 // Нажатие на закреплённое — к самому сообщению
@@ -142,6 +114,13 @@ struct ChatScreen: View {
         }
         .sheet(isPresented: $choosingBackdrop) {
             BackdropSheet(model: model, chatId: chat.id)
+        }
+        .sheet(isPresented: $groupInfo) {
+            GroupInfoSheet(model: model, chatId: chat.id)
+        }
+        // Пишут — собеседники видят «печатает…»
+        .onChange(of: text) { _, value in
+            if !value.isEmpty { model.typing(chat.id) }
         }
         .fullScreenCover(item: $viewingPlace) { place in
             PlaceViewer(place: place) { viewingPlace = nil }
@@ -184,14 +163,55 @@ struct ChatScreen: View {
         }
     }
 
-    /// Меню «⋯» в шапке: фон, сквозное шифрование, код безопасности, исчезающие.
-    private var headerActions: [GlassAction] {
-        var list = [
-            GlassAction(icon: .image, title: t("Фон переписки")) { choosingBackdrop = true },
-            GlassAction(icon: .lock, title: chat.secret ? t("Выключить шифрование") : t("Сквозное шифрование")) {
-                model.setSecret(chat.id, !chat.secret)
+    /// Пузырь сообщения со всеми действиями (отдельно от списка — проще для компилятора).
+    private func bubble(_ message: Message, _ proxy: ScrollViewProxy) -> some View {
+        Bubble(
+            message: message,
+            peerName: chat.peer.firstName,
+            author: authorOf(message),
+            hidden: hiddenOf(message),
+            group: chat.isGroup,
+            onReply: { replyTo = model.replyRef(chat.id, message) },
+            onForward: { forwarding = message },
+            pinned: chat.pinnedId == message.id,
+            onPin: { model.togglePin(chat.id, message.id) },
+            onQuote: { id in
+                // Нажатие на цитату — к исходному сообщению
+                withAnimation { proxy.scrollTo(id, anchor: .center) }
             },
-        ]
+            onOpen: open,
+            onDelete: { forEveryone in
+                model.deleteMessage(chat.id, message.id, forEveryone: forEveryone)
+            },
+            onVote: { poll, i in model.voteMessage(chat.id, poll.id, i) },
+            onClosePoll: { poll in model.closeMessagePoll(chat.id, poll.id) },
+            onPlace: { viewingPlace = $0 },
+            onProduct: { ref in
+                if !model.openProduct(ref.groupId, ref.productId) {
+                    notice = t("Этого товара уже нет в витрине")
+                }
+            },
+            onReport: { model.reportMessage(chat.id, message) },
+            onPost: { ref in
+                if !model.openPostRef(ref) {
+                    notice = t("Этой записи нет на этом телефоне — возможно, её удалили.")
+                }
+            },
+            onCallBack: { record in
+                if let error = model.callBack(record) { notice = error }
+            }
+        )
+    }
+
+    /// Меню «⋯» в шапке: фон, «О группе» или сквозное шифрование, код безопасности, исчезающие.
+    private var headerActions: [GlassAction] {
+        var list = [GlassAction(icon: .image, title: t("Фон переписки")) { choosingBackdrop = true }]
+        if chat.isGroup {
+            list.append(GlassAction(icon: .groups, title: t("О группе")) { groupInfo = true })
+        } else {
+            let secretTitle = chat.secret ? t("Выключить шифрование") : t("Сквозное шифрование")
+            list.append(GlassAction(icon: .lock, title: secretTitle) { model.setSecret(chat.id, !chat.secret) })
+        }
         if chat.secret {
             list.append(GlassAction(icon: .shield, title: t("Код безопасности")) { showingSafety = true })
         }
@@ -251,21 +271,22 @@ struct ChatScreen: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(LineIcon.back.label)
-            Button { model.openPerson(chat.peer.id) } label: {
+            // Нажатие на собеседника — его страница; на группу — «О группе»
+            Button { openHeader() } label: {
                 HStack(spacing: 12) {
-                    Avatar(user: chat.peer, size: 40, showOnline: true)
+                    Avatar(user: chat.peer, size: 40, showOnline: !chat.isGroup)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(chat.peer.name).textStyle(.title).lineLimit(1)
                         Text(subtitle)
-                            .textStyle(.bodySmall, chat.typing || chat.peer.online ? Palette.lilac : Palette.mist)
+                            .textStyle(.bodySmall, subtitleLit ? Palette.lilac : Palette.mist)
                             .lineLimit(1)
                     }
                 }
             }
             .buttonStyle(.plain)
             Spacer()
-            // Звонок: голосом или видео
-            if !blocked {
+            // Звонок: голосом или видео (в группах — позже, вместе с групповыми звонками)
+            if !blocked && !chat.isGroup && !chat.request {
                 Button { call(video: false) } label: {
                     Glyph(kind: .phone, color: Palette.ink, size: 22).frame(width: 40, height: 44).contentShape(Rectangle())
                 }
@@ -291,9 +312,37 @@ struct ChatScreen: View {
         if let error = model.startCall(chat.peer.id, video: video) { notice = error }
     }
 
-    /// Под именем: печатает, шифрование и исчезающие, «в сети» или логин.
+    private func openHeader() {
+        if chat.isGroup {
+            groupInfo = true
+        } else {
+            model.openPerson(chat.peer.id)
+        }
+    }
+
+    /// Подзаголовок светится, когда печатают или собеседник в сети.
+    private var subtitleLit: Bool {
+        if model.state.typingTitle(chat) != nil { return true }
+        return !chat.isGroup && chat.peer.online
+    }
+
+    /// В группе — кто написал (имя над пузырём).
+    private func authorOf(_ message: Message) -> User? {
+        guard chat.isGroup, !message.fromMe else { return nil }
+        return Demo.person(message.authorId)
+    }
+
+    /// Скрыто ли фильтром: скрытые слова, оскорбления, спам.
+    private func hiddenOf(_ message: Message) -> HiddenReason? {
+        if message.fromMe { return nil }
+        let author: Int = chat.isGroup ? message.authorId : chat.peer.id
+        return model.state.hiddenReason(message.text, author, chat: chat)
+    }
+
+    /// Под именем: печатает, число участников, шифрование и исчезающие, «в сети» или логин.
     private var subtitle: String {
-        if chat.typing { return t("печатает…") }
+        if let typing = model.state.typingTitle(chat) { return typing }
+        if let g = chat.group { return tf("Участников: %s", g.memberIds.count) }
         let secret = secretStatus(chat)
         if !secret.isEmpty { return secret }
         return chat.peer.online ? t("в сети") : "@\(chat.peer.handle)"
@@ -301,7 +350,15 @@ struct ChatScreen: View {
 
     @ViewBuilder
     private var inputRow: some View {
-        if blocked {
+        if chat.request && !recorder.recording {
+            // Запрос на переписку: вместо поля ввода — принять, удалить, заблокировать
+            RequestBar(
+                name: chat.peer.name,
+                onAccept: { model.acceptRequest(chat.id) },
+                onDelete: { model.deleteRequest(chat.id) },
+                onBlock: { model.blockRequest(chat.id) }
+            )
+        } else if blocked {
             // Заблокированному не пишем: напоминание и кнопка
             HStack(spacing: 10) {
                 Text(tf("Вы заблокировали %s", chat.peer.name))
@@ -378,6 +435,11 @@ struct ChatScreen: View {
 private struct Bubble: View {
     let message: Message
     let peerName: String
+    /// В группе — кто написал (имя над пузырём).
+    var author: User? = nil
+    /// Скрыто фильтром — свёрнуто, пока не нажмут «Показать».
+    var hidden: HiddenReason? = nil
+    var group: Bool = false
     let onReply: () -> Void
     let onForward: () -> Void
     let pinned: Bool
@@ -397,8 +459,22 @@ private struct Bubble: View {
     /// Перезвонить по строке звонка.
     var onCallBack: (CallRecord) -> Void = { _ in }
     @State private var menu = false
+    @State private var reveal = false
 
     var body: some View {
+        if message.authorId == AppModel.systemAuthor {
+            // Служебная строка группы — по центру, мелко
+            SystemLine(text: message.text)
+        } else if let hidden, !reveal {
+            // Скрыто фильтром: что и почему — без самого текста
+            HiddenLine(reason: hidden) { reveal = true }
+        } else {
+            regular
+        }
+    }
+
+    @ViewBuilder
+    private var regular: some View {
         let mine = message.fromMe
         let shape = UnevenRoundedRectangle(
             topLeadingRadius: 20,
@@ -434,15 +510,8 @@ private struct Bubble: View {
                 .glassActions($menu, actions: menuActions)
             } else {
             VStack(alignment: .trailing, spacing: 6) {
-                if let from = message.forwardedFrom {
-                    HStack(spacing: 6) {
-                        Glyph(kind: .forward, color: Palette.lilac, size: 14)
-                        Text(tf("Переслано от %s", from)).textStyle(.labelLarge, Palette.lilac).lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 2)
-                }
+                // Кто написал (в группе) и «Переслано от»
+                heading
                 // Ответ на историю — сама история маленькой картинкой
                 if let ref = message.story {
                     StoryRefRow(ref: ref, mine: mine)
@@ -527,6 +596,28 @@ private struct Bubble: View {
         }
     }
 
+    /// Над пузырём: имя автора в группе и «Переслано от …».
+    @ViewBuilder
+    private var heading: some View {
+        if let author {
+            Text(author.firstName)
+                .textStyle(.labelLarge, Palette.lilac)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+        }
+        if let from = message.forwardedFrom {
+            HStack(spacing: 6) {
+                Glyph(kind: .forward, color: Palette.lilac, size: 14)
+                Text(tf("Переслано от %s", from)).textStyle(.labelLarge, Palette.lilac).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.top, 2)
+        }
+    }
+
     private var menuActions: [GlassAction] {
         var list = [
             GlassAction(icon: .reply, title: t("Ответить"), action: onReply),
@@ -535,10 +626,98 @@ private struct Bubble: View {
             GlassAction(icon: .trash, title: t("Удалить у себя"), destructive: true) { onDelete(false) },
             GlassAction(icon: .trash, title: t("Удалить у всех"), destructive: true) { onDelete(true) },
         ]
+        if message.fromMe && group && !message.readBy.isEmpty {
+            list.append(GlassAction(icon: .eye, title: tf("Прочитали: %s", message.readBy.count)) {})
+        }
         if !message.fromMe {
             list.append(GlassAction(icon: .flag, title: t("Пожаловаться"), destructive: true, action: onReport))
         }
         return list
+    }
+}
+
+/// Служебная строка группы («Вера теперь в группе») — по центру, мелко.
+private struct SystemLine: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Text(text)
+                .textStyle(.labelLarge, Palette.mist)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .glass(Capsule())
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Свёрнутое фильтром сообщение: «Скрыто: … · Показать».
+private struct HiddenLine: View {
+    let reason: HiddenReason
+    let onShow: () -> Void
+
+    var body: some View {
+        HStack {
+            Button(action: onShow) {
+                HStack(spacing: 8) {
+                    Glyph(kind: .eye, color: Palette.mist, size: 16)
+                    Text(hiddenShowTitle(reason))
+                        .textStyle(.bodySmall, Palette.mist)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .glass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(t("Показать"))
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Почему свёрнуто: «Скрыто: скрытое слово» и т. п.
+func hiddenTitle(_ reason: HiddenReason) -> String {
+    switch reason {
+    case .word: return t("Скрыто: есть скрытое слово")
+    case .offensive: return t("Скрыто: похоже на оскорбление")
+    case .spam: return t("Скрыто: похоже на спам")
+    }
+}
+
+/// «Скрыто: … · Показать» — строка свёрнутого сообщения или комментария.
+func hiddenShowTitle(_ reason: HiddenReason) -> String {
+    let title: String = hiddenTitle(reason)
+    let show: String = t("Показать")
+    return "\(title) · \(show)"
+}
+
+/// Вместо поля ввода у запроса на переписку: принять, удалить или заблокировать.
+private struct RequestBar: View {
+    let name: String
+    let onAccept: () -> Void
+    let onDelete: () -> Void
+    let onBlock: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(tf("%s хочет переписываться с вами. Пока вы не примете запрос, он не узнает, что вы прочитали.", name))
+                .textStyle(.bodySmall)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                GlowButton(title: t("Принять"), action: onAccept)
+                GhostButton(title: t("Удалить"), action: onDelete)
+                GhostButton(title: t("Заблокировать"), action: onBlock)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(12)
     }
 }
 
@@ -705,6 +884,16 @@ private func messageMeta(_ message: Message) -> String {
     if message.expiresAt != nil { parts.append("⏱") }
     if message.secret { parts.append("🔒") }
     parts.append(message.time)
-    if message.pending { parts.append("🕓") }
+    if let mark = deliveryMark(message) { parts.append(mark) }
     return parts.joined(separator: " ")
+}
+
+/// Значок доставки своего сообщения: 🕓 ждёт сети, ✓ на сервере, ✓✓ прочитано
+/// (в группе — хоть кем-то).
+private func deliveryMark(_ message: Message) -> String? {
+    if !message.fromMe { return nil }
+    if message.pending { return "🕓" }
+    if !message.readBy.isEmpty { return "✓✓" }
+    if message.delivered { return "✓" }
+    return nil
 }

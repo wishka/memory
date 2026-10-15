@@ -42,9 +42,23 @@ struct SettingsScreen: View {
 
                     switch page {
                     case .main: MainSettings(model: model, account: account)
-                    case .security: SecurityPage(account: account)
+                    case .security:
+                        SecurityPage(account: account)
+                        SettingsCard {
+                            NavRow(icon: .lock, title: t("Устройства"), value: t("где вы вошли")) {
+                                model.openSettings(.devices)
+                                model.loadDevices()
+                            }
+                        }
+                    case .devices: DevicesPage(model: model)
+                    case .hiddenWords: HiddenWordsPage(model: model)
                     case .privacy:
                         PrivacyPage(model: model)
+                        SettingsCard {
+                            NavRow(icon: .eye, title: t("Скрытые слова и фильтр"), value: hiddenWordsCount) {
+                                model.openSettings(.hiddenWords)
+                            }
+                        }
                         // Право на доступ к своим данным: архив со всем, что хранится
                         if let data = account.data { MyDataCard(actions: data) }
                         // Отчёты о сбоях и статистика — только с согласия
@@ -87,6 +101,12 @@ struct SettingsScreen: View {
     }
 
     private static let top = "settings-top"
+
+    /// Сколько своих скрытых слов — справа в строке «Скрытые слова и фильтр».
+    private var hiddenWordsCount: String {
+        let n = model.state.privacy.hiddenWords.count
+        return n == 0 ? "" : "\(n)"
+    }
 }
 
 /// Версия приложения: «1.4 (12)».
@@ -271,6 +291,137 @@ private struct PasswordField: View {
     var body: some View {
         GlassField(placeholder: placeholder, text: $text, limit: 64, singleLine: true, secure: true, plain: true)
             .glass(radius: 16)
+    }
+}
+
+// MARK: - Скрытые слова
+
+/// Скрытые слова, оскорбления, спам: в комментариях к своим записям, в
+/// группах и запросах на переписку такое сворачивается («Показать»).
+private struct HiddenWordsPage: View {
+    let model: AppModel
+    @State private var word = ""
+
+    var body: some View {
+        let p = model.state.privacy
+        SettingsCard {
+            SwitchRow(title: t("Скрывать оскорбления"), isOn: p.hideOffensive) { v in update { $0.hideOffensive = v } }
+            Divider()
+            SwitchRow(title: t("Скрывать спам"), isOn: p.hideSpam) { v in update { $0.hideSpam = v } }
+        }
+        Hint(text: t("Скрытое не удаляется: оно свёрнуто, и его можно открыть. Ваше и сказанное друзьями в личной переписке фильтр не трогает."))
+        Caption(text: t("Свои слова"))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+        SettingsCard {
+            addRow
+            ForEach(p.hiddenWords, id: \.self) { w in
+                Divider()
+                HiddenWordRow(word: w) { model.removeHiddenWord(w) }
+            }
+        }
+        Hint(text: t("Слово ловится и в формах: «кот» скроет «коты», но не «скот». Работает на всех ваших телефонах."))
+    }
+
+    private var addRow: some View {
+        let blank = word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return HStack(spacing: 8) {
+            GlassField(placeholder: t("Слово или фраза"), text: $word, limit: Moderation.maxWord, singleLine: true)
+                .glass(Capsule())
+            GlowButton(title: t("Добавить"), enabled: !blank) {
+                model.addHiddenWord(word)
+                word = ""
+            }
+        }
+        .padding(12)
+    }
+
+    private func update(_ change: (inout Privacy) -> Void) {
+        var p = model.state.privacy
+        change(&p)
+        model.setPrivacy(p)
+    }
+}
+
+private struct HiddenWordRow: View {
+    let word: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(word).textStyle(.body).lineLimit(2)
+            Spacer(minLength: 8)
+            Button(action: onRemove) {
+                Glyph(kind: .close, color: Palette.mist, size: 16)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(tf("Убрать «%s»", word))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+}
+
+// MARK: - Устройства
+
+private struct DevicesPage: View {
+    let model: AppModel
+
+    var body: some View {
+        let state = model.state
+        let others = state.devices.filter { !$0.current }.count
+        if state.signedOut {
+            Hint(text: t("Вход на сервер закрыт — возможно, вы вышли с этого телефона на другом. Выйдите и войдите снова: неотправленное сохранится."))
+        }
+        SettingsCard {
+            if state.devices.isEmpty {
+                Text(t("Загружаем…"))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+            ForEach(Array(state.devices.enumerated()), id: \.element.id) { i, d in
+                if i > 0 { Divider() }
+                DeviceRow(device: d) { model.revokeDevice(d.id) }
+            }
+        }
+        if others > 0 {
+            SettingsCard {
+                GhostButton(title: t("Выйти на всех, кроме этого")) { model.revokeOtherDevices() }
+                    .frame(maxWidth: .infinity)
+                    .padding(12)
+            }
+        }
+        Hint(text: t("Не узнаёте устройство — выйдите с него и смените пароль в «Безопасности»."))
+    }
+}
+
+private struct DeviceRow: View {
+    let device: DeviceInfo
+    let onRevoke: () -> Void
+
+    private var seen: String {
+        if device.current { return t("этот телефон") }
+        let at: Date? = device.lastSeen > 0 ? Date(timeIntervalSince1970: Double(device.lastSeen) / 1000) : nil
+        return tf("был в сети %s", agoTitle(minutesSince(at, 0)))
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Glyph(kind: device.platform == "web" ? .globe : .phone, color: Palette.lilac, size: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.name).textStyle(.body).lineLimit(1)
+                Text(seen).textStyle(.bodySmall, device.current ? Palette.lilac : Palette.mist)
+            }
+            Spacer(minLength: 8)
+            if !device.current {
+                GhostButton(title: t("Выйти"), action: onRevoke)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 

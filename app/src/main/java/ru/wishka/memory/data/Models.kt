@@ -135,6 +135,8 @@ data class Post(
     val place: SharedPlace? = null,
     /** Ещё не на сервере: ключ отправки в очереди (Outbox); "" — отправлена. */
     val outboxKey: String = "",
+    /** Автор выключил комментарии к записи. */
+    val commentsOff: Boolean = false,
 )
 
 /**
@@ -196,6 +198,14 @@ data class Message(
     val call: CallRecord? = null,
     /** Ещё не дошло до сервера: ждёт сети в очереди отправки. */
     val pending: Boolean = false,
+    /** Кто написал — в группе (для чужих сообщений); 0 — собеседник переписки на двоих. */
+    val authorId: Int = 0,
+    /** Своё сообщение дошло до сервера (✓). */
+    val delivered: Boolean = false,
+    /** Кто прочитал своё сообщение (✓✓): в переписке на двоих — собеседник, в группе — участники. */
+    val readBy: List<Int> = emptyList(),
+    /** Когда сервер принял (мс) — по нему «прочитано до». 0 — ещё не на сервере. */
+    val sentAt: Long = 0,
 )
 
 /**
@@ -207,6 +217,29 @@ data class ProductRef(val groupId: Int, val productId: Long, val title: String, 
 /** Место, которым поделились в переписке: точка и подпись («Я здесь», адрес). */
 data class SharedPlace(val lat: Double, val lon: Double, val title: String = "") {
     val at: LatLon get() = LatLon(lat, lon)
+}
+
+/**
+ * Групповая переписка: название, участники (с автором), админы. Создатель
+ * (ownerId) — всегда админ; админы меняют название и состав.
+ */
+data class ChatGroup(
+    val title: String,
+    val memberIds: List<Int>,
+    val adminIds: Set<Int>,
+    val ownerId: Int,
+    val hue: Float = 0.62f,
+) {
+    fun isAdmin(userId: Int) = userId == ownerId || userId in adminIds
+
+    /** Как группа выглядит в списке и шапке: «собеседник» с её названием (номер — отрицательный). */
+    fun asUser(chatId: Int): User = User(-chatId, title, "group", hue = hue)
+
+    companion object {
+        /** Сколько человек в группе, включая создателя. */
+        const val MAX_MEMBERS = 200
+        const val MAX_TITLE = 60
+    }
 }
 
 /**
@@ -230,8 +263,16 @@ data class Chat(
     val verified: Boolean = false,
     /** Исчезающие сообщения: через сколько мс исчезают новые; 0 — выключено. */
     val disappearMs: Long = 0,
+    /** Групповая переписка: участники, админы; null — переписка на двоих. */
+    val group: ChatGroup? = null,
+    /** Запрос на переписку: написал не друг — ждёт «Принять». */
+    val request: Boolean = false,
+    /** Кто сейчас печатает (в группе — несколько). */
+    val typingIds: Set<Int> = emptySet(),
 ) {
     val pinned: Message? get() = pinnedId?.let { id -> messages.firstOrNull { it.id == id } }
+
+    val isGroup: Boolean get() = group != null
 
     val last: Message? get() = messages.lastOrNull()
 }
@@ -413,7 +454,15 @@ data class Privacy(
     val personalRecs: Boolean = true,
     /** Кто может мне звонить. */
     val calls: Audience = Audience.Everyone,
-)
+    /** Скрытые слова: комментарии и сообщения с ними сворачиваются. */
+    val hiddenWords: List<String> = emptyList(),
+    /** Скрывать оскорбления. */
+    val hideOffensive: Boolean = true,
+    /** Скрывать спам. */
+    val hideSpam: Boolean = true,
+) {
+    val moderation: ModerationPrefs get() = ModerationPrefs(hiddenWords, hideOffensive, hideSpam)
+}
 
 /** Какие уведомления присылать. all = false выключает все разом. */
 data class Notifications(

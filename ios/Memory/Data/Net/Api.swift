@@ -15,30 +15,110 @@ final class Api {
 
     private let transport: Transport
     private let me: () -> User
-    private let token: () -> String?
+    /// Вход на сервер (токены); nil — без входа (тесты сети без авторизации).
+    let session: Session?
 
-    init(transport: Transport, me: @escaping () -> User, token: @escaping () -> String? = { nil }) {
+    init(transport: Transport, me: @escaping () -> User, session: Session? = nil) {
         self.transport = transport
         self.me = me
-        self.token = token
+        self.session = session
     }
 
     private func codec() -> ApiCodec { ApiCodec(me: me()) }
 
     /// Запрос с токеном; не 2xx — NetError, нет сети — NetError(.offline).
+    /// 401 — обновить токен и повторить один раз; не обновился — сессия
+    /// стёрта, наружу NetError(.auth).
     func call(_ request: HttpRequest) async throws -> HttpResponse {
+        let first = try await raw(request)
+        if first.code != 401 || request.path.hasPrefix("/v1/auth/") { return try checked(first) }
+        guard let s = session, s.refresh != nil else { return try checked(first) }
+        let renewed = try await refreshTokens()
+        if !renewed { return try checked(first) }
+        let second = try await raw(request)
+        return try checked(second)
+    }
+
+    private func raw(_ request: HttpRequest) async throws -> HttpResponse {
         var req = request
-        if let tok = token() { req.headers["Authorization"] = "Bearer \(tok)" }
+        if let tok = session?.access { req.headers["Authorization"] = "Bearer \(tok)" }
         if req.header("Accept") == nil { req.headers["Accept"] = "application/json" }
-        let response: HttpResponse
         do {
-            response = try await transport.send(req)
+            return try await transport.send(req)
         } catch {
             if error is CancellationError { throw error }
             throw NetError.of(error)
         }
-        if !response.ok { throw NetError.of(response) }
-        return response
+    }
+
+    private func checked(_ r: HttpResponse) throws -> HttpResponse {
+        if !r.ok { throw NetError.of(r) }
+        return r
+    }
+
+    /// Новая пара токенов по токену обновления. false — не вышло (вышли с этого устройства).
+    @discardableResult
+    func refreshTokens() async throws -> Bool {
+        guard let s = session, let token = s.refresh else { return false }
+        let body: JSONObject = ["refresh": token]
+        let request = HttpRequest(method: "POST", path: "/v1/auth/refresh", body: Json.data(body), contentType: Self.json)
+        let r = try await raw(request)
+        if r.code == 401 || r.code == 403 {
+            s.clear()
+            return false
+        }
+        _ = try checked(r)
+        s.save(try parse(r))
+        return true
+    }
+
+    // MARK: - Вход и устройства
+
+    /// Войти: логин, пароль, это устройство («iPhone», «ios»).
+    func signIn(login: String, password: String, device: String, platform: String) async throws {
+        let deviceJson: JSONObject = ["name": device, "platform": platform]
+        var body: JSONObject = [:]
+        body["login"] = login
+        body["password"] = password
+        body["device"] = deviceJson
+        let request = HttpRequest(method: "POST", path: "/v1/auth/login", body: Json.data(body), contentType: Self.json)
+        let r = try await call(request)
+        let tokens = try parse(r)
+        session?.save(tokens)
+    }
+
+    /// Выйти с этого устройства: токены на сервере отзываются.
+    func signOut() async {
+        _ = try? await call(HttpRequest(method: "POST", path: "/v1/auth/logout"))
+        session?.clear()
+    }
+
+    func devices() async throws -> [DeviceInfo] {
+        let o = try await getJson("/v1/devices")
+        return Json.objects(o, "items").map { d in
+            DeviceInfo(
+                id: Json.string(d, "id"), name: Json.string(d, "name"), platform: Json.string(d, "platform"),
+                lastSeen: Json.long(d, "lastSeen"), current: Json.bool(d, "current")
+            )
+        }
+    }
+
+    func revokeDevice(_ id: String) async throws {
+        _ = try await call(HttpRequest(method: "DELETE", path: "/v1/devices/\(id)"))
+    }
+
+    func revokeOtherDevices() async throws {
+        _ = try await call(HttpRequest(method: "POST", path: "/v1/devices/revoke-others"))
+    }
+
+    /// Профиль с сервера; nil — на сервере его ещё нет (первый вход).
+    func profile() async throws -> ProfileSync? {
+        do {
+            let o = try await getJson("/v1/me")
+            return ProfileSync(json: o, updatedAt: Json.long(o, "updatedAt"))
+        } catch let e as NetError where e.code == 404 {
+            return nil
+        }
     }
 
     private func getJson(_ path: String, _ query: [String: String] = [:]) async throws -> JSONObject {
@@ -113,6 +193,21 @@ final class Api {
         let c = codec()
         let items = Json.objects(o, "items").compactMap { c.messageOf($0) }
         return Page(items: items, next: nextCursor(o))
+    }
+
+    /// Любой запрос из очереди (группы, «прочитано», профиль): метод, путь, тело.
+    func send(_ method: String, _ path: String, body: JSONObject?, key: String) async throws -> JSONObject {
+        guard let body else {
+            let r = try await call(HttpRequest(method: method, path: path, headers: ["Idempotency-Key": key]))
+            if r.body.isEmpty { return [:] }
+            return try parse(r)
+        }
+        return try await sendJson(method, path, body, key: key)
+    }
+
+    /// Сообщение как есть (JSON) — ответ сервера тоже JSON: с номером и sentAt.
+    func sendRaw(_ chatId: Int, _ message: JSONObject, key: String) async throws -> JSONObject {
+        try await sendJson("POST", "/v1/chats/\(chatId)/messages", message, key: key)
     }
 
     func sendMessage(_ chatId: Int, _ message: Message, key: String) async throws -> Message {
@@ -372,6 +467,7 @@ struct ApiCodec {
         o["reposts"] = p.reposts
         o["place"] = p.place.map { placeJson($0) as Any } ?? NSNull()
         o["outboxKey"] = p.outboxKey
+        o["commentsOff"] = p.commentsOff
         o["checkIn"] = p.checkIn.map { checkInJson($0) as Any } ?? NSNull()
         o["poll"] = p.poll.map { pollJson($0) as Any } ?? NSNull()
         o["media"] = p.media.map { attachmentJson($0) }
@@ -397,6 +493,7 @@ struct ApiCodec {
         p.reposts = Json.int(o, "reposts")
         p.place = Json.object(o, "place").map { placeOf($0) }
         p.outboxKey = Json.string(o, "outboxKey")
+        p.commentsOff = Json.bool(o, "commentsOff")
         return p
     }
 
@@ -436,6 +533,10 @@ struct ApiCodec {
         o["post"] = m.post.map { postRefJson($0) as Any } ?? NSNull()
         o["call"] = m.call.map { callJson($0) as Any } ?? NSNull()
         o["pending"] = m.pending
+        o["authorId"] = m.authorId
+        o["delivered"] = m.delivered
+        o["readBy"] = m.readBy
+        o["sentAt"] = m.sentAt
         return o
     }
 
@@ -463,6 +564,63 @@ struct ApiCodec {
         m.post = Json.object(o, "post").map { postRefOf($0) }
         m.call = Json.object(o, "call").map { callOf($0) }
         m.pending = Json.bool(o, "pending")
+        m.authorId = Json.int(o, "authorId")
+        m.delivered = Json.bool(o, "delivered")
+        m.readBy = Json.ints(o, "readBy")
+        m.sentAt = Json.long(o, "sentAt")
         return m
+    }
+
+    // MARK: Приватность (профиль на сервере, /v1/me)
+
+    /// Имена — как у Android (Audience.name): Everyone, Following, Nobody.
+    static func audienceName(_ a: Audience) -> String {
+        switch a {
+        case .everyone: return "Everyone"
+        case .following: return "Following"
+        case .nobody: return "Nobody"
+        }
+    }
+
+    static func audienceOf(_ name: String) -> Audience {
+        switch name {
+        case "Following": return .following
+        case "Nobody": return .nobody
+        default: return .everyone
+        }
+    }
+
+    func privacyJson(_ p: Privacy) -> JSONObject {
+        var o: JSONObject = [:]
+        o["profileInfo"] = Self.audienceName(p.profileInfo)
+        o["followLists"] = Self.audienceName(p.followLists)
+        o["messages"] = Self.audienceName(p.messages)
+        o["comments"] = Self.audienceName(p.comments)
+        o["showOnline"] = p.showOnline
+        o["showBirthday"] = p.showBirthday
+        o["closedProfile"] = p.closedProfile
+        o["personalRecs"] = p.personalRecs
+        o["calls"] = Self.audienceName(p.calls)
+        o["hiddenWords"] = p.hiddenWords
+        o["hideOffensive"] = p.hideOffensive
+        o["hideSpam"] = p.hideSpam
+        return o
+    }
+
+    func privacyOf(_ o: JSONObject) -> Privacy {
+        var p = Privacy()
+        p.profileInfo = Self.audienceOf(Json.string(o, "profileInfo"))
+        p.followLists = Self.audienceOf(Json.string(o, "followLists"))
+        p.messages = Self.audienceOf(Json.string(o, "messages"))
+        p.comments = Self.audienceOf(Json.string(o, "comments"))
+        p.showOnline = Json.bool(o, "showOnline", true)
+        p.showBirthday = Json.bool(o, "showBirthday", true)
+        p.closedProfile = Json.bool(o, "closedProfile", false)
+        p.personalRecs = Json.bool(o, "personalRecs", true)
+        p.calls = Self.audienceOf(Json.string(o, "calls"))
+        p.hiddenWords = Json.strings(o, "hiddenWords")
+        p.hideOffensive = Json.bool(o, "hideOffensive", true)
+        p.hideSpam = Json.bool(o, "hideSpam", true)
+        return p
     }
 }

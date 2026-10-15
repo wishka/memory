@@ -56,11 +56,15 @@ import ru.wishka.memory.ui.theme.Palette
 @Composable
 fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
     var query by rememberSaveable { mutableStateOf("") }
-    var calls by rememberSaveable { mutableStateOf(false) }
+    // 0 — переписки, 1 — запросы на переписку, 2 — звонки
+    var section by rememberSaveable { mutableStateOf(0) }
+    var newGroup by remember { mutableStateOf(false) }
+    val calls = section == 2
     val context = androidx.compose.ui.platform.LocalContext.current
     val missed = state.callLog.count { it.missed && !it.outgoing && it.at > 0 }
     val needle = query.trim().lowercase()
-    val chats = state.chatList.filter {
+    val source = if (section == 1) state.requestChats else state.chatList
+    val chats = source.filter {
         needle.isEmpty() || it.peer.name.lowercase().contains(needle) || it.peer.handle.contains(needle)
     }
 
@@ -69,22 +73,29 @@ fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
         contentPadding = contentPadding,
     ) {
         item {
-            ScreenTitle(
-                t("Чаты"),
-                if (state.unreadTotal > 0) tf("Непрочитанных: %s", state.unreadTotal) else t("Все прочитано"),
-                Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            )
+            Row(Modifier.padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                ScreenTitle(
+                    t("Чаты"),
+                    if (state.unreadTotal > 0) tf("Непрочитанных: %s", state.unreadTotal) else t("Все прочитано"),
+                    Modifier.padding(horizontal = 20.dp, vertical = 8.dp).weight(1f),
+                )
+                ru.wishka.memory.ui.profile.RoundIconButton(LineIcon.Groups, Palette.Lilac, description = t("Новая группа")) { newGroup = true }
+            }
         }
         item {
             androidx.compose.foundation.layout.Row(
                 Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                ru.wishka.memory.ui.components.Chip(t("Переписки"), active = !calls) { calls = false }
+                ru.wishka.memory.ui.components.Chip(t("Переписки"), active = section == 0) { section = 0 }
+                val requests = state.requestChats.size
+                if (requests > 0 || section == 1) {
+                    ru.wishka.memory.ui.components.Chip(if (requests > 0) tf("Запросы · %s", requests) else t("Запросы"), active = section == 1) { section = 1 }
+                }
                 ru.wishka.memory.ui.components.Chip(
                     if (missed > 0) tf("Звонки · %s", missed) else t("Звонки"),
                     active = calls,
-                ) { calls = true }
+                ) { section = 2 }
             }
         }
         if (calls) {
@@ -101,10 +112,19 @@ fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
                     .glass(RoundedCornerShape(50)),
             )
         }
+        if (section == 1) {
+            item {
+                Text(
+                    t("Пишут не друзья. Пока вы не ответите, они не узнают, что вы прочитали. Скрытые слова и фильтр работают и здесь."),
+                    style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                )
+            }
+        }
         if (chats.isEmpty()) {
             item {
                 Text(
-                    t("Никого не нашли"),
+                    if (section == 1) t("Запросов нет") else t("Никого не нашли"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Mist,
                     modifier = Modifier.padding(24.dp),
@@ -116,6 +136,7 @@ fun ChatsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues)
             FadeLine(Modifier.padding(horizontal = 24.dp))
         }
     }
+    if (newGroup) NewGroupDialog(vm, state) { newGroup = false }
 }
 
 /** Что подтверждаем в диалоге: очистку истории или удаление переписки. */

@@ -217,12 +217,14 @@ struct Post: Identifiable, Equatable, Codable {
     var place: SharedPlace? = nil
     /// Ещё не на сервере: ключ отправки в очереди (Outbox); "" — отправлена.
     var outboxKey: String = ""
+    /// Автор выключил комментарии к записи.
+    var commentsOff: Bool = false
 }
 
 extension Post {
     private enum CodingKeys: String, CodingKey {
         case id, author, text, minutesAgo, artSeed, likes, liked, comments, media, commentList, createdAt,
-             checkIn, poll, editedAt, repostOf, reposts, place, outboxKey
+             checkIn, poll, editedAt, repostOf, reposts, place, outboxKey, commentsOff
     }
 
     /// Чтение с запасом: репосты и место появились позже — старые сохранения читаются без них.
@@ -246,6 +248,7 @@ extension Post {
         reposts = try c.decodeIfPresent(Int.self, forKey: .reposts) ?? 0
         place = try c.decodeIfPresent(SharedPlace.self, forKey: .place)
         outboxKey = try c.decodeIfPresent(String.self, forKey: .outboxKey) ?? ""
+        commentsOff = try c.decodeIfPresent(Bool.self, forKey: .commentsOff) ?? false
     }
 }
 
@@ -329,10 +332,41 @@ struct Message: Identifiable, Equatable, Codable {
     /// Ещё не дошло до сервера: ждёт сети в очереди отправки. Необязательное —
     /// старые сохранения читаются без него; снаружи — pending.
     var pendingFlag: Bool? = nil
+    /// Кто написал — в группе (для чужих сообщений); nil/0 — собеседник
+    /// переписки на двоих; -1 — служебная строка (AppModel.systemAuthor).
+    /// Необязательные — старые сохранения читаются без них; снаружи — authorId,
+    /// delivered, readBy, sentAt.
+    var authorIdValue: Int? = nil
+    /// Своё сообщение дошло до сервера (✓).
+    var deliveredFlag: Bool? = nil
+    /// Кто прочитал своё сообщение (✓✓): в переписке на двоих — собеседник, в группе — участники.
+    var readByList: [Int]? = nil
+    /// Когда сервер принял (мс) — по нему «прочитано до». nil/0 — ещё не на сервере.
+    var sentAtValue: Int64? = nil
 
     var secret: Bool {
         get { secretFlag ?? false }
         set { secretFlag = newValue ? true : nil }
+    }
+
+    var authorId: Int {
+        get { authorIdValue ?? 0 }
+        set { authorIdValue = newValue == 0 ? nil : newValue }
+    }
+
+    var delivered: Bool {
+        get { deliveredFlag ?? false }
+        set { deliveredFlag = newValue ? true : nil }
+    }
+
+    var readBy: [Int] {
+        get { readByList ?? [] }
+        set { readByList = newValue.isEmpty ? nil : newValue }
+    }
+
+    var sentAt: Int64 {
+        get { sentAtValue ?? 0 }
+        set { sentAtValue = newValue == 0 ? nil : newValue }
     }
 
     var pending: Bool {
@@ -400,6 +434,24 @@ struct Chat: Identifiable, Equatable, Codable {
     var secretFlag: Bool? = nil
     var verifiedFlag: Bool? = nil
     var disappearMsValue: Int64? = nil
+    /// Групповая переписка: участники, админы; nil — переписка на двоих.
+    var group: ChatGroup? = nil
+    /// Запрос на переписку: написал не друг — ждёт «Принять». Снаружи — request.
+    var requestFlag: Bool? = nil
+    /// Кто сейчас печатает (в группе — несколько). Снаружи — typingIds.
+    var typingIdsSet: Set<Int>? = nil
+
+    var isGroup: Bool { group != nil }
+
+    var request: Bool {
+        get { requestFlag ?? false }
+        set { requestFlag = newValue ? true : nil }
+    }
+
+    var typingIds: Set<Int> {
+        get { typingIdsSet ?? [] }
+        set { typingIdsSet = newValue.isEmpty ? nil : newValue }
+    }
 
     /// Сквозное шифрование: новые сообщения уходят конвертами, которые читают только два телефона.
     var secret: Bool {
@@ -428,6 +480,25 @@ struct Chat: Identifiable, Equatable, Codable {
 
     var last: Message? { messages.last }
     var pinned: Message? { pinnedId.flatMap { id in messages.first { $0.id == id } } }
+}
+
+/// Групповая переписка: название, участники (с автором), админы. Создатель
+/// (ownerId) — всегда админ; админы меняют название и состав. То же — ChatGroup в Models.kt.
+struct ChatGroup: Equatable, Codable {
+    var title: String
+    var memberIds: [Int]
+    var adminIds: Set<Int>
+    var ownerId: Int
+    var hue: Double = 0.62
+
+    /// Сколько человек в группе, включая создателя.
+    static let maxMembers = 200
+    static let maxTitle = 60
+
+    func isAdmin(_ userId: Int) -> Bool { userId == ownerId || adminIds.contains(userId) }
+
+    /// Как группа выглядит в списке и шапке: «собеседник» с её названием (номер — отрицательный).
+    func asUser(_ chatId: Int) -> User { User(id: -chatId, name: title, handle: "group", hue: hue) }
 }
 
 /// «5 мин», «2 ч», «вчера», «3 дн» — время записи в ленте.
@@ -648,6 +719,33 @@ struct Privacy: Equatable, Codable {
     var personalRecsFlag: Bool? = nil
     /// Кто может мне звонить. Необязательное — для старых сохранений; снаружи — calls.
     var callsAudience: Audience? = nil
+    /// Скрытые слова и фильтр оскорблений и спама — необязательные, для старых
+    /// сохранений; снаружи — hiddenWords, hideOffensive, hideSpam.
+    var hiddenWordsList: [String]? = nil
+    var hideOffensiveFlag: Bool? = nil
+    var hideSpamFlag: Bool? = nil
+
+    /// Скрытые слова: комментарии и сообщения с ними сворачиваются.
+    var hiddenWords: [String] {
+        get { hiddenWordsList ?? [] }
+        set { hiddenWordsList = newValue.isEmpty ? nil : newValue }
+    }
+
+    /// Скрывать оскорбления.
+    var hideOffensive: Bool {
+        get { hideOffensiveFlag ?? true }
+        set { hideOffensiveFlag = newValue }
+    }
+
+    /// Скрывать спам.
+    var hideSpam: Bool {
+        get { hideSpamFlag ?? true }
+        set { hideSpamFlag = newValue }
+    }
+
+    var moderation: ModerationPrefs {
+        ModerationPrefs(hiddenWords: hiddenWords, hideOffensive: hideOffensive, hideSpam: hideSpam)
+    }
 
     /// Кто может мне звонить.
     var calls: Audience {

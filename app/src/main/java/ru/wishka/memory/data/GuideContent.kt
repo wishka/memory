@@ -329,6 +329,24 @@ internal object GuideContent {
                 action = GuideAction.Chats,
             ),
             GuideTopic(
+                "groups", GuideText("Групповые чаты", "Group chats", "Խմբային զրույցներ"),
+                listOf(
+                    GuideText("«Чаты» → значок группы вверху: название и друзья — и группа готова.", "Chats → the group icon at the top: give it a name, pick friends — done.", "«Զրույցներ» → վերևի խմբի պատկերակը․ անուն և ընկերներ — խումբը պատրաստ է։"),
+                    GuideText("Нажмите на название в шапке: участники, «Добавить участников», «Выйти из группы». Админы меняют название и состав, создатель назначает админов.", "Tap the name in the header: members, “Add members”, “Leave group”. Admins rename and manage members; the creator appoints admins.", "Սեղմեք վերնագրի անվանը՝ մասնակիցներ, «Ավելացնել մասնակիցներ», «Դուրս գալ խմբից»։ Ադմինները փոխում են անունն ու կազմը, ստեղծողը նշանակում է ադմիններ։"),
+                    GuideText("✓ — сообщение на сервере, ✓✓ — прочитали. В группе долгое нажатие на своё — «Прочитали: N».", "✓ — on the server, ✓✓ — read. In a group, long-press your message to see “Read by: N”.", "✓ — սերվերում է, ✓✓ — կարդացել են։ Խմբում երկար սեղմեք ձեր հաղորդագրությանը՝ «Կարդացել են՝ N»։"),
+                ),
+                action = GuideAction.Chats,
+            ),
+            GuideTopic(
+                "requests", GuideText("Запросы на переписку", "Message requests", "Գրելու հարցումներ"),
+                listOf(
+                    GuideText("Если пишет не друг — сообщение попадёт в «Чаты» → «Запросы», без уведомления.", "If someone who isn't your friend writes, it lands in Chats → “Requests”, with no notification.", "Եթե գրում է ոչ ընկերը, հաղորդագրությունը կհայտնվի «Զրույցներ» → «Հարցումներ»՝ առանց ծանուցման։"),
+                    GuideText("Откройте запрос: «Принять», «Удалить» или «Заблокировать». Пока не приняли, человек не видит, что вы прочитали.", "Open a request: “Accept”, “Delete” or “Block”. Until you accept, they can't see you've read it.", "Բացեք հարցումը՝ «Ընդունել», «Ջնջել» կամ «Արգելափակել»։ Մինչև չընդունեք, մարդը չի տեսնի, որ կարդացել եք։"),
+                ),
+                tip = GuideText("Кто вообще может вам писать — в «Приватности».", "Who can message you at all is set in Privacy.", "Ով ընդհանրապես կարող է ձեզ գրել՝ «Գաղտնիություն»-ում։"),
+                action = GuideAction.Chats,
+            ),
+            GuideTopic(
                 "attach", GuideText("Вложения", "Attachments", "Կցորդներ"),
                 listOf(
                     GuideText("Скрепка — фото, видео, документы, свои стикеры, гифки, опрос и место на карте.", "The paperclip: photos, videos, documents, your stickers, GIFs, a poll and a location.", "Ամրակ՝ լուսանկարներ, տեսանյութեր, փաստաթղթեր, ձեր ստիկերները, GIF-եր, հարցում և վայր քարտեզի վրա։"),
@@ -357,6 +375,7 @@ internal object GuideContent {
                     GuideText("«⋯» в переписке → «Сквозное шифрование»: сообщения читаете только вы двое.", "“⋯” in a chat → “End-to-end encryption”: only the two of you can read the messages.", "Նամակագրության «⋯» → «Ծայրից ծայր գաղտնագրում»՝ հաղորդագրությունները կարդում եք միայն դուք երկուսով։"),
                     GuideText("«Код безопасности» — 60 цифр. Сверьте с собеседником: совпали — переписку никто не перехватывает.", "The “Safety code” is 60 digits. Compare it with your friend: if it matches, no one is intercepting.", "«Անվտանգության կոդը» 60 թվանշան է։ Համեմատեք զրուցակցի հետ՝ եթե համընկնում է, ոչ ոք չի որսում։"),
                     GuideText("«Исчезающие» — новые сообщения исчезнут у обоих через 5 минут, час, день или неделю.", "“Disappearing” — new messages vanish for both of you after 5 minutes, an hour, a day or a week.", "«Անհետացող»՝ նոր հաղորդագրությունները կանհետանան երկուսի մոտ 5 րոպեից, ժամից, օրից կամ շաբաթից։"),
+                    GuideText("Фото, видео и файлы в секретной переписке шифруются на телефоне — сервер хранит только шифр.", "Photos, videos and files in a secret chat are encrypted on the phone — the server stores only ciphertext.", "Գաղտնի զրույցի լուսանկարները, տեսանյութերը և ֆայլերը գաղտնագրվում են հեռախոսում — սերվերը պահում է միայն գաղտնագիրը։"),
                 ),
                 tip = GuideText("Значки у времени: 🔒 — ушло зашифрованным, ⏱ — исчезнет.", "Icons by the time: 🔒 — sent encrypted, ⏱ — will disappear.", "Ժամի կողքի նշանները՝ 🔒 — ուղարկված է գաղտնագրված, ⏱ — կանհետանա։"),
                 action = GuideAction.Chats,
@@ -660,6 +679,15 @@ internal object GuideContent {
                 ),
             ),
             GuideTopic(
+                "hidden-words", GuideText("Скрытые слова и фильтр", "Hidden words and filter", "Թաքցված բառեր և զտիչ"),
+                listOf(
+                    GuideText("Приватность → «Скрытые слова и фильтр»: добавьте слова — комментарии к вашим записям и сообщения с ними свернутся.", "Privacy → “Hidden words and filter”: add words — comments on your posts and messages containing them get collapsed.", "Գաղտնիություն → «Թաքցված բառեր և զտիչ»․ ավելացրեք բառեր — դրանցով մեկնաբանություններն ու հաղորդագրությունները կծալվեն։"),
+                    GuideText("Там же — «Скрывать оскорбления» и «Скрывать спам». Свёрнутое можно открыть: «Показать».", "There you'll also find “Hide insults” and “Hide spam”. Collapsed items can be opened: “Show”.", "Այնտեղ են նաև «Թաքցնել վիրավորանքները» և «Թաքցնել սպամը»։ Ծալվածը կարելի է բացել՝ «Ցույց տալ»։"),
+                    GuideText("Свою запись можно закрыть от комментариев: в обсуждении — «Выключить комментарии».", "You can close your own post to comments: “Turn off comments” in the discussion.", "Ձեր գրառումը կարելի է փակել մեկնաբանություններից՝ քննարկման մեջ «Անջատել մեկնաբանությունները»։"),
+                ),
+                action = GuideAction.Privacy,
+            ),
+            GuideTopic(
                 "block", GuideText("Чёрный список", "Blocking", "Սև ցուցակ"),
                 listOf(
                     GuideText("«⋯» на странице человека → «Заблокировать».", "“⋯” on a person’s page → “Block”.", "«⋯» մարդու էջում → «Արգելափակել»։"),
@@ -675,6 +703,15 @@ internal object GuideContent {
                     GuideText("Там же — коды восстановления (новые — по паролю) и почта: подтвердите её кодом из письма.", "Also there: recovery codes (new ones need your password) and email — confirm it with the code from the message.", "Այնտեղ են նաև վերականգնման կոդերը (նորերը՝ գաղտնաբառով) և էլ. փոստը՝ հաստատեք այն նամակի կոդով։"),
                     GuideText("И удалить аккаунт: всё ваше будет стёрто с телефона без возврата.", "And delete your account: everything of yours is erased from the phone for good.", "Եվ ջնջել հաշիվը․ ձեր ամբողջ տվյալներն անվերադարձ կջնջվեն հեռախոսից։"),
                 ),
+                action = GuideAction.Security,
+            ),
+            GuideTopic(
+                "devices", GuideText("Мои устройства", "My devices", "Իմ սարքերը"),
+                listOf(
+                    GuideText("Настройки → «Безопасность» → «Устройства»: где вы вошли и когда там были в последний раз.", "Settings → Security → “Devices”: where you're signed in and when each was last active.", "Կարգավորումներ → «Անվտանգություն» → «Սարքեր»՝ որտեղ եք մուտք գործել և երբ եք վերջին անգամ եղել։"),
+                    GuideText("«Выйти» у чужого устройства или «Выйти на всех, кроме этого» — если что-то не узнаёте.", "“Sign out” on a device you don't recognize, or “Sign out everywhere else”.", "«Դուրս գալ» անծանոթ սարքից կամ «Դուրս գալ բոլոր մյուսներից»։"),
+                ),
+                tip = GuideText("Профиль и настройки приватности одинаковые на всех ваших телефонах.", "Your profile and privacy settings are the same on all your phones.", "Պրոֆիլը և գաղտնիության կարգավորումները նույնն են ձեր բոլոր հեռախոսներում։"),
                 action = GuideAction.Security,
             ),
             GuideTopic(
@@ -730,6 +767,7 @@ internal object GuideContent {
                 listOf(
                     GuideText("Настройки → «Данные и сеть»: качество фото и видео при отправке — «Стандартное», «Экономия трафика» или «Оригинал по Wi‑Fi».", "Settings → “Data and network”: photo and video quality when sending — “Standard”, “Data saver” or “Original on Wi‑Fi”.", "Կարգավորումներ → «Տվյալներ և ցանց»՝ լուսանկարների և տեսանյութերի որակը ուղարկելիս՝ «Ստանդարտ», «Թրաֆիկի խնայում» կամ «Բնօրինակ Wi‑Fi-ով»։"),
                     GuideText("Там же — загрузки: пауза, продолжить, отменить; и сколько места занимает сохранённое для офлайна.", "There you'll also find uploads — pause, resume, cancel — and how much space offline content takes.", "Այնտեղ են նաև վերբեռնումները՝ դադար, շարունակել, չեղարկել, և որքան տեղ է զբաղեցնում անցանցի համար պահպանվածը։"),
+                    GuideText("Закрыли приложение — фото и видео догрузятся и отправятся сами, когда будет сеть.", "Closed the app? Photos and videos keep uploading and send themselves once there's a network.", "Փակե՞լ եք հավելվածը — լուսանկարներն ու տեսանյութերը կվերբեռնվեն և կուղարկվեն ինքնուրույն, երբ ցանց լինի։"),
                 ),
                 tip = GuideText("Оборвалась связь — загрузка продолжится с того же места, даже после перезапуска.", "Connection dropped? The upload resumes from the same place, even after a restart.", "Կապը կտրվե՞ց։ Վերբեռնումը կշարունակվի նույն տեղից, նույնիսկ վերագործարկումից հետո։"),
                 action = GuideAction.Settings,

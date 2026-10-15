@@ -6,6 +6,8 @@ enum OpKind: String {
     case like = "like"
     case unlike = "unlike"
     case sendMessage = "message"
+    /// Любой запрос: группы, «прочитано», профиль. payload — {method, path, body, coalesce}.
+    case call = "call"
 
     static func of(_ id: String?) -> OpKind? { id.flatMap { OpKind(rawValue: $0) } }
 }
@@ -57,6 +59,8 @@ struct FlushResult: Equatable {
     let waiting: Int
     let failed: Int
     let offline: Bool
+    /// Сервер не принял вход — нужно войти снова (очередь сохранена).
+    var authLost: Bool = false
 }
 
 /// Очередь отправки: что сделали без сети (или пока сеть моргнула), уходит
@@ -95,6 +99,12 @@ final class Outbox {
                 remove(old.key)
             }
         }
+        // Профиль, «прочитано»: важно только последнее — прежнее такое же снимаем
+        if let c = coalesceOf(op) {
+            for old in all() where old.kind == .call && coalesceOf(old) == c {
+                remove(old.key)
+            }
+        }
         var stamped = op
         if stamped.createdAt == 0 { stamped.createdAt = clock() }
         save(stamped)
@@ -102,6 +112,13 @@ final class Outbox {
 
     func remove(_ key: String) {
         cache.remove(cacheKey(key))
+    }
+
+    private func coalesceOf(_ op: OutboxOp) -> String? {
+        if op.kind != .call { return nil }
+        guard let o = Json.parse(op.payload) else { return nil }
+        let c = Json.string(o, "coalesce")
+        return c.isEmpty ? nil : c
     }
 
     /// Снять паузу перед повтором (сеть вернулась).
@@ -158,6 +175,15 @@ final class Outbox {
                     return FlushResult(sent: sent, waiting: count, failed: failed, offline: false)
                 }
                 let err = NetError.of(error)
+                if err.kind == .auth {
+                    // Вход закрыт — ничего не теряем: ждём, пока войдут снова
+                    var wait = op
+                    wait.attempts = op.attempts + 1
+                    wait.nextAt = now + Backoff.maxMs
+                    wait.error = err.kind.rawValue
+                    save(wait)
+                    return FlushResult(sent: sent, waiting: count, failed: failed, offline: false, authLost: true)
+                }
                 if err.retryable {
                     var retry = op
                     retry.attempts = op.attempts + 1

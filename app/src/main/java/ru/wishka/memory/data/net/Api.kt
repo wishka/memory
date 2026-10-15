@@ -20,23 +20,94 @@ import ru.wishka.memory.data.User
 class Api(
     private val transport: Transport,
     private val me: () -> User,
-    private val token: () -> String? = { null },
+    /** Вход на сервер (токены); null — без входа (тесты сети без авторизации). */
+    val session: Session? = null,
 ) {
     private fun codec() = StateStore.Codec(me())
 
-    /** Запрос с токеном; не 2xx — NetError, нет сети — NetError(Offline). */
+    /**
+     * Запрос с токеном; не 2xx — NetError, нет сети — NetError(Offline).
+     * 401 — обновить токен и повторить один раз; не обновился — сессия
+     * стёрта, наружу NetError(Auth).
+     */
     suspend fun call(request: HttpRequest): HttpResponse {
+        val first = raw(request)
+        if (first.code != 401 || request.path.startsWith("/v1/auth/")) return checked(first)
+        val s = session ?: return checked(first)
+        if (s.refresh == null || !refreshTokens()) return checked(first)
+        return checked(raw(request))
+    }
+
+    private suspend fun raw(request: HttpRequest): HttpResponse {
         val headers = request.headers.toMutableMap()
-        token()?.let { headers["Authorization"] = "Bearer $it" }
+        session?.access?.let { headers["Authorization"] = "Bearer $it" }
         headers.putIfAbsent("Accept", "application/json")
-        val response = try {
+        return try {
             transport.send(request.copy(headers = headers))
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw NetError.of(e)
         }
-        if (!response.ok) throw NetError.of(response)
-        return response
+    }
+
+    private fun checked(r: HttpResponse): HttpResponse {
+        if (!r.ok) throw NetError.of(r)
+        return r
+    }
+
+    /** Новая пара токенов по токену обновления. false — не вышло (вышли с этого устройства). */
+    suspend fun refreshTokens(): Boolean {
+        val s = session ?: return false
+        val token = s.refresh ?: return false
+        val r = raw(HttpRequest("POST", "/v1/auth/refresh", body = JSONObject().put("refresh", token).toString().toByteArray(), contentType = JSON))
+        if (r.code == 401 || r.code == 403) {
+            s.clear()
+            return false
+        }
+        checked(r)
+        s.save(parse(r))
+        return true
+    }
+
+    // ── Вход и устройства ────────────────────────────────────────────
+
+    /** Войти: логин, пароль, это устройство («Pixel 8», «android»). */
+    suspend fun signIn(login: String, password: String, device: String, platform: String) {
+        val body = JSONObject().put("login", login).put("password", password)
+            .put("device", JSONObject().put("name", device).put("platform", platform))
+        val r = call(HttpRequest("POST", "/v1/auth/login", body = body.toString().toByteArray(), contentType = JSON))
+        session?.save(parse(r))
+    }
+
+    /** Выйти с этого устройства: токены на сервере отзываются. */
+    suspend fun signOut() {
+        runCatching { call(HttpRequest("POST", "/v1/auth/logout")) }
+        session?.clear()
+    }
+
+    suspend fun devices(): List<DeviceInfo> {
+        val arr = getJson("/v1/devices").optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { d ->
+                DeviceInfo(d.optString("id"), d.optString("name"), d.optString("platform"), d.optLong("lastSeen"), d.optBoolean("current"))
+            }
+        }
+    }
+
+    suspend fun revokeDevice(id: String) {
+        call(HttpRequest("DELETE", "/v1/devices/$id"))
+    }
+
+    suspend fun revokeOtherDevices() {
+        call(HttpRequest("POST", "/v1/devices/revoke-others"))
+    }
+
+    /** Профиль с сервера; null — на сервере его ещё нет (первый вход). */
+    suspend fun profile(): ProfileSync? = try {
+        val o = getJson("/v1/me")
+        ProfileSync(o, o.optLong("updatedAt"))
+    } catch (e: NetError) {
+        if (e.code == 404) null else throw e
     }
 
     private suspend fun getJson(path: String, query: Map<String, String> = emptyMap()): JSONObject =
@@ -93,6 +164,19 @@ class Api(
         val items = (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { c.messageOf(it) }.getOrNull() } }
         return Page(items, o.optString("next").ifEmpty { null }.takeUnless { o.isNull("next") })
     }
+
+    /** Любой запрос из очереди (группы, «прочитано», профиль): метод, путь, тело. */
+    suspend fun send(method: String, path: String, body: JSONObject?, key: String): JSONObject {
+        if (body == null) {
+            val r = call(HttpRequest(method, path, headers = mapOf("Idempotency-Key" to key)))
+            return if (r.body.isEmpty()) JSONObject() else parse(r)
+        }
+        return sendJson(method, path, body, key)
+    }
+
+    /** Сообщение как есть (JSON) — ответ сервера тоже JSON: с номером и sentAt. */
+    suspend fun sendRaw(chatId: Int, message: JSONObject, key: String): JSONObject =
+        sendJson("POST", "/v1/chats/$chatId/messages", message, key)
 
     suspend fun sendMessage(chatId: Int, message: Message, key: String): Message {
         val c = codec()

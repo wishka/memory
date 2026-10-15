@@ -71,6 +71,8 @@ data class UploadJob(
     val attempts: Int = 0,
     /** Раньше этого времени не пробовать (мс). */
     val nextAt: Long = 0,
+    /** Секретная переписка: ключ файла (FileKey.encoded) — на сервер уходит зашифрованным; "" — как есть. */
+    val secretKey: String = "",
 ) {
     val progress: Float get() = if (size <= 0) 0f else (offset.toFloat() / size).coerceIn(0f, 1f)
 
@@ -78,14 +80,14 @@ data class UploadJob(
         .put("id", id).put("attachment", attachmentId).put("owner", owner).put("path", path)
         .put("uploadPath", uploadPath).put("video", video).put("size", size).put("url", url)
         .put("offset", offset).put("state", state.id).put("error", error).put("createdAt", createdAt)
-        .put("attempts", attempts).put("nextAt", nextAt)
+        .put("attempts", attempts).put("nextAt", nextAt).put("secretKey", secretKey)
 
     companion object {
         fun of(o: JSONObject) = UploadJob(
             o.getString("id"), o.optString("attachment"), o.optString("owner"), o.optString("path"),
             o.optString("uploadPath"), o.optBoolean("video"), o.optLong("size"), o.optString("url"),
             o.optLong("offset"), UploadState.of(o.optString("state")), o.optString("error"), o.optLong("createdAt"),
-            o.optInt("attempts"), o.optLong("nextAt"),
+            o.optInt("attempts"), o.optLong("nextAt"), o.optString("secretKey"),
         )
     }
 }

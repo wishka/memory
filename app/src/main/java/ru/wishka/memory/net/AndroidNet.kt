@@ -65,6 +65,76 @@ class OkHttpTransport(baseUrl: String, private val client: OkHttpClient = defaul
 }
 
 /**
+ * Живой канал — WebSocket /v1/realtime (docs/REALTIME.md): сервер шлёт
+ * сообщения, «печатает», «прочитано». Оборвался — переподключение с
+ * паузой 1, 2, 4… с (Backoff), пока не закроем сами.
+ */
+class OkHttpRealtime(baseUrl: String, private val client: OkHttpClient = OkHttpTransport.defaultClient) : ru.wishka.memory.data.net.Realtime {
+    /** Токен доступа — из сессии Net. */
+    var token: () -> String? = { null }
+    private val url = baseUrl.trimEnd('/').replaceFirst("http", "ws") + "/v1/realtime"
+    @Volatile private var socket: okhttp3.WebSocket? = null
+    @Volatile private var open = false
+    @Volatile private var closed = false
+    @Volatile private var listener: ((ru.wishka.memory.data.net.RtEvent) -> Unit)? = null
+    private var attempt = 0
+
+    override val connected: Boolean get() = open
+
+    override fun connect(onEvent: (ru.wishka.memory.data.net.RtEvent) -> Unit) {
+        listener = onEvent
+        closed = false
+        start()
+    }
+
+    private fun start() {
+        if (closed) return
+        val request = Request.Builder().url(url).apply { token()?.let { header("Authorization", "Bearer $it") } }.build()
+        socket = client.newWebSocket(request, object : okhttp3.WebSocketListener() {
+            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                open = true
+                attempt = 0
+            }
+
+            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                ru.wishka.memory.data.net.RtEvent.parse(text)?.let { ev -> listener?.invoke(ev) }
+            }
+
+            override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                open = false
+                retry()
+            }
+
+            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                open = false
+                retry()
+            }
+        })
+    }
+
+    private fun retry() {
+        if (closed) return
+        val wait = ru.wishka.memory.data.net.Backoff.delayMs(attempt++, jitter = Math.random())
+        timer.schedule({ start() }, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    override fun send(event: ru.wishka.memory.data.net.RtEvent) {
+        socket?.send(event.json().toString())
+    }
+
+    override fun close() {
+        closed = true
+        open = false
+        socket?.close(1000, null)
+        socket = null
+    }
+
+    companion object {
+        private val timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+    }
+}
+
+/**
  * Офлайн-кэш в SQLite: одна таблица «ключ — значение — когда — порядок».
  * Своя база на каждый аккаунт (net-<логин>.db).
  */
@@ -179,6 +249,7 @@ object NetSetup {
         clock: () -> Long,
         quality: () -> MediaQuality,
         unmetered: () -> Boolean,
+        tokens: ru.wishka.memory.data.auth.KeyValueStore? = null,
     ): Net {
         val safe = login.filter { it.isLetterOrDigit() || it in "._" }
         val app = context.applicationContext
@@ -190,9 +261,16 @@ object NetSetup {
         } else {
             OkHttpTransport(BuildConfig.API_URL)
         }
-        return Net(
+        val realtime = if (usesDemo) null else OkHttpRealtime(BuildConfig.API_URL)
+        val net = Net(
             transport, cache, clock, me,
+            tokens = tokens, login = login,
             prepare = { job -> MediaCompressor.prepare(app, job, quality(), unmetered()) },
+            realtime = realtime,
+            tempDir = File(app.cacheDir, "uploads"),
         )
+        // Живой канал входит тем же токеном, что и запросы
+        realtime?.token = { net.session.access }
+        return net
     }
 }

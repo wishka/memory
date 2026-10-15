@@ -100,6 +100,9 @@ struct UploadJob: Equatable, Identifiable {
     var attempts: Int = 0
     /// Раньше этого времени не пробовать (мс).
     var nextAt: Int64 = 0
+    /// Секретная переписка: ключ файла (FileKey.encoded) — на сервер уходит
+    /// зашифрованным (FileCrypto, MEMF1); "" — как есть.
+    var secretKey: String = ""
 
     var progress: Float {
         if size <= 0 { return 0 }
@@ -123,6 +126,7 @@ struct UploadJob: Equatable, Identifiable {
         o["createdAt"] = createdAt
         o["attempts"] = attempts
         o["nextAt"] = nextAt
+        o["secretKey"] = secretKey
         return o
     }
 
@@ -139,6 +143,7 @@ struct UploadJob: Equatable, Identifiable {
         j.createdAt = Json.long(o, "createdAt")
         j.attempts = Json.int(o, "attempts")
         j.nextAt = Json.long(o, "nextAt")
+        j.secretKey = Json.string(o, "secretKey")
         return j
     }
 }
@@ -363,7 +368,13 @@ final class Uploads {
             if error is CancellationError { return get(j.id) }
             let err = NetError.of(error)
             guard var next = get(j.id) else { return nil }
-            if err.retryable {
+            if err.kind == .auth {
+                // Вход закрыт — файл не теряем: ждём, пока войдут снова
+                next.state = .waiting
+                next.nextAt = now + Backoff.maxMs
+                next.attempts += 1
+                next.error = err.kind.rawValue
+            } else if err.retryable {
                 next.state = .waiting
                 next.nextAt = now + Backoff.delayMs(next.attempts, retryAfterMs: err.retryAfterMs)
                 next.attempts += 1
