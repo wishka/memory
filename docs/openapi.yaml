@@ -465,6 +465,202 @@ paths:
     delete:
       summary: Отменить загрузку (расширение termination)
       responses: { "204": { description: Удалена } }
+  /v1/explore:
+    get:
+      summary: «Интересное» — записи открытых профилей, на которых я не подписан (новые сверху)
+      description: "/v1/feed — только мои записи и тех, на кого я подписан."
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Страница
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostPage" }
+  /v1/users/{userId}/follow:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Подписаться (закрытому профилю — заявка)
+      responses:
+        "200":
+          description: "state: following | requested"
+          content:
+            application/json:
+              schema: { type: object, properties: { state: { enum: [following, requested] } } }
+    delete:
+      summary: Отписаться или отозвать заявку
+      responses:
+        "200": { description: "state: none" }
+  /v1/me/following:
+    get:
+      summary: На кого я подписан
+      responses:
+        "200":
+          description: Люди
+          content: { application/json: { schema: { $ref: "#/components/schemas/UserList" } } }
+  /v1/me/followers:
+    get:
+      summary: Мои подписчики
+      responses:
+        "200":
+          description: Люди
+          content: { application/json: { schema: { $ref: "#/components/schemas/UserList" } } }
+  /v1/me/followers/{userId}:
+    delete:
+      summary: Убрать подписчика
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: integer } }
+      responses: { "204": { description: Готово } }
+  /v1/me/sent:
+    get:
+      summary: Мои заявки, которые ждут ответа
+      responses:
+        "200":
+          description: Люди
+          content: { application/json: { schema: { $ref: "#/components/schemas/UserList" } } }
+  /v1/me/requests:
+    get:
+      summary: Заявки ко мне (закрытый профиль)
+      responses:
+        "200":
+          description: Люди
+          content: { application/json: { schema: { $ref: "#/components/schemas/UserList" } } }
+  /v1/me/requests/{userId}:
+    delete:
+      summary: Отклонить заявку (человек не узнает)
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: integer } }
+      responses: { "204": { description: Готово } }
+  /v1/me/requests/{userId}/accept:
+    post:
+      summary: Принять заявку; телефон затем подписывается в ответ — дружба в Memory взаимная
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: integer } }
+      responses: { "204": { description: Готово } }
+  /v1/me/close-friends:
+    get:
+      summary: Мои «Близкие друзья»
+      responses: { "200": { description: "{ids: [int]}" } }
+    put:
+      summary: Заменить список «Близких друзей» (видят истории «для близких»)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [ids], properties: { ids: { type: array, items: { type: integer } } } }
+      responses: { "204": { description: Готово } }
+  /v1/devices/current/push:
+    put:
+      summary: Токен пушей FCM этого телефона ("" — не присылать)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { token: { type: string } } }
+      responses: { "204": { description: Готово } }
+  /v1/posts/{postId}/comments:
+    parameters:
+      - { name: postId, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      summary: Комментарии по порядку (старые сверху); курсор — номер последнего
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Страница
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Comment" } }
+                  next: { type: [string, "null"] }
+        "403": { description: Закрытый профиль }
+    post:
+      summary: Комментировать (выключены — только автору записи)
+      parameters:
+        - $ref: "#/components/parameters/idempotency"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string, maxLength: 1000 }
+                replyTo: { type: string, description: Имя того, кому ответ }
+                sticker: { $ref: "#/components/schemas/Attachment" }
+      responses:
+        "201":
+          description: Комментарий
+          content: { application/json: { schema: { $ref: "#/components/schemas/Comment" } } }
+        "403": { description: Комментарии выключены или профиль закрыт }
+  /v1/comments/{commentId}:
+    delete:
+      summary: Удалить (свой — всегда; под своей записью — любой)
+      parameters:
+        - { name: commentId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses: { "204": { description: Удалён } }
+  /v1/comments/{commentId}/like:
+    parameters:
+      - { name: commentId, in: path, required: true, schema: { type: integer, format: int64 } }
+    put:
+      summary: «Нравится» комментарию
+      responses: { "204": { description: Готово } }
+    delete:
+      summary: Убрать «нравится»
+      responses: { "204": { description: Готово } }
+  /v1/stories:
+    get:
+      summary: Живые истории (24 часа) — свои и тех, на кого подписан; «для близких» — только им
+      responses:
+        "200":
+          description: Истории по времени
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Story" } }
+    post:
+      summary: Новая история (фото/видео — сначала загрузкой tus)
+      parameters:
+        - $ref: "#/components/parameters/idempotency"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string, maxLength: 300 }
+                bg: { type: integer }
+                seed: { type: integer }
+                close: { type: boolean, description: Только «Близким друзьям» }
+                media: { $ref: "#/components/schemas/Attachment" }
+      responses:
+        "201":
+          description: История
+          content: { application/json: { schema: { $ref: "#/components/schemas/Story" } } }
+  /v1/stories/{storyId}:
+    delete:
+      summary: Удалить свою историю
+      parameters:
+        - { name: storyId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses: { "204": { description: Удалена } }
+  /v1/stories/{storyId}/view:
+    post:
+      summary: Посмотрел (liked — с сердечком); автор увидит в «Кто смотрел»
+      parameters:
+        - { name: storyId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { liked: { type: boolean } } }
+      responses: { "204": { description: Готово } }
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
@@ -501,6 +697,50 @@ components:
         bio: { type: string }
         city: { type: string }
         publicKey: { type: string, description: "X25519, base64; пусто — ещё не прислал" }
+        closed: { type: boolean, description: Закрытый профиль }
+        followers: { type: integer }
+        following: { type: integer }
+        followState: { enum: [self, none, requested, following], description: Моя подписка на него }
+        followsMe: { type: boolean }
+    UserList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/User" } }
+    Comment:
+      type: object
+      required: [id, author, text]
+      properties:
+        id: { type: integer, format: int64 }
+        post: { type: integer, format: int64 }
+        author: { type: integer }
+        text: { type: string }
+        replyTo: { type: string }
+        sticker: { $ref: "#/components/schemas/Attachment" }
+        createdAt: { type: integer, format: int64 }
+        likes: { type: integer }
+        liked: { type: boolean }
+        authorInfo: { $ref: "#/components/schemas/AuthorInfo" }
+    Story:
+      type: object
+      required: [id, author, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        author: { type: integer }
+        createdAt: { type: integer, format: int64 }
+        expiresAt: { type: integer, format: int64 }
+        text: { type: string }
+        bg: { type: integer }
+        seed: { type: integer }
+        close: { type: boolean }
+        media: { $ref: "#/components/schemas/Attachment" }
+        seen: { type: boolean, description: Я её уже смотрел }
+        views:
+          type: array
+          description: Кто смотрел — только автору
+          items:
+            type: object
+            properties: { user: { type: integer }, at: { type: integer, format: int64 }, liked: { type: boolean } }
+        authorInfo: { $ref: "#/components/schemas/AuthorInfo" }
     AuthorInfo:
       type: object
       description: Кто автор — чтобы телефон знал имя без отдельного запроса

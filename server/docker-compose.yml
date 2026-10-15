@@ -40,8 +40,11 @@ services:
       DB_USER: memory
       DB_PASSWORD: ${DB_PASSWORD}
       JAVA_OPTS: ${JAVA_OPTS:--Xmx384m}
+      FCM_CREDENTIALS: /run/secrets/firebase.json
     volumes:
       - files:/data
+      # Ключ Firebase для пушей: server/secrets/firebase.json (не в git)
+      - ./secrets:/run/secrets:ro
     # Только для проверки с этого же компьютера: http://localhost:8080/health
     ports:
       - "127.0.0.1:8080:8080"

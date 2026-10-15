@@ -243,6 +243,11 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
                 ),
             )
             vm.startNetLoop()
+            // Токен пушей — серверу (новый токен от Firebase — тоже)
+            ru.wishka.memory.push.PushTokens.listener = { token ->
+                android.os.Handler(android.os.Looper.getMainLooper()).post { vm.setPushToken(token) }
+            }
+            vm.setPushToken(ru.wishka.memory.push.PushTokens.current(context.applicationContext))
             // Вход на сервер (демо — сразу) и синхронизация профиля между телефонами
             vm.startSession(account.username, authVm.takePassword(), fresh = saved == null)
             // Для отправки в фоне: кто вошёл

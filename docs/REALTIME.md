@@ -28,6 +28,8 @@ Authorization: Bearer <access>
 | `typing` | оба | `chat`, `user`, `on` | Печатает (клиент — не чаще раза в 3 с; сервер гасит сам через 6 с) |
 | `read` | оба | `chat`, `user`, `upTo` | Прочитал всё, что сервер принял до `upTo` (мс) включительно |
 | `group` | сервер | `chat`, `title`, `members`, `admins` | Сменилось название или состав группы |
+| `follow` | сервер | `user`, `state` | `request` — заявка ко мне, `follow` — на меня подписались, `accepted` — мою заявку приняли |
+| `comment` | сервер | `post`, `comment` (как в API) | Комментарий к моей записи |
 
 Пример:
 

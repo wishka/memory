@@ -146,6 +146,11 @@ open class CoreTest {
             r.json().also { assertEquals(a.id, it.getInt("author")); assertEquals(0, it.getInt("likes")) }.getLong("id")
         }
         assertEquals(5, ids.toSet().size)
+        // Лента — только друзья: пока Борис не подписан, записей Анны в ней нет
+        assertEquals(0, call("GET", "/v1/feed", b.access).json().getJSONArray("items").length())
+        assertEquals(5, call("GET", "/v1/explore", b.access).json().getJSONArray("items").length())
+        assertEquals("following", call("PUT", "/v1/users/${a.id}/follow", b.access).json().getString("state"))
+        assertEquals(0, call("GET", "/v1/explore", b.access).json().getJSONArray("items").length())
 
         val page1 = call("GET", "/v1/feed", b.access, query = mapOf("limit" to "3")).json()
         val items = page1.getJSONArray("items")

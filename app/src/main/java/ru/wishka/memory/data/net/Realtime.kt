@@ -17,6 +17,14 @@ sealed class RtEvent {
     data class Read(override val chatId: Int, val userId: Int, val upTo: Long) : RtEvent()
     /** Сменился состав или название группы — перечитать её. */
     data class GroupChanged(override val chatId: Int, val title: String, val memberIds: List<Int>, val adminIds: List<Int>) : RtEvent()
+    /** Подписка: state — "request" (заявка ко мне), "follow" (подписались), "accepted" (мою заявку приняли). */
+    data class Follow(val userId: Int, val state: String) : RtEvent() {
+        override val chatId: Int get() = 0
+    }
+    /** Комментарий к моей записи. */
+    data class NewComment(val postId: Long, val comment: JSONObject) : RtEvent() {
+        override val chatId: Int get() = 0
+    }
 
     fun json(): JSONObject = when (this) {
         is NewMessage -> JSONObject().put("type", "message").put("chat", chatId).put("message", message)
@@ -24,6 +32,8 @@ sealed class RtEvent {
         is Read -> JSONObject().put("type", "read").put("chat", chatId).put("user", userId).put("upTo", upTo)
         is GroupChanged -> JSONObject().put("type", "group").put("chat", chatId).put("title", title)
             .put("members", org.json.JSONArray(memberIds)).put("admins", org.json.JSONArray(adminIds))
+        is Follow -> JSONObject().put("type", "follow").put("user", userId).put("state", state)
+        is NewComment -> JSONObject().put("type", "comment").put("post", postId).put("comment", comment)
     }
 
     companion object {
@@ -37,6 +47,8 @@ sealed class RtEvent {
                     fun ints(k: String) = o.optJSONArray(k)?.let { a -> (0 until a.length()).map { a.optInt(it) } }.orEmpty()
                     GroupChanged(chat, o.optString("title"), ints("members"), ints("admins"))
                 }
+                "follow" -> Follow(o.optInt("user"), o.optString("state"))
+                "comment" -> o.optJSONObject("comment")?.let { NewComment(o.optLong("post"), it) }
                 else -> null
             }
         }

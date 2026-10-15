@@ -59,6 +59,10 @@ class StateStore(private val context: Context) {
         fun messageJson(m: Message): JSONObject = message(m)
         fun messageOf(o: JSONObject): Message = message(o)
         fun attachmentJson(a: Attachment): JSONObject = attachment(a)
+        fun commentJson(c: Comment): JSONObject = comment(c)
+        fun commentOf(o: JSONObject): Comment = comment(o)
+        fun storyJson(s: Story): JSONObject = story(s)
+        fun storyOf(o: JSONObject): Story = story(o)
         fun attachmentOf(o: JSONObject): Attachment = attachment(o)
         fun privacyJson(p: Privacy): JSONObject = privacy(p)
         fun privacyOf(o: JSONObject): Privacy = privacy(o)
@@ -470,7 +474,7 @@ class StateStore(private val context: Context) {
             .put("sticker", c.sticker?.let { attachment(it) } ?: JSONObject.NULL)
 
         private fun comment(o: JSONObject) = Comment(
-            o.getLong("id"), person(o.getInt("author")), o.getString("text"),
+            o.getLong("id").also { Directory.remember(o.optJSONObject("authorInfo")) }, person(o.getInt("author")), o.getString("text"),
             o.optInt("minutesAgo"), o.optLong("createdAt"),
             likes = o.optInt("likes"), liked = o.optBoolean("liked"), replyTo = o.optString("replyTo"),
             sticker = o.optJSONObject("sticker")?.let { attachment(it) },
@@ -544,10 +548,10 @@ class StateStore(private val context: Context) {
             .put("views", JSONArray(s.views.map { JSONObject().put("user", it.userId).put("at", it.at).put("liked", it.liked) }))
 
         private fun story(o: JSONObject) = Story(
-            o.optLong("id"), o.optInt("author"), o.optLong("createdAt"),
+            o.optLong("id").also { Directory.remember(o.optJSONObject("authorInfo")) }, Directory.local(o.optInt("author")), o.optLong("createdAt"),
             media = o.optJSONObject("media")?.let { attachment(it) },
             text = o.optString("text"), bg = o.optInt("bg"), seed = o.optInt("seed"), closeFriends = o.optBoolean("close"),
-            views = o.optJSONArray("views").objects().map { StoryView(it.optInt("user"), it.optLong("at"), it.optBoolean("liked")) },
+            views = o.optJSONArray("views").objects().map { StoryView(Directory.local(it.optInt("user")), it.optLong("at"), it.optBoolean("liked")) },
         )
 
         private fun highlight(h: Highlight) = JSONObject()

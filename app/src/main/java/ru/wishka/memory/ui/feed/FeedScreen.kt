@@ -90,6 +90,41 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val memories = remember(state.posts) { memoriesOfDay(state.posts, state.me.id) }
+    // Карточка записи — одна и для ленты друзей, и для «Интересного»
+    val feedCard: @Composable (Post) -> Unit = { post ->
+        val mine = post.author.id == state.me.id
+        PostCard(
+            post,
+            onLike = { vm.toggleLike(post.id) },
+            onVote = { vm.votePost(post.id, it) },
+            onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
+            onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
+            friend = if (mine) null else state.friendState(post.author.id),
+            onFriend = { vm.toggleFriend(post.author.id) },
+            onAuthor = { vm.openPerson(post.author.id) },
+            onComments = { vm.openComments(post.id) },
+            onOpenMedia = vm::openMedia,
+            // Своя запись: закрепить в витрине профиля или удалить
+            menu = if (!mine) null else { close ->
+                val pinned = post.id in state.profilePins
+                post.checkIn?.let { c ->
+                    MenuRow(LineIcon.Share, t("Поделиться карточкой")) {
+                        close()
+                        shareCard(context, scope, vm, checkInCard(c, state), "checkin-${post.id}", InviteAction.App)
+                    }
+                }
+                MenuRow(LineIcon.Pushpin, if (pinned) t("Убрать из витрины") else t("Закрепить в профиле")) {
+                    close(); vm.toggleProfilePin(post.id)
+                }
+                MenuRow(LineIcon.Trash, t("Удалить запись"), color = Palette.PearlPink) {
+                    close()
+                    post.media.forEach { MediaFiles.delete(it) }
+                    vm.deletePost(post.id)
+                }
+            },
+        )
+        
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = contentPadding,
@@ -148,43 +183,26 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 }
             }
         }
-        items(state.feedWithOlder, key = { it.id }) { post ->
-            val mine = post.author.id == state.me.id
-            PostCard(
-                post,
-                onLike = { vm.toggleLike(post.id) },
-                onVote = { vm.votePost(post.id, it) },
-                onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
-                onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
-                friend = if (mine) null else state.friendState(post.author.id),
-                onFriend = { vm.toggleFriend(post.author.id) },
-                onAuthor = { vm.openPerson(post.author.id) },
-                onComments = { vm.openComments(post.id) },
-                onOpenMedia = vm::openMedia,
-                // Своя запись: закрепить в витрине профиля или удалить
-                menu = if (!mine) null else { close ->
-                    val pinned = post.id in state.profilePins
-                    post.checkIn?.let { c ->
-                        MenuRow(LineIcon.Share, t("Поделиться карточкой")) {
-                            close()
-                            shareCard(context, scope, vm, checkInCard(c, state), "checkin-${post.id}", InviteAction.App)
-                        }
-                    }
-                    MenuRow(LineIcon.Pushpin, if (pinned) t("Убрать из витрины") else t("Закрепить в профиле")) {
-                        close(); vm.toggleProfilePin(post.id)
-                    }
-                    MenuRow(LineIcon.Trash, t("Удалить запись"), color = Palette.PearlPink) {
-                        close()
-                        post.media.forEach { MediaFiles.delete(it) }
-                        vm.deletePost(post.id)
-                    }
-                },
-            )
-        }
+        items(state.feedWithOlder, key = { it.id }) { post -> feedCard(post) }
         // Низ ленты: дошли — подгрузить старое с сервера
         item(key = "feed-footer") {
             androidx.compose.runtime.LaunchedEffect(state.olderFeed.size, state.netStatus) { vm.loadMoreFeed() }
             ru.wishka.memory.ui.components.FeedFooter(state.feedPaging, onRetry = vm::loadMoreFeed)
+        }
+        // «Интересное»: лента друзей кончилась — записи остальных людей сервера
+        val explore = state.exploreVisible
+        if (state.feedPaging.end && explore.isNotEmpty()) {
+            item(key = "explore-title") {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Text(t("Интересное"), style = MaterialTheme.typography.titleLarge, color = Palette.Ink)
+                    Text(t("Люди, на которых вы ещё не подписаны"), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist)
+                }
+            }
+            items(explore, key = { "x" + it.id }) { post -> feedCard(post) }
+            item(key = "explore-footer") {
+                androidx.compose.runtime.LaunchedEffect(state.explore.size) { vm.loadMoreExplore() }
+                if (state.explorePaging.loading) ru.wishka.memory.ui.components.FeedFooter(state.explorePaging, onRetry = vm::loadMoreExplore)
+            }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }

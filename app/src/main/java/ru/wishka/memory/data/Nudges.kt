@@ -125,6 +125,17 @@ object Nudges {
     fun commented(person: User, post: Post, text: String): Nudge =
         Nudge(NudgeKind.Reactions, person.name, tf(g(person, "%s прокомментировал: %s", "%s прокомментировала: %s"), firstName(person), text.take(80)), NudgeTarget.Post, post.id)
 
+    /** Подписка на открытый профиль: человек подписался на вас. */
+    fun newFollower(person: User) = Nudge(
+        NudgeKind.Follows, person.name,
+        tf(g(person, "%s подписался на вас", "%s подписалась на вас"), firstName(person)),
+        NudgeTarget.Person, person.id.toLong(),
+    )
+
+    /** Комментарий к вашей записи — пуш с сервера (сама запись может быть не на телефоне). */
+    fun commentedOn(person: User, postId: Long, text: String): Nudge =
+        Nudge(NudgeKind.Reactions, person.name, tf(g(person, "%s прокомментировал: %s", "%s прокомментировала: %s"), firstName(person), text.take(80)), NudgeTarget.Post, postId)
+
     /** Заявка в друзья ко мне; common — общие интересы, если есть. */
     fun followRequest(person: User, common: List<String>) = Nudge(
         NudgeKind.Follows, person.name,
@@ -253,7 +264,10 @@ object Nudges {
             "group_member" -> groupMember(Group(data["groupId"]?.toIntOrNull() ?: 0, data["group"].orEmpty(), "", "", 0, 0), actor)
             "follow_request" -> followRequest(actor, data["common"]?.split(',')?.filter { it.isNotBlank() }.orEmpty())
             "request_accepted" -> requestAccepted(actor)
-            "message" -> message(actor, body, data["chatId"]?.toIntOrNull() ?: 0)
+            // Секретная переписка: сервер текста не знает — «Новое сообщение»
+            "message" -> message(actor, body.ifEmpty { t("Новое сообщение") }, data["chatId"]?.toIntOrNull() ?: 0)
+            "new_follower" -> newFollower(actor)
+            "comment" -> commentedOn(actor, data["postId"]?.toLongOrNull() ?: 0, body)
             "prism" -> prismPublished(actor, Prism(data["prismId"]?.toLongOrNull() ?: 0, actor, data["caption"].orEmpty(), "", 0, 0, 0))
             else -> if (body.isNotEmpty()) Nudge(NudgeKind.Friends, title.ifEmpty { "Memory" }, body, NudgeTarget.Post) else null
         }
