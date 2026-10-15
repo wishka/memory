@@ -297,6 +297,9 @@ struct UiState: Equatable {
     /// Справочник людей с сервера сменился (Directory.version) — перерисовать.
     var peopleVersion: Int = 0
     var feedPaging = FeedPaging()
+    /// «Интересное»: записи людей, на которых вы не подписаны (с сервера, страницами).
+    var explore: [Post] = []
+    var explorePaging = FeedPaging()
     /// Загрузки фото и видео: что идёт, что ждёт, что на паузе.
     var uploads: [UploadJob] = []
     /// Сколько действий ждут отправки.
@@ -504,7 +507,16 @@ struct UiState: Equatable {
         for g in groups {
             if let post = g.posts.first(where: { $0.id == id }) { return post }
         }
-        return nil
+        if let post = olderFeed.first(where: { $0.id == id }) { return post }
+        return explore.first { $0.id == id }
+    }
+
+    /// «Интересное» без заблокированных, без друзей и без того, что уже в ленте.
+    var exploreVisible: [Post] {
+        let ids = Set(feedWithOlder.map(\.id))
+        return explore.filter { p in
+            !ids.contains(p.id) && !blocked.contains(p.author.id) && !following.contains(p.author.id)
+        }
     }
     func findPrism(_ id: Int64) -> Prism? { prisms.first { $0.id == id } }
     /// Товар витрины по группе и номеру.
@@ -636,6 +648,7 @@ final class AppModel {
         self.demoReplies = demoReplies
         net = makeDemoNet()
         feedPager = net.feedPager()
+        explorePager = net.explorePager()
         // Демо-сеть по умолчанию (и в тестах) — тоже с живым каналом
         connectRealtime()
     }
@@ -1240,6 +1253,10 @@ final class AppModel {
         s.stories.append(story)
         s.storyComposer = false
         state = s
+        if serverMode {
+            net.queueStory(story)
+            kickNet()
+        }
         return nil
     }
 
@@ -1332,6 +1349,13 @@ final class AppModel {
     func seeStory(_ storyId: Int64) {
         let me = state.me.id
         let now = clock()
+        let first = !state.seenStories.contains(storyId)
+        if let st = state.story(storyId), first, st.authorId != me, isServerPerson(st.authorId) {
+            // История с сервера — отметить там (автор увидит в «Кто смотрел»)
+            let body: JSONObject = ["liked": false]
+            net.queueCall("POST", "/v1/stories/\(storyId)/view", body: body, coalesce: "view:\(storyId)")
+            kickNet()
+        }
         var s = state
         s.seenStories.insert(storyId)
         s.stories = s.stories.map { $0.id == storyId && $0.authorId != me ? Stories.view($0, me, now) : $0 }
@@ -1345,6 +1369,10 @@ final class AppModel {
         if story.authorId == me || story.views.contains(where: { $0.userId == me && $0.liked }) { return }
         let now = clock()
         state.stories = state.stories.map { $0.id == storyId ? Stories.view($0, me, now, liked: true) : $0 }
+        if isServerPerson(story.authorId) {
+            let body: JSONObject = ["liked": true]
+            net.queueCall("POST", "/v1/stories/\(storyId)/view", body: body, coalesce: "view:\(storyId)")
+        }
         replyToStory(storyId, "❤️")
     }
 
@@ -1369,6 +1397,10 @@ final class AppModel {
     /// Удалить свою историю — и из «Актуального». Файл удаляет экран.
     func deleteStory(_ storyId: Int64) {
         let me = state.me.id
+        if serverStoryIds.contains(storyId) {
+            net.queueCall("DELETE", "/v1/stories/\(storyId)")
+            kickNet()
+        }
         var s = state
         s.stories.removeAll { $0.id == storyId && $0.authorId == me }
         s.highlights = s.highlights.map { h -> Highlight in
@@ -1405,6 +1437,51 @@ final class AppModel {
             state.closeFriends.remove(userId)
         } else {
             state.closeFriends.insert(userId)
+        }
+        if serverMode {
+            pushCloseFriends()
+            kickNet()
+        }
+    }
+
+    /// Мои истории, которые уже на сервере (номер сервера).
+    @ObservationIgnored private var serverStoryIds: Set<Int64> = []
+
+    /// Истории с сервера: чужие заменяют прежние чужие с сервера; у своих —
+    /// свежий список «Кто смотрел». Фото и видео чужих — качаются.
+    @MainActor func syncStories() async throws {
+        let n = net
+        let list = try await n.api.stories()
+        let me = state.me.id
+        var mine: [Int64: Story] = [:]
+        for item in list where item.story.authorId == me { mine[item.story.id] = item.story }
+        serverStoryIds.formUnion(mine.keys)
+        let blocked = state.blocked
+        let others = list.filter { $0.story.authorId != me && !blocked.contains($0.story.authorId) }
+        let seen: [Int64] = others.filter(\.seen).map(\.story.id)
+        var s = state
+        let kept: [Story] = s.stories.filter { $0.authorId == me || !isServerPerson($0.authorId) }
+        let refreshed: [Story] = kept.map { st -> Story in
+            guard let srv = mine[st.id] else { return st }
+            var x = st
+            x.views = srv.views
+            return x
+        }
+        s.stories = refreshed + others.map(\.story)
+        s.seenStories.formUnion(seen)
+        state = s
+        peopleChanged()
+        for item in others {
+            guard let a = item.story.media, n.isRemote(a.fileName) else { continue }
+            guard let f = try? await n.fetchMedia(a.fileName, ext: AppModel.mediaExt(a)) else { continue }
+            let ref = n.mediaRef(f)
+            let storyId = item.story.id
+            state.stories = state.stories.map { st -> Story in
+                guard st.id == storyId else { return st }
+                var x = st
+                x.media?.fileName = ref
+                return x
+            }
         }
     }
 
@@ -2191,9 +2268,21 @@ final class AppModel {
         }
     }
 
+    /// Работаем с настоящим сервером (не встроенным демо).
+    private var serverMode: Bool { net.demo == nil }
+
+    /// Запись на сервере: пришла оттуда или уже ушла туда (номер сервера).
+    private func isServerPost(_ postId: Int64) -> Bool { serverMode && postId >= Self.serverIdBase }
+
+    /// Номера сервера — с 10 000 000: номера телефона (newId) меньше.
+    static let serverIdBase: Int64 = 10_000_000
+
+    /// Комментарий уже на сервере (номер сервера), а не только что написан здесь.
+    private func isServerComment(_ commentId: Int64) -> Bool { commentId >= Self.serverIdBase }
+
     func toggleLike(_ postId: Int64) {
-        state.posts = state.posts.map { Self.toggled($0, postId) }
-        if let p = state.posts.first(where: { $0.id == postId }), p.outboxKey.isEmpty {
+        updatePosts(postId) { p in p = Self.toggled(p, postId) }
+        if let p = state.findPost(postId), p.outboxKey.isEmpty {
             // Своя ещё не ушедшая запись — серверу пока нечего отмечать
             net.queueLike(postId, liked: p.liked)
         }
@@ -2415,6 +2504,45 @@ final class AppModel {
             p.comments += 1
             p.commentList.append(comment)
         }
+        if isServerPost(postId) { sendComment(postId, comment) }
+    }
+
+    /// Комментарий — на сервер; ответ — тот же комментарий с номером сервера. Не ушёл — убрать.
+    private func sendComment(_ postId: Int64, _ comment: Comment) {
+        let n = net
+        Task { @MainActor [weak self] in
+            let saved: Comment
+            do {
+                saved = try await n.api.addComment(postId, comment, key: n.newKey())
+            } catch {
+                self?.updatePosts(postId) { p in
+                    p.comments = max(0, p.comments - 1)
+                    p.commentList.removeAll { $0.id == comment.id }
+                }
+                self?.state.notice = t("Комментарий не отправлен — проверьте сеть")
+                return
+            }
+            self?.updatePosts(postId) { p in
+                p.commentList = p.commentList.map { $0.id == comment.id ? saved : $0 }
+            }
+        }
+    }
+
+    /// Комментарии записи с сервера — при открытии обсуждения.
+    private func loadComments(_ postId: Int64) {
+        if !isServerPost(postId) { return }
+        let n = net
+        Task { @MainActor [weak self] in
+            guard let list = try? await n.api.comments(postId), let self else { return }
+            let meId = self.state.me.id
+            // Свои, что ещё отправляются (номер телефона), — остаются в конце
+            self.updatePosts(postId) { p in
+                let pending: [Comment] = p.commentList.filter { !self.isServerComment($0.id) && $0.author.id == meId }
+                p.commentList = list + pending
+                p.comments = list.count + pending.count
+            }
+            self.peopleChanged()
+        }
     }
 
     /// Пожаловаться на чужой комментарий: он скрывается у вас. Когда
@@ -2426,11 +2554,17 @@ final class AppModel {
     /// Свой комментарий можно удалить.
     func deleteComment(_ postId: Int64, _ commentId: Int64) {
         let meId = state.me.id
+        guard let post = state.findPost(postId) else { return }
+        // Свой — всегда; под своей записью — любой
+        let mineToo = post.author.id == meId
+        let allowed = post.commentList.contains { $0.id == commentId && ($0.author.id == meId || mineToo) }
+        if !allowed { return }
         updatePosts(postId) { p in
-            guard p.commentList.contains(where: { $0.id == commentId && $0.author.id == meId }) else { return }
             p.commentList.removeAll { $0.id == commentId }
             p.comments = max(0, p.comments - 1)
         }
+        if isServerPost(postId) && isServerComment(commentId) { net.queueCall("DELETE", "/v1/comments/\(commentId)") }
+        kickNet()
     }
 
     /// «Нравится» комментарию к записи — в ленте или в группе.
@@ -2438,14 +2572,44 @@ final class AppModel {
         updatePosts(postId) { p in
             p.commentList = p.commentList.map { Self.flipLike($0, commentId) }
         }
+        if !isServerPost(postId) || !isServerComment(commentId) { return }
+        let comment = state.findPost(postId)?.commentList.first { $0.id == commentId }
+        guard let liked = comment?.liked else { return }
+        net.queueCall(liked ? "PUT" : "DELETE", "/v1/comments/\(commentId)/like", coalesce: "clike:\(commentId)")
+        kickNet()
     }
 
-    /// Изменить запись — где бы она ни была: в ленте или в группе.
+    /// Изменить запись — где бы она ни была: свои, в группах, лента с сервера, «Интересное».
     private func updatePosts(_ postId: Int64, _ change: (inout Post) -> Void) {
+        // И в страницах ленты и «Интересного»: иначе перерисовка (скачалось фото) вернула бы старое
+        feedPager?.update(postId) { post in
+            var p = post
+            change(&p)
+            return p
+        }
+        explorePager?.update(postId) { post in
+            var p = post
+            change(&p)
+            return p
+        }
         state.posts = state.posts.map { post in
             var p = post
             if p.id == postId { change(&p) }
             return p
+        }
+        if state.olderFeed.contains(where: { $0.id == postId }) {
+            state.olderFeed = state.olderFeed.map { post in
+                var p = post
+                if p.id == postId { change(&p) }
+                return p
+            }
+        }
+        if state.explore.contains(where: { $0.id == postId }) {
+            state.explore = state.explore.map { post in
+                var p = post
+                if p.id == postId { change(&p) }
+                return p
+            }
         }
         state.groups = state.groups.map { group in
             var g = group
@@ -2461,6 +2625,7 @@ final class AppModel {
     func openComments(_ postId: Int64) {
         state.commentsPrismId = nil
         state.commentsPostId = postId
+        loadComments(postId)
     }
 
     func openPrismComments(_ prismId: Int64) {
@@ -2487,6 +2652,10 @@ final class AppModel {
     /// В демо её принимает любой человек через несколько секунд.
     func toggleFriend(_ userId: Int) {
         if userId == state.me.id || state.blocked.contains(userId) { return }
+        if isServerPerson(userId) {
+            toggleServerFriend(userId)
+            return
+        }
         if state.following.contains(userId) {
             removeFriend(userId)
         } else if state.sentRequests.contains(userId) {
@@ -2504,6 +2673,85 @@ final class AppModel {
     func removeFriend(_ userId: Int) {
         declined.insert(userId)
         state.following.remove(userId)
+        state.closeFriends.remove(userId)
+        if isServerPerson(userId) {
+            // Дружба взаимная: удалить — и отписаться, и убрать его из подписчиков
+            // (мои записи и истории ему больше не видны)
+            net.queueCall("DELETE", "/v1/users/\(userId)/follow", coalesce: "follow:\(userId)")
+            net.queueCall("DELETE", "/v1/me/followers/\(userId)", coalesce: "follower:\(userId)")
+            pushCloseFriends()
+            kickNet()
+        }
+    }
+
+    /// «Близкие друзья» — на сервер целиком (только люди с сервера).
+    private func pushCloseFriends() {
+        if !serverMode { return }
+        let ids: [Int] = state.closeFriends.filter { isServerPerson($0) }.sorted()
+        let body: JSONObject = ["ids": ids]
+        net.queueCall("PUT", "/v1/me/close-friends", body: body, coalesce: "close-friends")
+    }
+
+    /// Подписка на человека с сервера. Дружба в Memory взаимная, поэтому
+    /// «Принять» заявку — это и принять, и подписаться в ответ.
+    private func toggleServerFriend(_ userId: Int) {
+        let s0 = state
+        if s0.following.contains(userId) {
+            removeFriend(userId)
+        } else if s0.sentRequests.contains(userId) {
+            state.sentRequests.remove(userId)
+            net.queueCall("DELETE", "/v1/users/\(userId)/follow", coalesce: "follow:\(userId)")
+        } else if s0.followRequests.contains(userId) {
+            approveRequest(userId)
+        } else {
+            state.sentRequests.insert(userId)
+            followOnServer(userId)
+        }
+        kickNet()
+    }
+
+    /// Подписаться: открытый профиль — сразу друзья, закрытый — заявка ждёт ответа.
+    private func followOnServer(_ userId: Int) {
+        let n = net
+        Task { @MainActor [weak self] in
+            let answer: String
+            do {
+                answer = try await n.api.follow(userId)
+            } catch {
+                // Нет сети — уйдёт из очереди; ответ узнаем при следующей сверке
+                n.queueCall("PUT", "/v1/users/\(userId)/follow", coalesce: "follow:\(userId)")
+                return
+            }
+            guard let self else { return }
+            if answer == "following" {
+                self.state.sentRequests.remove(userId)
+                self.state.following.insert(userId)
+            }
+            await self.refreshFeedNow()
+        }
+    }
+
+    /// Подписки с сервера: на кого подписан, чьи заявки ждут, мои заявки.
+    /// Демо-друзья остаются как есть.
+    @MainActor func syncFollows() async throws {
+        let n = net
+        let followingPeople: [User] = try await n.api.following()
+        let sentPeople: [User] = try await n.api.sentRequests()
+        let incomingPeople: [User] = try await n.api.followRequests()
+        let following: Set<Int> = Set(followingPeople.map(\.id))
+        let sent: Set<Int> = Set(sentPeople.map(\.id))
+        let incoming: [Int] = incomingPeople.map(\.id)
+        var s = state
+        let keepFollowing: Set<Int> = s.following.filter { !isServerPerson($0) }
+        let keepSent: Set<Int> = s.sentRequests.filter { !isServerPerson($0) }
+        let keepIncoming: [Int] = s.followRequests.filter { !isServerPerson($0) }
+        let blocked = s.blocked
+        let newIncoming: [Int] = incoming.filter { !blocked.contains($0) }
+        s.following = keepFollowing.union(following)
+        s.sentRequests = keepSent.union(sent)
+        s.followRequests = keepIncoming + newIncoming
+        state = s
+        peopleChanged()
     }
 
     /// Таймеры демо-ответа на заявки: один на человека.
@@ -2539,12 +2787,21 @@ final class AppModel {
         state.followRequests.removeAll { $0 == userId }
         state.sentRequests.remove(userId)
         state.following.insert(userId)
+        if isServerPerson(userId) {
+            net.queueCall("POST", "/v1/me/requests/\(userId)/accept")
+            net.queueCall("PUT", "/v1/users/\(userId)/follow", coalesce: "follow:\(userId)")
+            kickNet()
+        }
     }
 
     /// Отклонить заявку: человек не узнает об этом, заявка просто исчезает.
     func declineRequest(_ userId: Int) {
         declined.insert(userId)
         state.followRequests.removeAll { $0 == userId }
+        if isServerPerson(userId) {
+            net.queueCall("DELETE", "/v1/me/requests/\(userId)")
+            kickNet()
+        }
     }
 
     /// Кого отклонили или удалили из друзей: в демо они больше не присылают заявок сами.
@@ -3011,6 +3268,56 @@ final class AppModel {
             let memberIds: [Int] = rawMembers.map { Directory.local($0) }
             let adminIds: [Int] = rawAdmins.map { Directory.local($0) }
             applyGroupChange(chatId, title, memberIds, adminIds)
+        case .follow(let rawId, let followState):
+            onFollowEvent(Directory.local(rawId), followState)
+        case .newComment(let postId, let json):
+            receiveComment(postId, json)
+        }
+    }
+
+    /// Комментарий к моей записи по живому каналу.
+    private func receiveComment(_ postId: Int64, _ json: JSONObject) {
+        let s = state
+        guard let c = ApiCodec(me: s.me).commentOf(json) else { return }
+        if s.blocked.contains(c.author.id) { return }
+        let post = s.findPost(postId)
+        if let post, !post.commentList.contains(where: { $0.id == c.id }) {
+            updatePosts(postId) { p in
+                p.comments += 1
+                p.commentList.append(c)
+            }
+        }
+        peopleChanged()
+        if let post {
+            notify(Nudges.commented(c.author, post, c.text))
+        } else {
+            notify(Nudges.commentedOn(c.author, postId: postId, text: c.text))
+        }
+    }
+
+    /// Подписка по живому каналу: заявка ко мне, новый подписчик, мою заявку приняли.
+    private func onFollowEvent(_ uid: Int, _ followState: String) {
+        if state.blocked.contains(uid) { return }
+        let n = net
+        Task { @MainActor [weak self] in
+            // Кто это — спросить у сервера, если ещё не знаем
+            if Demo.person(uid) == nil { _ = try? await n.api.user(uid) }
+            guard let self, let person = Demo.person(uid) else { return }
+            self.peopleChanged()
+            switch followState {
+            case "request":
+                self.state.followRequests.removeAll { $0 == uid }
+                self.state.followRequests.append(uid)
+                self.notify(Nudges.followRequest(person, common: []))
+            case "follow":
+                self.notify(Nudges.newFollower(person))
+            case "accepted":
+                self.state.sentRequests.insert(uid)
+                self.acceptSentRequest(uid)
+                await self.refreshFeedNow()
+            default:
+                break
+            }
         }
     }
 
@@ -3289,8 +3596,27 @@ final class AppModel {
         n.queueCall("PUT", "/v1/me/key", body: body, coalesce: "key")
         refreshNetCounters()
         kickNet()
-        if n.demo == nil { try? await syncChats() }
+        if n.demo == nil {
+            try? await syncChats()
+            try? await syncFollows()
+            try? await syncStories()
+            await refreshExplore()
+        }
+        if let token = pushToken { setPushToken(token) }
         peopleChanged()
+    }
+
+    /// Токен пушей этого телефона; сервер шлёт на него, когда приложение закрыто.
+    /// На iPhone пока не подключён (APNs — потом): функция — для паритета с Android.
+    @ObservationIgnored private var pushToken: String?
+
+    func setPushToken(_ token: String?) {
+        guard let token, !token.isEmpty else { return }
+        pushToken = token
+        if !serverMode || !net.session.signedIn { return }
+        let body: JSONObject = ["token": token]
+        net.queueCall("PUT", "/v1/devices/current/push", body: body, coalesce: "push")
+        kickNet()
     }
 
     /// Переписки с сервера: новые (кто-то написал, пока телефон был выключен;
@@ -3448,6 +3774,7 @@ final class AppModel {
     /// Сверить: записи, которых в очереди уже нет, — отправлены; сообщения
     /// переписок без очереди — тоже.
     private func reconcileOutbox() {
+        adoptServerIds()
         let ops = net.outbox.all()
         let keys = Set(ops.map(\.key))
         var chatsWithOps = Set<Int>()
@@ -3531,6 +3858,7 @@ final class AppModel {
         let pager = n.feedPager()
         pager.restore()
         feedPager = pager
+        explorePager = n.explorePager()
         publishFeed()
         // Пока приложение было закрыто, очередь могла уйти в фоне
         reconcileOutbox()
@@ -3552,6 +3880,8 @@ final class AppModel {
         Directory.clear()
         net = makeDemoNet()
         feedPager = net.feedPager()
+        explorePager = net.explorePager()
+        serverStoryIds.removeAll()
         connectRealtime()
     }
 
@@ -3602,7 +3932,10 @@ final class AppModel {
         Task { @MainActor [weak self] in
             let ok = (try? await n.fetchMedia(path, ext: ext)) != nil
             guard let self else { return }
-            if ok && n === self.net { self.publishFeed() }
+            if ok && n === self.net {
+                self.publishFeed()
+                self.publishExplore()
+            }
             // Не вышло (нет сети) — попробуем при следующем показе ленты
             if !ok { self.fetchingMedia.remove(path) }
         }
@@ -3701,7 +4034,8 @@ final class AppModel {
             switch op.kind {
             case .createPost: clearOutboxKey(op.key)
             case .sendMessage: markSent(op, answer: item.answer)
-            case .like, .unlike, .call: break
+            // Номер сервера у записи и истории — в adoptServerIds ниже
+            case .createStory, .like, .unlike, .call: break
             }
         }
         for job in r.uploads where job.state == .done {
@@ -3715,7 +4049,7 @@ final class AppModel {
             case .sendMessage:
                 markDelivered(op)
                 state.netNotice = t("Сообщение не отправлено: вложение не нашлось.")
-            case .like, .unlike, .call: break
+            case .createStory, .like, .unlike, .call: break
             }
         }
         let status: NetStatus
@@ -3729,6 +4063,7 @@ final class AppModel {
         if state.netStatus != status { state.netStatus = status }
         if r.authLost && !state.signedOut { state.signedOut = true }
         refreshNetCounters()
+        adoptServerIds()
     }
 
     /// Сообщение дошло до сервера: ✓ и время сервера (по нему — «прочитано до»).
@@ -3744,6 +4079,67 @@ final class AppModel {
     }
 
     /// Запись ушла (или не уйдёт никогда) — больше не «ждёт сети».
+    /// С сервером своя запись и история получают его номер: по нему
+    /// комментарии, «нравится», просмотры, и лента не задваивает. Номер мог
+    /// прийти и при фоновой отправке — тогда он ждёт в кэше сети.
+    private func adoptServerIds() {
+        let sent: [SentId] = net.takeServerIds()
+        if sent.isEmpty || !serverMode { return }
+        var posts: [Int64: Int64] = [:]
+        var stories: [Int64: Int64] = [:]
+        for item in sent {
+            if item.kind == .createPost { posts[item.localId] = item.serverId }
+            if item.kind == .createStory { stories[item.localId] = item.serverId }
+        }
+        serverStoryIds.formUnion(stories.values)
+        let me = state.me.id
+        var s = state
+        s.posts = s.posts.map { p -> Post in
+            guard p.author.id == me, let id = posts[p.id] else { return p }
+            var x = Self.renumbered(p, id)
+            x.outboxKey = ""
+            return x
+        }
+        s.stories = s.stories.map { st -> Story in
+            guard st.authorId == me, let id = stories[st.id] else { return st }
+            return Self.renumbered(st, id)
+        }
+        state = s
+    }
+
+    /// Та же запись с другим номером (номер — let).
+    private static func renumbered(_ p: Post, _ id: Int64) -> Post {
+        var x = Post(id: id, author: p.author, text: p.text, minutesAgo: p.minutesAgo)
+        x.artSeed = p.artSeed
+        x.likes = p.likes
+        x.liked = p.liked
+        x.comments = p.comments
+        x.media = p.media
+        x.commentList = p.commentList
+        x.createdAt = p.createdAt
+        x.checkIn = p.checkIn
+        x.poll = p.poll
+        x.editedAt = p.editedAt
+        x.repostOf = p.repostOf
+        x.reposts = p.reposts
+        x.place = p.place
+        x.outboxKey = p.outboxKey
+        x.commentsOff = p.commentsOff
+        return x
+    }
+
+    /// Та же история с другим номером.
+    private static func renumbered(_ st: Story, _ id: Int64) -> Story {
+        var x = Story(id: id, authorId: st.authorId, createdAt: st.createdAt)
+        x.media = st.media
+        x.text = st.text
+        x.bg = st.bg
+        x.seed = st.seed
+        x.closeFriends = st.closeFriends
+        x.views = st.views
+        return x
+    }
+
     private func clearOutboxKey(_ key: String) {
         guard state.posts.contains(where: { $0.outboxKey == key }) else { return }
         state.posts = state.posts.map { p -> Post in
@@ -3804,6 +4200,39 @@ final class AppModel {
         await pager.refresh()
         publishFeed()
         refreshNetCounters()
+        if serverMode {
+            try? await syncStories()
+            await refreshExplore()
+        }
+    }
+
+    @ObservationIgnored private var explorePager: Pager<Post>?
+
+    private func publishExplore() {
+        guard let p = explorePager?.state else { return }
+        let paging = FeedPaging(loading: p.loading, end: p.end, fromCache: p.fromCache, cachedAt: p.cachedAt, error: p.error?.kind)
+        let items: [Post] = withLocalMedia(p.items)
+        state.explore = items
+        state.explorePaging = paging
+    }
+
+    /// «Интересное» заново (с сервером; у демо его нет).
+    @MainActor func refreshExplore() async {
+        if !serverMode { return }
+        guard let pager = explorePager else { return }
+        _ = await pager.refresh()
+        publishExplore()
+    }
+
+    /// Долистали «Интересное» до конца — следующая страница.
+    func loadMoreExplore() {
+        let paging = state.explorePaging
+        if !serverMode || paging.loading || paging.end { return }
+        guard let pager = explorePager else { return }
+        Task { @MainActor [weak self] in
+            _ = await pager.loadMore()
+            self?.publishExplore()
+        }
     }
 
     func pauseUpload(_ id: String) {
@@ -3837,7 +4266,9 @@ final class AppModel {
     func clearNetCache() {
         net.cache.clearPages()
         feedPager = net.feedPager()
+        explorePager = net.explorePager()
         publishFeed()
+        publishExplore()
         refreshNetCounters()
     }
 
@@ -4551,6 +4982,15 @@ final class AppModel {
         state.following.remove(userId)
         state.followRequests.removeAll { $0 == userId }
         state.sentRequests.remove(userId)
+        state.closeFriends.remove(userId)
+        // Человек с сервера: подписки в обе стороны снимаются — он больше не видит ваши записи и истории
+        if isServerPerson(userId) {
+            net.queueCall("DELETE", "/v1/users/\(userId)/follow", coalesce: "follow:\(userId)")
+            net.queueCall("DELETE", "/v1/me/followers/\(userId)", coalesce: "follower:\(userId)")
+            net.queueCall("DELETE", "/v1/me/requests/\(userId)")
+            pushCloseFriends()
+            kickNet()
+        }
     }
 
     func unblock(_ userId: Int) {

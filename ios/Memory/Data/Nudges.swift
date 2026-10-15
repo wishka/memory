@@ -145,6 +145,21 @@ enum Nudges {
         return Nudge(kind: .follows, title: person.name, text: text, target: .requests)
     }
 
+    /// Новый подписчик — пуш с сервера или событие живого канала.
+    static func newFollower(_ person: User) -> Nudge {
+        Nudge(kind: .follows, title: person.name,
+              text: tf(g(person, "%s подписался на вас", "%s подписалась на вас"), person.firstName),
+              target: .person, targetId: Int64(person.id))
+    }
+
+    /// Комментарий к вашей записи — пуш с сервера (сама запись может быть не на телефоне).
+    static func commentedOn(_ person: User, postId: Int64, text: String) -> Nudge {
+        let format = g(person, "%s прокомментировал: %s", "%s прокомментировала: %s")
+        let short = String(text.prefix(80))
+        return Nudge(kind: .reactions, title: person.name, text: tf(format, person.firstName, short),
+                     target: .post, targetId: postId)
+    }
+
     /// Человек принял мою заявку в друзья.
     static func requestAccepted(_ person: User) -> Nudge {
         Nudge(kind: .follows, title: person.name,
@@ -278,7 +293,14 @@ enum Nudges {
         case "request_accepted":
             return requestAccepted(actor)
         case "message":
-            return message(actor, data["body"] ?? "", chatId: Int(data["chatId"] ?? "") ?? 0)
+            // Секретная переписка: сервер текста не знает — «Новое сообщение»
+            let body = data["body"] ?? ""
+            let text = body.isEmpty ? t("Новое сообщение") : body
+            return message(actor, text, chatId: Int(data["chatId"] ?? "") ?? 0)
+        case "new_follower":
+            return newFollower(actor)
+        case "comment":
+            return commentedOn(actor, postId: Int64(data["postId"] ?? "") ?? 0, text: data["body"] ?? "")
         case "prism":
             let prism = Prism(id: Int64(data["prismId"] ?? "") ?? 0, author: actor, caption: data["caption"] ?? "",
                               music: "", seed: 0, likes: 0, comments: 0)

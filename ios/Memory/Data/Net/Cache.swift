@@ -88,6 +88,7 @@ enum CacheKeys {
     static let op = "op:"
     static let upload = "up:"
     static let feed = "page:feed"
+    static let explore = "page:explore"
     static func chat(_ chatId: Int) -> String { "page:chat:\(chatId)" }
     static func user(_ userId: Int) -> String { "page:user:\(userId)" }
 }

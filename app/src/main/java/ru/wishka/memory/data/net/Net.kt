@@ -13,6 +13,9 @@ import ru.wishka.memory.data.auth.KeyValueStore
 import java.io.File
 import java.util.UUID
 
+/** Отправленная запись или история и номер, который ей дал сервер. */
+data class SentId(val kind: OpKind, val localId: Long, val serverId: Long, val key: String)
+
 /** Что изменилось за один проход Net.pump — модели этого хватает, чтобы обновить экран. */
 data class PumpResult(
     val uploads: List<UploadJob>,
@@ -124,6 +127,22 @@ class Net(
         }
     }
 
+    /** «Интересное» страницами — как лента, со своим кэшем. */
+    fun explorePager(): Pager<Post> {
+        val c = codec()
+        return Pager(CacheKeys.EXPLORE, cache, { it.id }, { c.postJson(it) }, { runCatching { c.postOf(it) }.getOrNull() }, clock) { cursor ->
+            api.explore(cursor)
+        }
+    }
+
+    /** Новая история: файл — в загрузки, история — в очередь (уйдёт после него). */
+    fun queueStory(story: ru.wishka.memory.data.Story): String {
+        val key = newKey()
+        queueMedia(key, listOfNotNull(story.media))
+        outbox.enqueue(OutboxOp(key, OpKind.CreateStory, story.id, codec().storyJson(story).toString()))
+        return key
+    }
+
     /** Новая запись: вложения — в загрузки, сама запись — в очередь (уйдёт после них). */
     fun queuePost(post: Post): String {
         val key = post.outboxKey.ifEmpty { newKey() }
@@ -182,6 +201,13 @@ class Net(
                 val m = c.messageOf(JSONObject(op.payload))
                 api.sendRaw(op.target.toInt(), c.messageJson(m.copy(attachments = withRemote(m.attachments, remote))), op.key)
             }
+            OpKind.CreateStory -> {
+                val story = c.storyOf(JSONObject(op.payload))
+                val media = story.media?.let { withRemote(listOf(it), remote).first() }
+                val body = JSONObject().put("text", story.text).put("bg", story.bg).put("seed", story.seed).put("close", story.closeFriends)
+                media?.let { body.put("media", c.attachmentJson(it)) }
+                api.send("POST", "/v1/stories", body, op.key)
+            }
             OpKind.Call -> {
                 val p = JSONObject(op.payload)
                 api.send(p.getString("method"), p.getString("path"), p.optJSONObject("body"), op.key)
@@ -209,13 +235,40 @@ class Net(
                 ready = { op -> op.kind == OpKind.Like || op.kind == OpKind.Unlike || op.kind == OpKind.Call || uploads.doneFor(op.key) != null },
                 failedDeps = { op -> uploads.failedFor(op.key) },
                 send = ::send,
-                onSent = { op, answer -> sent += op to answer; uploads.clearOwner(op.key) },
+                onSent = { op, answer ->
+                    sent += op to answer
+                    uploads.clearOwner(op.key)
+                    rememberServerId(op, answer)
+                },
                 onFailed = { op, _ -> failed += op },
             )
             offline = r.offline
             authLost = r.authLost
         }
         return PumpResult(touched.values.toList(), sent, failed, offline, authLost)
+    }
+
+    /**
+     * Номер, который сервер дал записи или истории, — запоминается в кэше:
+     * отправка могла пройти в фоне (NetWorker), без экрана, и приложение
+     * подхватит номер при следующем открытии (takeServerIds).
+     */
+    private fun rememberServerId(op: OutboxOp, answer: JSONObject?) {
+        if (op.kind != OpKind.CreatePost && op.kind != OpKind.CreateStory) return
+        val id = answer?.optLong("id") ?: return
+        if (id <= 0) return
+        val o = JSONObject().put("kind", op.kind.id).put("local", op.target).put("server", id).put("key", op.key)
+        runCatching { cache.put(SENT + op.key, o.toString(), clock()) }
+    }
+
+    /** Отправленные записи и истории: (вид, номер на телефоне, номер сервера, ключ очереди). Забираются один раз. */
+    fun takeServerIds(): List<SentId> {
+        val keys = runCatching { cache.keys(SENT) }.getOrDefault(emptyList())
+        return keys.mapNotNull { k ->
+            val o = cache.get(k)?.value?.let { runCatching { JSONObject(it) }.getOrNull() }
+            cache.remove(k)
+            o?.let { SentId(OpKind.of(it.optString("kind")) ?: return@let null, it.optLong("local"), it.optLong("server"), it.optString("key")) }
+        }
     }
 
     /**
@@ -239,6 +292,9 @@ class Net(
     }
 
     companion object {
+        /** Ключи кэша: номер сервера у отправленного. */
+        const val SENT = "sent:"
+
         /** Демо: встроенный сервер и кэш в памяти — для тестов и пока нет аккаунта. */
         fun demo(clock: () -> Long, me: () -> User, cache: OfflineCache = MemoryCache(), chunkSize: Int = TusClient.DEFAULT_CHUNK, tokens: KeyValueStore? = null, login: String = "demo"): Net =
             Net(DemoServer(me, clock), cache, clock, me, tokens = tokens, login = login, chunkSize = chunkSize)

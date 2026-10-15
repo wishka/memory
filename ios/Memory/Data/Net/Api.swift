@@ -165,6 +165,62 @@ final class Api {
         _ = try await sendJson("PUT", "/v1/me/key", body, key: nil)
     }
 
+    /// Подписаться: ответ — "following" (открытый профиль) или "requested" (заявка).
+    func follow(_ userId: Int) async throws -> String {
+        let o = try await sendJson("PUT", "/v1/users/\(userId)/follow", [:], key: nil)
+        return Json.string(o, "state")
+    }
+
+    private func people(_ path: String) async throws -> [User] {
+        let o = try await getJson(path)
+        return Json.objects(o, "items").compactMap { Directory.remember($0) }
+    }
+
+    /// На кого я подписан.
+    func following() async throws -> [User] { try await people("/v1/me/following") }
+
+    /// Мои заявки, которые ещё ждут ответа.
+    func sentRequests() async throws -> [User] { try await people("/v1/me/sent") }
+
+    /// Заявки ко мне.
+    func followRequests() async throws -> [User] { try await people("/v1/me/requests") }
+
+    /// «Интересное»: записи людей, на которых я не подписан.
+    func explore(_ cursor: String?, limit: Int = Api.page) async throws -> Page<Post> {
+        let o = try await getJson("/v1/explore", query(cursor, limit))
+        return posts(o)
+    }
+
+    // MARK: - Комментарии и истории
+
+    /// Комментарии к записи по порядку (до 100 — больше под одной записью не показываем).
+    func comments(_ postId: Int64) async throws -> [Comment] {
+        let o = try await getJson("/v1/posts/\(postId)/comments", ["limit": "100"])
+        let c = codec()
+        return Json.objects(o, "items").compactMap { c.commentOf($0) }
+    }
+
+    /// Комментарий: ответ — он же с номером сервера.
+    func addComment(_ postId: Int64, _ comment: Comment, key: String) async throws -> Comment {
+        let c = codec()
+        var body: JSONObject = [:]
+        body["text"] = comment.text
+        body["replyTo"] = comment.replyTo ?? ""
+        if let sticker = comment.sticker { body["sticker"] = c.attachmentJson(sticker) }
+        let o = try await sendJson("POST", "/v1/posts/\(postId)/comments", body, key: key)
+        guard let saved = c.commentOf(o) else { throw NetError(.badData, message: "Не комментарий") }
+        return saved
+    }
+
+    /// Живые истории тех, на кого подписан, и свои; seen — смотрел ли я её.
+    func stories() async throws -> [(story: Story, seen: Bool)] {
+        let o = try await getJson("/v1/stories")
+        let c = codec()
+        return Json.objects(o, "items").map { item in
+            (story: c.storyOf(item), seen: Json.bool(item, "seen"))
+        }
+    }
+
     /// Мои переписки на сервере (личные и группы) — JSON как есть.
     func chats() async throws -> [JSONObject] {
         let o = try await getJson("/v1/chats")
@@ -498,7 +554,7 @@ struct ApiCodec {
         return c
     }
 
-    private func commentJson(_ c: Comment) -> JSONObject {
+    func commentJson(_ c: Comment) -> JSONObject {
         var o: JSONObject = [:]
         o["id"] = c.id
         o["author"] = c.author.id
@@ -512,8 +568,9 @@ struct ApiCodec {
         return o
     }
 
-    private func commentOf(_ o: JSONObject) -> Comment? {
+    func commentOf(_ o: JSONObject) -> Comment? {
         guard o["id"] != nil, o["author"] != nil else { return nil }
+        Directory.remember(Json.object(o, "authorInfo"))
         var c = Comment(id: Json.long(o, "id"), author: person(Json.int(o, "author")), text: Json.string(o, "text"))
         c.minutesAgo = Json.int(o, "minutesAgo")
         c.createdAt = Json.date(Json.long(o, "createdAt"))
@@ -523,6 +580,44 @@ struct ApiCodec {
         c.replyTo = reply.isEmpty ? nil : reply
         c.sticker = Json.object(o, "sticker").flatMap { attachmentOf($0) }
         return c
+    }
+
+    // MARK: Истории
+
+    func storyJson(_ s: Story) -> JSONObject {
+        var o: JSONObject = [:]
+        o["id"] = s.id
+        o["author"] = s.authorId
+        o["createdAt"] = Json.ms(s.createdAt)
+        o["media"] = s.media.map { attachmentJson($0) as Any } ?? NSNull()
+        o["text"] = s.text
+        o["bg"] = s.bg
+        o["seed"] = s.seed
+        o["close"] = s.closeFriends
+        var views: [JSONObject] = []
+        for v in s.views {
+            let item: JSONObject = ["user": v.userId, "at": Json.ms(v.at), "liked": v.liked]
+            views.append(item)
+        }
+        o["views"] = views
+        return o
+    }
+
+    /// Автор и зрители с сервера: свой номер — это я (Directory.local).
+    func storyOf(_ o: JSONObject) -> Story {
+        Directory.remember(Json.object(o, "authorInfo"))
+        let at = Date(timeIntervalSince1970: Double(Json.long(o, "createdAt")) / 1000)
+        var s = Story(id: Json.long(o, "id"), authorId: Directory.local(Json.int(o, "author")), createdAt: at)
+        s.media = Json.object(o, "media").flatMap { attachmentOf($0) }
+        s.text = Json.string(o, "text")
+        s.bg = Json.int(o, "bg")
+        s.seed = Json.int(o, "seed")
+        s.closeFriends = Json.bool(o, "close")
+        s.views = Json.objects(o, "views").map { v in
+            let seen = Date(timeIntervalSince1970: Double(Json.long(v, "at")) / 1000)
+            return StoryView(userId: Directory.local(Json.int(v, "user")), at: seen, liked: Json.bool(v, "liked"))
+        }
+        return s
     }
 
     // MARK: Записи

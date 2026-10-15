@@ -11,6 +11,10 @@ enum RtEvent {
     case read(chatId: Int, userId: Int, upTo: Int64)
     /// Сменился состав или название группы.
     case groupChanged(chatId: Int, title: String, memberIds: [Int], adminIds: [Int])
+    /// Подписка: state — "request" (заявка ко мне), "follow" (подписались), "accepted" (мою заявку приняли).
+    case follow(userId: Int, state: String)
+    /// Комментарий к моей записи.
+    case newComment(postId: Int64, comment: JSONObject)
 
     var chatId: Int {
         switch self {
@@ -18,6 +22,7 @@ enum RtEvent {
         case .typing(let chatId, _, _): return chatId
         case .read(let chatId, _, _): return chatId
         case .groupChanged(let chatId, _, _, _): return chatId
+        case .follow, .newComment: return 0
         }
     }
 
@@ -41,6 +46,16 @@ enum RtEvent {
             o["title"] = title
             o["members"] = memberIds
             o["admins"] = adminIds
+        case .follow(let userId, let state):
+            o.removeValue(forKey: "chat")
+            o["type"] = "follow"
+            o["user"] = userId
+            o["state"] = state
+        case .newComment(let postId, let comment):
+            o.removeValue(forKey: "chat")
+            o["type"] = "comment"
+            o["post"] = postId
+            o["comment"] = comment
         }
         return o
     }
@@ -59,6 +74,11 @@ enum RtEvent {
             let members = Json.ints(o, "members")
             let admins = Json.ints(o, "admins")
             return .groupChanged(chatId: chat, title: Json.string(o, "title"), memberIds: members, adminIds: admins)
+        case "follow":
+            return .follow(userId: Json.int(o, "user"), state: Json.string(o, "state"))
+        case "comment":
+            guard let comment = Json.object(o, "comment") else { return nil }
+            return .newComment(postId: Json.long(o, "post"), comment: comment)
         default:
             return nil
         }
@@ -81,6 +101,10 @@ extension RtEvent: Equatable {
             return c1 == c2 && u1 == u2 && t1 == t2
         case let (.groupChanged(c1, t1, m1, a1), .groupChanged(c2, t2, m2, a2)):
             return c1 == c2 && t1 == t2 && m1 == m2 && a1 == a2
+        case let (.follow(u1, s1), .follow(u2, s2)):
+            return u1 == u2 && s1 == s2
+        case let (.newComment(p1, j1), .newComment(p2, j2)):
+            return p1 == p2 && NSDictionary(dictionary: j1).isEqual(to: j2)
         default:
             return false
         }

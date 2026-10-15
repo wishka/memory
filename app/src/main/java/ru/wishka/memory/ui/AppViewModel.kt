@@ -388,6 +388,9 @@ data class UiState(
     val olderFeed: List<Post> = emptyList(),
     /** Справочник людей с сервера сменился (Directory.version) — перерисовать. */
     val peopleVersion: Int = 0,
+    /** «Интересное» под лентой друзей: записи людей, на которых вы не подписаны (с сервера). */
+    val explore: List<Post> = emptyList(),
+    val explorePaging: FeedPaging = FeedPaging(),
     val feedPaging: FeedPaging = FeedPaging(),
     /** Загрузки фото и видео: что идёт, что ждёт, что на паузе. */
     val uploads: List<UploadJob> = emptyList(),
@@ -555,6 +558,14 @@ data class UiState(
     /** Запись по номеру — в ленте или в группе: для обсуждения. */
     fun findPost(id: Long): Post? =
         posts.firstOrNull { it.id == id } ?: groups.firstNotNullOfOrNull { g -> g.posts.firstOrNull { it.id == id } }
+            ?: olderFeed.firstOrNull { it.id == id } ?: explore.firstOrNull { it.id == id }
+
+    /** «Интересное» без заблокированных и без тех, кто уже в ленте. */
+    val exploreVisible: List<Post>
+        get() {
+            val ids = feedWithOlder.map { it.id }.toHashSet()
+            return explore.filter { it.id !in ids && it.author.id !in blocked && it.author.id !in following }
+        }
     fun findPrism(id: Long): Prism? = prisms.firstOrNull { it.id == id }
 }
 
@@ -1020,14 +1031,34 @@ class AppViewModel(
         if (group != null) toggleGroupPostLike(group.id, postId) else toggleLike(postId)
     }
 
-    fun toggleLike(postId: Long) {
+    /** Запись — где бы она ни была: свои, в группах, лента с сервера, «Интересное». */
+    private fun updatePost(postId: Long, change: (Post) -> Post) {
+        // И в страницах ленты и «Интересного»: иначе перерисовка (скачалось фото) вернула бы старое
+        feedPager.update(postId, change)
+        explorePager.update(postId, change)
         _state.update { s ->
-            s.copy(posts = s.posts.map {
-                if (it.id != postId) it
-                else it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1)
-            })
+            fun List<Post>.upd() = map { if (it.id == postId) change(it) else it }
+            s.copy(
+                posts = s.posts.upd(),
+                groups = s.groups.map { g -> g.copy(posts = g.posts.upd()) },
+                olderFeed = s.olderFeed.upd(),
+                explore = s.explore.upd(),
+            )
         }
-        _state.value.posts.firstOrNull { it.id == postId }?.let { p ->
+    }
+
+    /** Работаем с настоящим сервером (не встроенным демо). */
+    private val serverMode: Boolean get() = net.demo == null
+
+    /** Запись на сервере: пришла оттуда или уже ушла туда (номер сервера). */
+    private fun isServerPost(postId: Long): Boolean = serverMode && postId >= SERVER_ID_BASE
+
+    /** Комментарий уже на сервере (у ещё не отправленного — номер телефона, он меньше). */
+    private fun isServerComment(commentId: Long): Boolean = commentId >= SERVER_ID_BASE
+
+    fun toggleLike(postId: Long) {
+        updatePost(postId) { it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1) }
+        _state.value.findPost(postId)?.let { p ->
             // Своя ещё не ушедшая запись — серверу пока нечего отмечать
             if (p.outboxKey.isEmpty()) runCatching { net.queueLike(postId, p.liked) }
         }
@@ -1220,39 +1251,55 @@ class AppViewModel(
             return
         }
         if (!commentLimiter.allow(clock())) return tooOften()
-        _state.update { s ->
-            val comment = Comment(nextId++, s.me, trimmed, createdAt = clock(), replyTo = replyTo, sticker = sticker)
-            fun Post.withComment() = if (id == postId) copy(comments = comments + 1, commentList = commentList + comment) else this
-            s.copy(
-                posts = s.posts.map { it.withComment() },
-                groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.withComment() }) },
-            )
+        val comment = Comment(nextId++, _state.value.me, trimmed, createdAt = clock(), replyTo = replyTo, sticker = sticker)
+        updatePost(postId) { it.copy(comments = it.comments + 1, commentList = it.commentList + comment) }
+        if (isServerPost(postId)) sendComment(postId, comment)
+    }
+
+    /** Комментарий — на сервер; ответ — тот же комментарий с номером сервера. Не ушёл — убрать. */
+    private fun sendComment(postId: Long, comment: Comment) {
+        viewModelScope.launch {
+            val saved = try { net.api.addComment(postId, comment, net.newKey()) } catch (e: NetError) {
+                updatePost(postId) { p -> p.copy(comments = (p.comments - 1).coerceAtLeast(0), commentList = p.commentList.filterNot { it.id == comment.id }) }
+                _state.update { it.copy(notice = t("Комментарий не отправлен — проверьте сеть")) }
+                return@launch
+            }
+            updatePost(postId) { p -> p.copy(commentList = p.commentList.map { if (it.id == comment.id) saved else it }) }
+        }
+    }
+
+    /** Комментарии записи с сервера — при открытии обсуждения. */
+    private fun loadComments(postId: Long) {
+        if (!isServerPost(postId)) return
+        viewModelScope.launch {
+            val list = runCatching { net.api.comments(postId) }.getOrNull() ?: return@launch
+            // Свои, что ещё отправляются (номер телефона), — остаются в конце
+            updatePost(postId) { p ->
+                val pending = p.commentList.filter { !isServerComment(it.id) && it.author.id == _state.value.me.id }
+                p.copy(commentList = list + pending, comments = list.size + pending.size)
+            }
+            peopleChanged()
         }
     }
 
     /** Свой комментарий можно удалить. */
     fun deleteComment(postId: Long, commentId: Long) {
-        _state.update { s ->
-            fun Post.without() =
-                if (id == postId && commentList.any { it.id == commentId && it.author.id == s.me.id })
-                    copy(comments = (comments - 1).coerceAtLeast(0), commentList = commentList.filterNot { it.id == commentId })
-                else this
-            s.copy(
-                posts = s.posts.map { it.without() },
-                groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.without() }) },
-            )
-        }
+        val me = _state.value.me.id
+        val post = _state.value.findPost(postId) ?: return
+        // Свой — всегда; под своей записью — любой
+        if (post.commentList.none { it.id == commentId && (it.author.id == me || post.author.id == me) }) return
+        updatePost(postId) { p -> p.copy(comments = (p.comments - 1).coerceAtLeast(0), commentList = p.commentList.filterNot { it.id == commentId }) }
+        if (isServerPost(postId) && isServerComment(commentId)) runCatching { net.queueCall("DELETE", "/v1/comments/$commentId") }
+        kickNet()
     }
 
     /** «Нравится» комментарию к записи — в ленте или в группе. */
     fun toggleCommentLike(postId: Long, commentId: Long) {
-        _state.update { s ->
-            fun Post.flip() = if (id != postId) this else copy(commentList = commentList.map { it.flipLike(commentId) })
-            s.copy(
-                posts = s.posts.map { it.flip() },
-                groups = s.groups.map { g -> g.copy(posts = g.posts.map { it.flip() }) },
-            )
-        }
+        updatePost(postId) { p -> p.copy(commentList = p.commentList.map { it.flipLike(commentId) }) }
+        if (!isServerPost(postId) || !isServerComment(commentId)) return
+        val liked = _state.value.findPost(postId)?.commentList?.firstOrNull { it.id == commentId }?.liked ?: return
+        runCatching { net.queueCall(if (liked) "PUT" else "DELETE", "/v1/comments/$commentId/like", coalesce = "clike:$commentId") }
+        kickNet()
     }
 
     /**
@@ -1265,6 +1312,7 @@ class AppViewModel(
 
     fun openComments(postId: Long) {
         _state.update { it.copy(commentsPostId = postId, commentsPrismId = null) }
+        loadComments(postId)
     }
 
     fun openPrismComments(prismId: Long) {
@@ -1292,6 +1340,7 @@ class AppViewModel(
     fun toggleFriend(userId: Int) {
         val s0 = _state.value
         if (userId == s0.me.id || userId in s0.blocked) return
+        if (isServerPerson(userId)) return toggleServerFriend(userId)
         when (userId) {
             in s0.following -> removeFriend(userId)
             in s0.sentRequests -> {
@@ -1309,7 +1358,78 @@ class AppViewModel(
     /** Удалить из друзей: записи закрытого профиля и «Истории» человека уходят. */
     fun removeFriend(userId: Int) {
         declined += userId
-        _state.update { it.copy(following = it.following - userId) }
+        _state.update { it.copy(following = it.following - userId, closeFriends = it.closeFriends - userId) }
+        if (isServerPerson(userId)) {
+            // Дружба взаимная: удалить — и отписаться, и убрать его из подписчиков (мои записи и истории ему больше не видны)
+            runCatching {
+                net.queueCall("DELETE", "/v1/users/$userId/follow", coalesce = "follow:$userId")
+                net.queueCall("DELETE", "/v1/me/followers/$userId", coalesce = "follower:$userId")
+            }
+            pushCloseFriends()
+            kickNet()
+        }
+    }
+
+    /** «Близкие друзья» — на сервер целиком (только люди с сервера). */
+    private fun pushCloseFriends() {
+        if (!serverMode) return
+        val ids = _state.value.closeFriends.filter { isServerPerson(it) }
+        runCatching { net.queueCall("PUT", "/v1/me/close-friends", org.json.JSONObject().put("ids", org.json.JSONArray(ids)), coalesce = "close-friends") }
+    }
+
+    /**
+     * Подписка на человека с сервера. Дружба в Memory взаимная, поэтому
+     * «Принять» заявку — это и принять, и подписаться в ответ.
+     */
+    private fun toggleServerFriend(userId: Int) {
+        val s0 = _state.value
+        when (userId) {
+            in s0.following -> removeFriend(userId)
+            in s0.sentRequests -> {
+                _state.update { it.copy(sentRequests = it.sentRequests - userId) }
+                runCatching { net.queueCall("DELETE", "/v1/users/$userId/follow", coalesce = "follow:$userId") }
+            }
+            in s0.followRequests -> approveRequest(userId)
+            else -> {
+                _state.update { it.copy(sentRequests = it.sentRequests + userId) }
+                followOnServer(userId)
+            }
+        }
+        kickNet()
+    }
+
+    /** Подписаться: открытый профиль — сразу друзья, закрытый — заявка ждёт ответа. */
+    private fun followOnServer(userId: Int) {
+        viewModelScope.launch {
+            val state = try { net.api.follow(userId) } catch (e: NetError) {
+                // Нет сети — уйдёт из очереди; ответ узнаем при следующей сверке
+                runCatching { net.queueCall("PUT", "/v1/users/$userId/follow", coalesce = "follow:$userId") }
+                return@launch
+            }
+            if (state == "following") _state.update {
+                it.copy(sentRequests = it.sentRequests - userId, following = it.following + userId)
+            }
+            refreshFeedNow()
+        }
+    }
+
+    /**
+     * Подписки с сервера: на кого подписан, чьи заявки ждут, мои заявки.
+     * Демо-друзья остаются как есть.
+     */
+    suspend fun syncFollows() {
+        val following = net.api.following().map { it.id }.toSet()
+        val sent = net.api.sentRequests().map { it.id }.toSet()
+        val incoming = net.api.followRequests().map { it.id }
+        _state.update { s ->
+            fun Set<Int>.local() = filter { !isServerPerson(it) }.toSet()
+            s.copy(
+                following = s.following.local() + following,
+                sentRequests = s.sentRequests.local() + sent,
+                followRequests = s.followRequests.filter { !isServerPerson(it) } + incoming.filter { it !in s.blocked },
+            )
+        }
+        peopleChanged()
     }
 
     /** Таймеры демо-ответа на заявки: один на человека. */
@@ -1344,12 +1464,23 @@ class AppViewModel(
         _state.update {
             it.copy(followRequests = it.followRequests - userId, sentRequests = it.sentRequests - userId, following = it.following + userId)
         }
+        if (isServerPerson(userId)) {
+            runCatching {
+                net.queueCall("POST", "/v1/me/requests/$userId/accept")
+                net.queueCall("PUT", "/v1/users/$userId/follow", coalesce = "follow:$userId")
+            }
+            kickNet()
+        }
     }
 
     /** Отклонить заявку: человек не узнает об этом, заявка просто исчезает. */
     fun declineRequest(userId: Int) {
         declined += userId
         _state.update { it.copy(followRequests = it.followRequests - userId) }
+        if (isServerPerson(userId)) {
+            runCatching { net.queueCall("DELETE", "/v1/me/requests/$userId") }
+            kickNet()
+        }
     }
 
     /** Кого отклонили или удалили из друзей: в демо они больше не присылают заявок сами. */
@@ -1494,6 +1625,10 @@ class AppViewModel(
         Telemetry.track(AppEvent.StoryPublished)
         val story = Story(nextId++, _state.value.me.id, clock(), media, clean, bg.coerceIn(0, Stories.BACKGROUNDS.lastIndex), closeFriends = closeFriends)
         _state.update { it.copy(stories = it.stories + story, storyComposer = false) }
+        if (serverMode) {
+            runCatching { net.queueStory(story) }
+            kickNet()
+        }
         return null
     }
 
@@ -1566,6 +1701,14 @@ class AppViewModel(
     /** История показана: отметить просмотренной (и, если чужая, — что я её видел). */
     fun seeStory(storyId: Long) {
         val me = _state.value.me.id
+        val first = storyId !in _state.value.seenStories
+        _state.value.story(storyId)?.let { st ->
+            // История с сервера — отметить там (автор увидит в «Кто смотрел»)
+            if (first && st.authorId != me && isServerPerson(st.authorId)) {
+                runCatching { net.queueCall("POST", "/v1/stories/$storyId/view", org.json.JSONObject().put("liked", false), coalesce = "view:$storyId") }
+                kickNet()
+            }
+        }
         _state.update { s ->
             s.copy(
                 seenStories = s.seenStories + storyId,
@@ -1580,6 +1723,9 @@ class AppViewModel(
         val me = _state.value.me.id
         if (story.authorId == me || story.views.any { it.userId == me && it.liked }) return
         _state.update { s -> s.copy(stories = s.stories.map { if (it.id == storyId) Stories.view(it, me, clock(), liked = true) else it }) }
+        if (isServerPerson(story.authorId)) {
+            runCatching { net.queueCall("POST", "/v1/stories/$storyId/view", org.json.JSONObject().put("liked", true), coalesce = "view:$storyId") }
+        }
         replyToStory(storyId, "❤️")
     }
 
@@ -1604,6 +1750,10 @@ class AppViewModel(
     /** Удалить свою историю — и из «Актуального». Файл удаляет экран. */
     fun deleteStory(storyId: Long) {
         val me = _state.value.me.id
+        if (storyId in serverStoryIds) {
+            runCatching { net.queueCall("DELETE", "/v1/stories/$storyId") }
+            kickNet()
+        }
         _state.update { s ->
             s.copy(
                 stories = s.stories.filterNot { it.id == storyId && it.authorId == me },
@@ -1628,6 +1778,36 @@ class AppViewModel(
     fun toggleCloseFriend(userId: Int) {
         if (userId !in _state.value.following) return
         _state.update { s -> s.copy(closeFriends = if (userId in s.closeFriends) s.closeFriends - userId else s.closeFriends + userId) }
+        pushCloseFriends()
+        kickNet()
+    }
+
+    /** Мои истории, которые уже на сервере (номер сервера). */
+    private val serverStoryIds = HashSet<Long>()
+
+    /**
+     * Истории с сервера: чужие заменяют прежние чужие с сервера; у своих —
+     * свежий список «Кто смотрел». Фото и видео чужих — качаются.
+     */
+    suspend fun syncStories() {
+        val list = net.api.stories()
+        val me = _state.value.me.id
+        val mine = list.filter { it.first.authorId == me }.associate { it.first.id to it.first }
+        serverStoryIds += mine.keys
+        val others = list.filter { it.first.authorId != me && it.first.authorId !in _state.value.blocked }
+        val seen = others.filter { it.second }.map { it.first.id }
+        _state.update { s ->
+            val kept = s.stories.filter { it.authorId == me || !isServerPerson(it.authorId) }
+                .map { st -> mine[st.id]?.let { srv -> st.copy(views = srv.views) } ?: st }
+            s.copy(stories = kept + others.map { it.first }, seenStories = s.seenStories + seen)
+        }
+        peopleChanged()
+        for ((st, _) in others) {
+            val a = st.media ?: continue
+            if (!net.isRemote(a.path)) continue
+            val f = runCatching { net.fetchMedia(a.path, ext = mediaExt(a)) }.getOrNull() ?: continue
+            _state.update { s -> s.copy(stories = s.stories.map { if (it.id == st.id) it.copy(media = a.copy(path = f.path)) else it }) }
+        }
     }
 
     /** Новая подборка «Актуального» из своих историй. Ответ — её номер или null. */
@@ -1857,6 +2037,8 @@ class AppViewModel(
             is RtEvent.Read -> event.copy(userId = Directory.local(event.userId))
             is RtEvent.GroupChanged -> event.copy(memberIds = event.memberIds.map(Directory::local), adminIds = event.adminIds.map(Directory::local))
             is RtEvent.NewMessage -> event
+            is RtEvent.Follow -> event.copy(userId = Directory.local(event.userId))
+            is RtEvent.NewComment -> event
         }
         when (ev) {
             is RtEvent.NewMessage -> {
@@ -1904,12 +2086,47 @@ class AppViewModel(
                     })
                 })
             }
+            is RtEvent.Follow -> onFollowEvent(ev)
+            is RtEvent.NewComment -> {
+                val c = runCatching { StateStore.Codec(s.me).commentOf(ev.comment) }.getOrNull() ?: return
+                if (c.author.id in s.blocked) return
+                val post = s.findPost(ev.postId)
+                if (post != null && post.commentList.none { it.id == c.id }) {
+                    updatePost(ev.postId) { it.copy(comments = it.comments + 1, commentList = it.commentList + c) }
+                }
+                peopleChanged()
+                if (post != null) notify(Nudges.commented(c.author, post, c.text)) else notify(Nudges.commentedOn(c.author, ev.postId, c.text))
+            }
             is RtEvent.GroupChanged -> {
                 if (s.me.id !in ev.memberIds && ev.memberIds.isNotEmpty()) {
                     // Нас убрали из группы
                     _state.update { st -> st.copy(chats = st.chats.filterNot { it.id == ev.chatId && it.isGroup }) }
                 } else updateGroup(ev.chatId) { g ->
                     g.copy(title = ev.title.ifEmpty { g.title }, memberIds = ev.memberIds.ifEmpty { g.memberIds }, adminIds = ev.adminIds.toSet().ifEmpty { g.adminIds })
+                }
+            }
+        }
+    }
+
+    /** Подписка по живому каналу: заявка ко мне, новый подписчик, мою заявку приняли. */
+    private fun onFollowEvent(ev: RtEvent.Follow) {
+        val uid = ev.userId
+        if (uid in _state.value.blocked) return
+        viewModelScope.launch {
+            // Кто это — спросить у сервера, если ещё не знаем
+            if (Demo.person(uid) == null) runCatching { net.api.user(uid) }
+            val person = Demo.person(uid) ?: return@launch
+            peopleChanged()
+            when (ev.state) {
+                "request" -> {
+                    _state.update { it.copy(followRequests = (it.followRequests - uid) + uid) }
+                    notify(Nudges.followRequest(person, emptyList()))
+                }
+                "follow" -> notify(Nudges.newFollower(person))
+                "accepted" -> {
+                    _state.update { it.copy(sentRequests = it.sentRequests + uid) }
+                    acceptSentRequest(uid)
+                    refreshFeedNow()
                 }
             }
         }
@@ -2039,8 +2256,25 @@ class AppViewModel(
         runCatching { net.realtime.reconnect() }
         runCatching { net.queueCall("PUT", "/v1/me/key", org.json.JSONObject().put("publicKey", java.util.Base64.getEncoder().encodeToString(myKeys().publicKey)), coalesce = "key") }
         kickNet()
-        if (net.demo == null) runCatching { syncChats() }
+        if (net.demo == null) {
+            runCatching { syncChats() }
+            runCatching { syncFollows() }
+            runCatching { syncStories() }
+            refreshExplore()
+        }
+        pushToken?.let(::setPushToken)
         peopleChanged()
+    }
+
+    /** Токен пушей этого телефона (FCM); сервер шлёт на него, когда приложение закрыто. */
+    private var pushToken: String? = null
+
+    fun setPushToken(token: String?) {
+        if (token.isNullOrEmpty()) return
+        pushToken = token
+        if (!serverMode || !net.session.signedIn) return
+        runCatching { net.queueCall("PUT", "/v1/devices/current/push", org.json.JSONObject().put("token", token), coalesce = "push") }
+        kickNet()
     }
 
     /**
@@ -2144,7 +2378,28 @@ class AppViewModel(
      * Сверить: записи, которых в очереди уже нет, — отправлены; сообщения
      * переписок без очереди — тоже.
      */
+    /**
+     * С сервером своя запись и история получают его номер: по нему
+     * комментарии, «нравится», просмотры, и лента не задваивает. Номер мог
+     * прийти и при фоновой отправке — тогда он ждёт в кэше сети.
+     */
+    private fun adoptServerIds() {
+        val sent = runCatching { net.takeServerIds() }.getOrDefault(emptyList())
+        if (sent.isEmpty() || !serverMode) return
+        val posts = sent.filter { it.kind == OpKind.CreatePost }.associate { it.localId to it.serverId }
+        val stories = sent.filter { it.kind == OpKind.CreateStory }.associate { it.localId to it.serverId }
+        serverStoryIds += stories.values
+        val me = _state.value.me.id
+        _state.update { s ->
+            s.copy(
+                posts = s.posts.map { p -> posts[p.id]?.takeIf { p.author.id == me }?.let { p.copy(id = it, outboxKey = "") } ?: p },
+                stories = s.stories.map { st -> stories[st.id]?.takeIf { st.authorId == me }?.let { st.copy(id = it) } ?: st },
+            )
+        }
+    }
+
     private fun reconcileOutbox() {
+        adoptServerIds()
         val ops = runCatching { net.outbox.all() }.getOrDefault(emptyList())
         val keys = ops.map { it.key }.toSet()
         val chatsWithOps = ops.filter { it.kind == OpKind.SendMessage }.map { it.target.toInt() }.toSet()
@@ -2191,6 +2446,7 @@ class AppViewModel(
         Directory.selfId = n.session.userId
         feedPager = n.feedPager()
         feedPager.restore()
+        explorePager = n.explorePager()
         publishFeed()
         reconcileOutbox()
         connectRealtime()
@@ -2210,6 +2466,8 @@ class AppViewModel(
         Directory.clear()
         net = Net.demo(clock, { _state.value.me })
         feedPager = net.feedPager()
+        explorePager = net.explorePager()
+        serverStoryIds.clear()
     }
 
     private fun publishFeed() {
@@ -2246,7 +2504,10 @@ class AppViewModel(
         val n = net
         viewModelScope.launch {
             val ok = runCatching { n.fetchMedia(a.path, ext = mediaExt(a)) }.isSuccess
-            if (ok && n === net) publishFeed()
+            if (ok && n === net) {
+                publishFeed()
+                publishExplore()
+            }
             // Не вышло (нет сети) — попробуем при следующем показе ленты
             if (!ok) fetchingMedia.remove(a.path)
         }
@@ -2334,6 +2595,7 @@ class AppViewModel(
                 else -> Unit
             }
         }
+        adoptServerIds()
         r.uploads.filter { it.state == UploadState.Done }.forEach(uploadCleanup)
         for (op in r.failed) {
             when (op.kind) {
@@ -2393,6 +2655,33 @@ class AppViewModel(
         feedPager.refresh()
         publishFeed()
         refreshNetCounters()
+        if (serverMode) {
+            runCatching { syncStories() }
+            refreshExplore()
+        }
+    }
+
+    private var explorePager: Pager<Post> = net.explorePager()
+
+    private fun publishExplore() {
+        val p = explorePager.state
+        _state.update { it.copy(explore = withLocalMedia(p.items), explorePaging = FeedPaging(p.loading, p.end, p.fromCache, p.cachedAt, p.error?.kind)) }
+    }
+
+    /** «Интересное» заново (с сервером; у демо его нет). */
+    suspend fun refreshExplore() {
+        if (!serverMode) return
+        explorePager.refresh()
+        publishExplore()
+    }
+
+    /** Долистали «Интересное» до конца — следующая страница. */
+    fun loadMoreExplore() {
+        if (!serverMode || _state.value.explorePaging.loading || _state.value.explorePaging.end) return
+        viewModelScope.launch {
+            explorePager.loadMore()
+            publishExplore()
+        }
     }
 
     fun pauseUpload(id: String) {
@@ -2428,7 +2717,9 @@ class AppViewModel(
     fun clearNetCache() {
         net.cache.clearPages()
         feedPager = net.feedPager()
+        explorePager = net.explorePager()
         publishFeed()
+        publishExplore()
         refreshNetCounters()
     }
 
@@ -3858,7 +4149,18 @@ class AppViewModel(
             s.copy(
                 blocked = s.blocked + userId, following = s.following - userId,
                 followRequests = s.followRequests - userId, sentRequests = s.sentRequests - userId,
+                closeFriends = s.closeFriends - userId,
             )
+        }
+        // Человек с сервера: подписки в обе стороны снимаются — он больше не видит ваши записи и истории
+        if (isServerPerson(userId)) {
+            runCatching {
+                net.queueCall("DELETE", "/v1/users/$userId/follow", coalesce = "follow:$userId")
+                net.queueCall("DELETE", "/v1/me/followers/$userId", coalesce = "follower:$userId")
+                net.queueCall("DELETE", "/v1/me/requests/$userId")
+            }
+            pushCloseFriends()
+            kickNet()
         }
     }
 
@@ -4479,6 +4781,9 @@ class AppViewModel(
     private fun now(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
 
     companion object {
+        /** С этого номера — записи, комментарии и истории сервера (у телефона номера меньше). */
+        const val SERVER_ID_BASE = 10_000_000L
+
         /** Служебные строки переписки (не человек): «Вы создали группу». */
         const val SYSTEM_AUTHOR = -1
         /** Демо: номера переписок, которые начинают незнакомые. */

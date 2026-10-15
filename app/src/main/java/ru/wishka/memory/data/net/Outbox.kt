@@ -7,6 +7,8 @@ enum class OpKind(val id: String) {
     Like("like"),
     Unlike("unlike"),
     SendMessage("message"),
+    /** История: payload — Story в JSON, вложение — после загрузки. */
+    CreateStory("story"),
     /** Любой запрос: группы, «прочитано», профиль. payload — {method, path, body, coalesce}. */
     Call("call");
 

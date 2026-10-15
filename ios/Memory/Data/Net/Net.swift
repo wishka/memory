@@ -12,6 +12,15 @@ struct PumpResult {
     var authLost: Bool = false
 }
 
+/// Номер, который сервер дал своей записи или истории: вид действия, номер
+/// на телефоне, номер сервера, ключ очереди. Хранится в кэше («sent:…»).
+struct SentId: Equatable {
+    let kind: OpKind
+    let localId: Int64
+    let serverId: Int64
+    let key: String
+}
+
 /// Всё сетевое вместе: API, очередь отправки, загрузки, кэш. Одна штука на
 /// вошедший аккаунт. Пока сервера нет — поверх DemoServer; с сервером —
 /// поверх URLSessionTransport (адрес — API_URL в Secrets.plist). То же — в Net.kt.
@@ -175,6 +184,21 @@ final class Net {
         )
     }
 
+    /// «Интересное» страницами — как лента, со своим кэшем.
+    func explorePager() -> Pager<Post> {
+        let c = codec()
+        let api = self.api
+        return Pager<Post>(
+            cacheKey: CacheKeys.explore,
+            cache: cache,
+            idOf: { $0.id },
+            encode: { c.postJson($0) },
+            decode: { c.postOf($0) },
+            clock: clock,
+            load: { cursor in try await api.explore(cursor) }
+        )
+    }
+
     // MARK: - Постановка в очередь
 
     /// Фото и видео записи/сообщения — в загрузки (стикеры и гифки — как есть, они маленькие).
@@ -191,6 +215,17 @@ final class Net {
             job.secretKey = secretKey
             uploads.add(job)
         }
+    }
+
+    /// Новая история: файл — в загрузки, история — в очередь (уйдёт после него).
+    @discardableResult
+    func queueStory(_ story: Story) -> String {
+        let key = newKey()
+        let media: [Attachment] = story.media.map { [$0] } ?? []
+        queueMedia(key, media)
+        let payload = Json.string(codec().storyJson(story))
+        outbox.enqueue(OutboxOp(key: key, kind: .createStory, target: story.id, payload: payload))
+        return key
     }
 
     /// Новая запись: вложения — в загрузки, сама запись — в очередь (уйдёт после них).
@@ -282,6 +317,19 @@ final class Net {
             m.attachments = withRemote(m.attachments, remote)
             // Ответ сервера как есть: с номером и sentAt
             return try await api.sendRaw(Int(op.target), c.messageJson(m), key: op.key)
+        case .createStory:
+            guard let o = Json.parse(op.payload) else { throw NetError(.badData, message: "payload") }
+            let story = c.storyOf(o)
+            var body: JSONObject = [:]
+            body["text"] = story.text
+            body["bg"] = story.bg
+            body["seed"] = story.seed
+            body["close"] = story.closeFriends
+            if let file = story.media {
+                let sent: Attachment = withRemote([file], remote)[0]
+                body["media"] = c.attachmentJson(sent)
+            }
+            return try await api.send("POST", "/v1/stories", body: body, key: op.key)
         case .call:
             guard let p = Json.parse(op.payload) else { throw NetError(.badData, message: "payload") }
             let method = Json.string(p, "method")
@@ -329,6 +377,7 @@ final class Net {
                 onSent: { op, answer in
                     sent.append((op: op, answer: answer))
                     uploads.clearOwner(op.key)
+                    self.rememberServerId(op, answer)
                 },
                 onFailed: { op, _ in failed.append(op) }
             )
@@ -337,6 +386,39 @@ final class Net {
         }
         let jobs: [UploadJob] = order.compactMap { touched[$0] }
         return PumpResult(uploads: jobs, sent: sent, failed: failed, offline: offline, authLost: authLost)
+    }
+
+    /// Приставка ключей кэша с номерами сервера отправленных записей и историй.
+    static let sentPrefix = "sent:"
+
+    /// Номер, который сервер дал записи или истории, — запоминается в кэше:
+    /// отправка могла пройти в фоне (BackgroundNet), без экрана, и приложение
+    /// подхватит номер при следующем открытии (takeServerIds).
+    private func rememberServerId(_ op: OutboxOp, _ answer: JSONObject?) {
+        if op.kind != .createPost && op.kind != .createStory { return }
+        guard let answer else { return }
+        let id = Json.long(answer, "id")
+        if id <= 0 { return }
+        var o: JSONObject = [:]
+        o["kind"] = op.kind.rawValue
+        o["local"] = op.target
+        o["server"] = id
+        o["key"] = op.key
+        cache.put(Self.sentPrefix + op.key, Json.string(o), at: clock())
+    }
+
+    /// Отправленные записи и истории (номер на телефоне → номер сервера). Забираются один раз.
+    func takeServerIds() -> [SentId] {
+        var out: [SentId] = []
+        for k in cache.keys(Self.sentPrefix) {
+            let entry = cache.get(k)
+            cache.remove(k)
+            guard let text = entry?.value, let o = Json.parse(text) else { continue }
+            guard let kind = OpKind.of(Json.string(o, "kind")) else { continue }
+            let item = SentId(kind: kind, localId: Json.long(o, "local"), serverId: Json.long(o, "server"), key: Json.string(o, "key"))
+            out.append(item)
+        }
+        return out
     }
 
     /// Сеть вернулась: что ждало из-за «нет сети», пробуем сразу, без

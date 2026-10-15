@@ -35,6 +35,10 @@ class Core(
     private val store: Store,
     private val dataDir: File,
     val hub: Hub = Hub(),
+    /** Пуши (FCM); NoPush — выключены. */
+    private val pusher: Pusher = NoPush,
+    /** Где отправлять пуши — не в потоке запроса (тесты: сразу). */
+    private val background: (Runnable) -> Unit = { pushPool.execute(it) },
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val uploadsDir = File(dataDir, "uploads").apply { mkdirs() }
@@ -52,6 +56,9 @@ class Core(
         const val TUS = "1.0.0"
         const val JSON = "application/json; charset=utf-8"
         private val LOGIN = Regex("^[a-z0-9._]{3,32}$")
+        const val STORY_TTL = 24 * 60 * 60_000L
+        const val MAX_COMMENT = 1000
+        private val pushPool = java.util.concurrent.Executors.newFixedThreadPool(2) { r -> Thread(r, "push").apply { isDaemon = true } }
     }
 
     // ── Ответы ───────────────────────────────────────────────────────
@@ -155,11 +162,31 @@ class Core(
 
     // ── Люди ─────────────────────────────────────────────────────────
 
-    fun userJson(u: UserRow): JSONObject {
+    /** Человек для того, кто смотрит (viewer): с подпиской и счётчиками. */
+    fun userJson(u: UserRow, viewer: Int = 0): JSONObject {
         val profile = runCatching { JSONObject(u.profile.ifEmpty { "{}" }) }.getOrDefault(JSONObject())
-        return JSONObject().put("id", u.id).put("login", u.login).put("handle", u.login).put("name", u.name)
+        val o = JSONObject().put("id", u.id).put("login", u.login).put("handle", u.login).put("name", u.name)
             .put("hue", u.hue.toDouble()).put("bio", profile.optString("bio")).put("city", profile.optString("city"))
-            .put("publicKey", u.publicKey)
+            .put("publicKey", u.publicKey).put("closed", u.closed)
+            .put("followers", store.followers(u.id).size).put("following", store.following(u.id).size)
+        if (viewer > 0) {
+            val f = store.follow(viewer, u.id)
+            val state = when {
+                viewer == u.id -> "self"
+                f == null -> "none"
+                f.accepted -> "following"
+                else -> "requested"
+            }
+            o.put("followState", state).put("followsMe", store.follow(u.id, viewer)?.accepted == true)
+        }
+        return o
+    }
+
+    /** Видит ли viewer записи и истории автора: свой, открытый профиль или подписан. */
+    private fun canSee(viewer: Int, author: Int): Boolean {
+        if (viewer == author) return true
+        val u = store.user(author) ?: return false
+        return !u.closed || store.follow(viewer, author)?.accepted == true
     }
 
     private fun authorInfo(id: Int): JSONObject? = store.user(id)?.let { u ->
@@ -211,14 +238,97 @@ class Core(
             path == "/v1/users" && r.method == "GET" -> {
                 val q = r.query["q"].orEmpty().trim().lowercase()
                 if (q.length < 2) return json(JSONObject().put("items", JSONArray()))
-                json(JSONObject().put("items", JSONArray(store.searchUsers(q, 20).map(::userJson))))
+                json(JSONObject().put("items", JSONArray(store.searchUsers(q, 20).map { userJson(it, me) })))
             }
             p.size == 3 && p[1] == "users" && r.method == "GET" -> {
                 val u = p[2].toIntOrNull()?.let(store::user) ?: return error(404, "Нет такого человека")
-                json(userJson(u))
+                json(userJson(u, me))
             }
-            path == "/v1/feed" && r.method == "GET" -> page(me, null, r)
-            p.size == 4 && p[1] == "users" && p[3] == "posts" && r.method == "GET" -> page(me, p[2].toIntOrNull() ?: return error(404, "Нет"), r)
+            p.size == 4 && p[1] == "users" && p[3] == "follow" -> follow(me, p[2].toIntOrNull(), r.method)
+            path == "/v1/me/following" && r.method == "GET" -> people(store.following(me), me)
+            path == "/v1/me/followers" && r.method == "GET" -> people(store.followers(me), me)
+            path == "/v1/me/requests" && r.method == "GET" -> people(store.followers(me, accepted = false), me)
+            path == "/v1/me/sent" && r.method == "GET" -> people(store.following(me, accepted = false), me)
+            p.size == 4 && p[1] == "me" && p[2] == "requests" && r.method == "DELETE" -> {
+                val from = p[3].toIntOrNull() ?: return error(404, "Нет")
+                if (store.follow(from, me)?.accepted == false) store.removeFollow(from, me)
+                empty()
+            }
+            p.size == 5 && p[1] == "me" && p[2] == "requests" && p[4] == "accept" && r.method == "POST" -> {
+                val from = p[3].toIntOrNull() ?: return error(404, "Нет")
+                val f = store.follow(from, me) ?: return error(404, "Нет такой заявки")
+                if (!f.accepted) {
+                    store.saveFollow(f.copy(accepted = true))
+                    event(from, JSONObject().put("type", "follow").put("user", me).put("state", "accepted"))
+                    notify(from, me, mapOf("type" to "request_accepted"))
+                }
+                empty()
+            }
+            p.size == 4 && p[1] == "me" && p[2] == "followers" && r.method == "DELETE" -> {
+                p[3].toIntOrNull()?.let { store.removeFollow(it, me) }
+                empty()
+            }
+            path == "/v1/me/close-friends" && r.method == "PUT" -> {
+                val arr = bodyJson(r)?.optJSONArray("ids") ?: return error(400, "Нужен ids")
+                store.setCloseFriends(me, (0 until arr.length()).map { arr.optInt(it) }.filter { it > 0 && it != me }.distinct().take(500))
+                empty()
+            }
+            path == "/v1/me/close-friends" && r.method == "GET" -> json(JSONObject().put("ids", JSONArray(store.closeFriends(me).toList())))
+            path == "/v1/devices/current/push" && r.method == "PUT" -> {
+                val d = deviceByAccess(r) ?: return error(401, "Нужен вход")
+                val token = bodyJson(r)?.optString("token").orEmpty().take(4096)
+                // Один телефон — у одного человека: токен с другого аккаунта отсюда же снимается
+                if (token.isNotEmpty()) store.clearPushToken(token)
+                store.saveDevice(d.copy(pushToken = token))
+                empty()
+            }
+            path == "/v1/feed" && r.method == "GET" -> page(me, PageKind.Feed, r)
+            path == "/v1/explore" && r.method == "GET" -> page(me, PageKind.Explore, r)
+            p.size == 4 && p[1] == "users" && p[3] == "posts" && r.method == "GET" -> {
+                val author = p[2].toIntOrNull() ?: return error(404, "Нет")
+                if (!canSee(me, author)) return error(403, "Закрытый профиль")
+                page(me, PageKind.Author(author), r)
+            }
+            p.size == 4 && p[1] == "posts" && p[3] == "comments" -> {
+                val post = p[2].toLongOrNull()?.let(store::post) ?: return error(404, "Нет такой записи")
+                if (!canSee(me, post.author)) return error(403, "Закрытый профиль")
+                if (r.method == "POST") idempotent(me, r) { addComment(me, post, r) } else commentPage(me, post, r)
+            }
+            p.size == 3 && p[1] == "comments" && r.method == "DELETE" -> {
+                val c = p[2].toLongOrNull()?.let(store::comment) ?: return error(404, "Нет такого комментария")
+                val post = store.post(c.postId)
+                if (c.author != me && post?.author != me) return error(403, "Не ваш комментарий")
+                store.deleteComment(c.id)
+                empty()
+            }
+            p.size == 4 && p[1] == "comments" && p[3] == "like" -> {
+                val c = p[2].toLongOrNull()?.let(store::comment) ?: return error(404, "Нет такого комментария")
+                val post = store.post(c.postId) ?: return error(404, "Нет такой записи")
+                if (!canSee(me, post.author)) return error(403, "Закрытый профиль")
+                when (r.method) {
+                    "PUT" -> store.setCommentLike(c.id, me, true)
+                    "DELETE" -> store.setCommentLike(c.id, me, false)
+                    else -> return error(405, "PUT или DELETE")
+                }
+                empty()
+            }
+            path == "/v1/stories" && r.method == "GET" -> stories(me)
+            path == "/v1/stories" && r.method == "POST" -> idempotent(me, r) { createStory(me, r) }
+            p.size == 3 && p[1] == "stories" && r.method == "DELETE" -> {
+                val st = p[2].toLongOrNull()?.let(store::story) ?: return error(404, "Нет такой истории")
+                if (st.author != me) return error(403, "Не ваша история")
+                store.deleteStory(st.id)
+                empty()
+            }
+            p.size == 4 && p[1] == "stories" && p[3] == "view" && r.method == "POST" -> {
+                val st = p[2].toLongOrNull()?.let(store::story) ?: return error(404, "Нет такой истории")
+                if (!storyVisible(me, st)) return error(403, "Не видно")
+                if (st.author != me) {
+                    val liked = bodyJson(r)?.optBoolean("liked") ?: false
+                    store.saveStoryView(StoryViewRow(st.id, me, clock(), liked))
+                }
+                empty()
+            }
             path == "/v1/posts" && r.method == "POST" -> idempotent(me, r) { createPost(me, r) }
             p.size == 3 && p[1] == "posts" && r.method == "PATCH" -> {
                 val post = p[2].toLongOrNull()?.let(store::post) ?: return error(404, "Нет такой записи")
@@ -229,7 +339,8 @@ class Core(
             }
             p.size == 4 && p[1] == "posts" && p[3] == "like" -> {
                 val id = p[2].toLongOrNull() ?: return error(404, "Нет")
-                store.post(id) ?: return error(404, "Нет такой записи")
+                val post = store.post(id) ?: return error(404, "Нет такой записи")
+                if (!canSee(me, post.author)) return error(403, "Закрытый профиль")
                 when (r.method) {
                     "PUT" -> store.setLike(id, me, true)
                     "DELETE" -> store.setLike(id, me, false)
@@ -287,7 +398,13 @@ class Core(
                 val now = clock()
                 val name = body.optString("name").trim().take(MAX_TITLE).ifEmpty { u.name }
                 body.remove("id"); body.remove("login"); body.remove("updatedAt")
-                store.updateUser(u.copy(name = name, profile = body.toString(), profileUpdated = now))
+                val closed = body.optJSONObject("privacy")?.optBoolean("closedProfile", u.closed) ?: u.closed
+                store.updateUser(u.copy(name = name, profile = body.toString(), profileUpdated = now, closed = closed))
+                // Профиль открыли — все ждущие заявки принимаются
+                if (u.closed && !closed) store.followers(me, accepted = false).forEach { from ->
+                    store.saveFollow(FollowRow(from, me, true, now))
+                    event(from, JSONObject().put("type", "follow").put("user", me).put("state", "accepted"))
+                }
                 json(body.put("updatedAt", now).put("id", u.id).put("login", u.login))
             }
             else -> error(405, "GET или PUT")
@@ -304,23 +421,40 @@ class Core(
     }.getOrNull()
 
     /** Запись для того, кто смотрит: номер, автор, счётчики, «нравится ли мне». */
-    private fun postJson(row: PostRow, liked: Boolean): JSONObject {
+    /** Запись для того, кто смотрит: номер, автор, счётчики, «нравится ли мне», последние комментарии. */
+    private fun postJson(row: PostRow, liked: Boolean, viewer: Int, comments: Int = 0): JSONObject {
         val o = runCatching { JSONObject(row.body) }.getOrDefault(JSONObject())
+        val last = if (comments > 0) store.lastComments(row.id, 2) else emptyList()
+        val likedComments = store.commentsLikedBy(viewer, last.map { it.id })
         o.put("id", row.id).put("author", row.author).put("createdAt", row.created).put("minutesAgo", 0)
             .put("likes", row.likes).put("liked", liked).put("commentsOff", row.commentsOff)
-            .put("comments", 0).put("commentList", JSONArray()).put("outboxKey", "")
+            .put("comments", comments).put("commentList", JSONArray(last.map { commentJson(it, it.id in likedComments) })).put("outboxKey", "")
         authorInfo(row.author)?.let { o.put("authorInfo", it) }
         return o
     }
 
-    private fun page(me: Int, author: Int?, r: Req): Resp {
+    /** Чья лента: друзья (и свои), «Интересное» или записи одного человека. */
+    private sealed class PageKind {
+        object Feed : PageKind()
+        object Explore : PageKind()
+        class Author(val id: Int) : PageKind()
+    }
+
+    private fun page(me: Int, kind: PageKind, r: Req): Resp {
         val limit = (r.query["limit"]?.toIntOrNull() ?: 20).coerceIn(1, 100)
         val after = r.query["cursor"]?.let(::decodeCursor)
-        val rows = store.posts(author, after?.first, after?.second, limit + 1)
+        val mine = store.following(me) + me
+        val rows = when (kind) {
+            PageKind.Feed -> store.postsBy(mine, after?.first, after?.second, limit + 1)
+            PageKind.Explore -> store.explore(mine, after?.first, after?.second, limit + 1)
+            is PageKind.Author -> store.posts(kind.id, after?.first, after?.second, limit + 1)
+        }
         val chunk = rows.take(limit)
         val liked = store.likedBy(me, chunk.map { it.id })
+        val counts = store.commentCounts(chunk.map { it.id })
         val next = if (rows.size > limit) chunk.last().let { encodeCursor(it.created, it.id) } else null
-        return json(JSONObject().put("items", JSONArray(chunk.map { postJson(it, it.id in liked) })).put("next", next ?: JSONObject.NULL))
+        val items = JSONArray(chunk.map { postJson(it, it.id in liked, me, counts[it.id] ?: 0) })
+        return json(JSONObject().put("items", items).put("next", next ?: JSONObject.NULL))
     }
 
     /**
@@ -351,7 +485,7 @@ class Core(
         body.put("media", media)
         if (!body.has("text")) body.put("text", "")
         val row = store.createPost(me, clock(), body.toString())
-        return json(postJson(row, false), 201)
+        return json(postJson(row, false, me), 201)
     }
 
     // ── Переписки ────────────────────────────────────────────────────
@@ -482,6 +616,11 @@ class Core(
         val row = store.addMessage(chat.id, me, clock(), body.toString())
         val event = JSONObject().put("type", "message").put("chat", chat.id)
         ms.filter { it.userId != me }.forEach { m -> hub.send(m.userId, JSONObject(event.toString()).put("message", messageJson(row, m.userId)).toString()) }
+        // Кто не на связи — пуш. Секретное — без текста: сервер его и не знает
+        val secret = body.optBoolean("secret")
+        val preview = if (secret) "" else body.optString("text").take(120)
+        val data = mapOf("type" to "message", "chatId" to chat.id.toString(), "body" to preview)
+        ms.filter { it.userId != me && !hub.online(it.userId) }.forEach { m -> notify(m.userId, me, data) }
         return json(messageJson(row, me), 201)
     }
 
@@ -520,6 +659,139 @@ class Core(
                 hub.sendAll(ms.filter { it.userId != me }.map { it.userId }, ev)
             }
         }
+    }
+
+    // ── Подписки ─────────────────────────────────────────────────────
+
+    private fun people(ids: List<Int>, me: Int): Resp =
+        json(JSONObject().put("items", JSONArray(ids.mapNotNull(store::user).map { userJson(it, me) })))
+
+    /** Подписаться (закрытому профилю — заявка) или отписаться / отозвать заявку. */
+    private fun follow(me: Int, target: Int?, method: String): Resp {
+        val u = target?.let(store::user) ?: return error(404, "Нет такого человека")
+        if (u.id == me) return error(400, "Это вы")
+        val existing = store.follow(me, u.id)
+        return when (method) {
+            "PUT" -> {
+                if (existing == null || !existing.accepted) {
+                    // Закрытый профиль — заявка; но если он сам на меня подписан (принимаю его заявку) — сразу
+                    val accepted = !u.closed || store.follow(u.id, me)?.accepted == true
+                    store.saveFollow(FollowRow(me, u.id, accepted, clock()))
+                    event(u.id, JSONObject().put("type", "follow").put("user", me).put("state", if (accepted) "follow" else "request"))
+                    notify(u.id, me, mapOf("type" to if (accepted) "new_follower" else "follow_request"))
+                }
+                val state = if (store.follow(me, u.id)?.accepted == true) "following" else "requested"
+                json(JSONObject().put("state", state))
+            }
+            "DELETE" -> {
+                store.removeFollow(me, u.id)
+                json(JSONObject().put("state", "none"))
+            }
+            else -> error(405, "PUT или DELETE")
+        }
+    }
+
+    // ── Комментарии ──────────────────────────────────────────────────
+
+    private fun commentJson(c: CommentRow, liked: Boolean): JSONObject {
+        val o = runCatching { JSONObject(c.body) }.getOrDefault(JSONObject())
+        o.put("id", c.id).put("post", c.postId).put("author", c.author).put("createdAt", c.created).put("minutesAgo", 0)
+            .put("likes", c.likes).put("liked", liked)
+        if (!o.has("text")) o.put("text", "")
+        if (!o.has("replyTo")) o.put("replyTo", "")
+        authorInfo(c.author)?.let { o.put("authorInfo", it) }
+        return o
+    }
+
+    private fun commentPage(me: Int, post: PostRow, r: Req): Resp {
+        val limit = (r.query["limit"]?.toIntOrNull() ?: 50).coerceIn(1, 100)
+        val rows = store.comments(post.id, r.query["cursor"]?.toLongOrNull(), limit + 1)
+        val chunk = rows.take(limit)
+        val liked = store.commentsLikedBy(me, chunk.map { it.id })
+        val next = if (rows.size > limit) chunk.last().id.toString() else null
+        return json(JSONObject().put("items", JSONArray(chunk.map { commentJson(it, it.id in liked) })).put("next", next ?: JSONObject.NULL))
+    }
+
+    private fun addComment(me: Int, post: PostRow, r: Req): Resp {
+        if (post.commentsOff && post.author != me) return error(403, "Автор выключил комментарии")
+        val body = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val text = body.optString("text").trim()
+        if (text.length > MAX_COMMENT) return error(400, "Комментарий длиннее $MAX_COMMENT знаков")
+        val sticker = body.optJSONObject("sticker")
+        if (text.isEmpty() && sticker == null) return error(400, "Пустой комментарий")
+        val clean = JSONObject().put("text", text).put("replyTo", body.optString("replyTo").take(60))
+        if (sticker != null) clean.put("sticker", sticker)
+        val row = store.createComment(post.id, me, clock(), clean.toString())
+        val out = commentJson(row, false)
+        if (post.author != me) {
+            event(post.author, JSONObject().put("type", "comment").put("post", post.id).put("comment", out))
+            notify(post.author, me, mapOf("type" to "comment", "postId" to post.id.toString(), "body" to text.take(120)))
+        }
+        return json(out, 201)
+    }
+
+    // ── Истории ──────────────────────────────────────────────────────
+
+    /** Видит ли историю: свой, можно смотреть автора и (если «для близких») — в близких. */
+    private fun storyVisible(me: Int, st: StoryRow): Boolean {
+        if (st.author == me) return true
+        if (!canSee(me, st.author)) return false
+        if (store.follow(me, st.author)?.accepted != true) return false
+        return !st.closeFriends || me in store.closeFriends(st.author)
+    }
+
+    private fun storyJson(st: StoryRow, me: Int, seen: Boolean): JSONObject {
+        val o = runCatching { JSONObject(st.body) }.getOrDefault(JSONObject())
+        o.put("id", st.id).put("author", st.author).put("createdAt", st.created).put("expiresAt", st.expires)
+            .put("close", st.closeFriends).put("seen", seen)
+        if (!o.has("text")) o.put("text", "")
+        // Кто смотрел — только автору
+        val views = if (st.author == me) store.storyViews(st.id) else emptyList()
+        o.put("views", JSONArray(views.map { JSONObject().put("user", it.userId).put("at", it.at).put("liked", it.liked) }))
+        authorInfo(st.author)?.let { o.put("authorInfo", it) }
+        return o
+    }
+
+    private fun stories(me: Int): Resp {
+        val now = clock()
+        val rows = store.stories(store.following(me) + me, now).filter { storyVisible(me, it) }
+        val seen = store.storiesSeenBy(me, rows.map { it.id })
+        return json(JSONObject().put("items", JSONArray(rows.map { storyJson(it, me, it.id in seen) })))
+    }
+
+    private fun createStory(me: Int, r: Req): Resp {
+        val body = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val text = body.optString("text").take(300)
+        val mediaArr = body.optJSONObject("media")?.let { JSONArray().put(it) }
+        val media = cleanMedia(me, mediaArr, 1) ?: return error(422, "Загрузка не закончена")
+        if (text.isBlank() && media.length() == 0) return error(400, "Пустая история")
+        val clean = JSONObject().put("text", text).put("bg", body.optInt("bg")).put("seed", body.optInt("seed"))
+            .put("media", if (media.length() > 0) media.getJSONObject(0) else JSONObject.NULL)
+        val now = clock()
+        val row = store.createStory(me, now, now + STORY_TTL, clean.toString(), body.optBoolean("close"))
+        return json(storyJson(row, me, false), 201)
+    }
+
+    // ── Живой канал и пуши ───────────────────────────────────────────
+
+    private fun event(userId: Int, o: JSONObject) = hub.send(userId, o.toString())
+
+    /**
+     * Пуш человеку на все его телефоны: факты (кто, что), текст — на
+     * телефоне. Отправляется в фоне; токен, который FCM больше не знает, забывается.
+     */
+    fun notify(userId: Int, actorId: Int, data: Map<String, String>) {
+        if (pusher === NoPush) return
+        val tokens = store.devices(userId).map { it.pushToken }.filter { it.isNotEmpty() }.distinct()
+        if (tokens.isEmpty()) return
+        val actor = store.user(actorId)
+        val full = data + mapOf("actorId" to actorId.toString(), "actor" to (actor?.name ?: ""))
+        background(Runnable {
+            for (t in tokens) {
+                val alive = runCatching { pusher.push(t, full) }.getOrDefault(true)
+                if (!alive) store.clearPushToken(t)
+            }
+        })
     }
 
     // ── Загрузки (tus 1.0: creation, termination) ───────────────────
