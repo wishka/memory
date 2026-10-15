@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7C42FF0E3080C6D0006F3556 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 7C42FF0D3080C6D0006F3556 /* Sentry */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		7E9C6D22A14D1B0E38C79C42 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7C42FF0E3080C6D0006F3556 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -126,6 +131,7 @@
 			);
 			name = Memory;
 			packageProductDependencies = (
+				7C42FF0D3080C6D0006F3556 /* Sentry */,
 			);
 			productName = Memory;
 			productReference = 53865833BBA5437C2FF03573 /* Memory.app */;
@@ -160,6 +166,9 @@
 			);
 			mainGroup = 81331044F8640F92B0FF0D0B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7C42FF0C3080C6D0006F3556 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = EF16F239D5E602624235956E /* Products */;
 			projectDirPath = "";
@@ -480,6 +489,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7C42FF0C3080C6D0006F3556 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.30.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7C42FF0D3080C6D0006F3556 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7C42FF0C3080C6D0006F3556 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 8F98959B7565D73D8B64B2F8 /* Project object */;
 }

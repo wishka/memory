@@ -93,7 +93,7 @@ class SqliteCache(context: Context, name: String) : SQLiteOpenHelper(context, na
             upd.close()
             if (changed == 0) {
                 // Порядок добавления — для очереди: что раньше встало, то раньше уйдёт
-                db.execSQL("INSERT INTO kv (k, v, at, seq) VALUES (?, ?, ?, (SELECT IFNULL(MAX(seq), 0) + 1 FROM kv))", arrayOf(key, value, at))
+                db.execSQL("INSERT INTO kv (k, v, at, seq) VALUES (?, ?, ?, (SELECT IFNULL(MAX(seq), 0) + 1 FROM kv))", arrayOf<Any?>(key, value, at))
             }
             db.setTransactionSuccessful()
         } finally {
