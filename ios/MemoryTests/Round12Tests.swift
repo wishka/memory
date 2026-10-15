@@ -166,8 +166,16 @@ final class Round12Tests: XCTestCase {
         let invite = Invite(code: code, action: .drawing, targetId: "9701", from: "Андрей Б")
         let web = Invites.webLink(invite)
         XCTAssertTrue(web.hasPrefix(Invites.web))
-        XCTAssertEqual(invite, Invites.parse(web))
-        XCTAssertEqual(invite, Invites.parse(Invites.appLink(invite)))
+        // Имени в ссылке нет (оно в тексте сообщения) — адрес короткий и без %D0%…
+        let noName = Invite(code: code, action: .drawing, targetId: "9701", from: "")
+        XCTAssertEqual(noName, Invites.parse(web))
+        XCTAssertEqual(noName, Invites.parse(Invites.appLink(invite)))
+        XCTAssertFalse(web.contains("n="))
+        let app = Invite(code: code, action: .app, targetId: "", from: "Андрей")
+        XCTAssertEqual(Invites.web + "?c=" + code, Invites.webLink(app))
+        XCTAssertEqual(.app, Invites.parse(Invites.webLink(app))?.action)
+        let expected: String = "Андрей зовёт вас в Memory — здесь друзья, истории и PRISM: " + Invites.webLink(app)
+        XCTAssertEqual(expected, Invites.message(app))
         // Страница-приглашение кодирует пробел как %20
         XCTAssertEqual("Андрей Б", Invites.parse("memory://invite?c=\(code)&a=book&n=%D0%90%D0%BD%D0%B4%D1%80%D0%B5%D0%B9%20%D0%91")?.from)
         XCTAssertNil(Invites.parse("https://example.com/?c=\(code)"))

@@ -1,0 +1,59 @@
+# Сервер Memory (server/): сборка, тесты ядра — в памяти и на настоящем
+# PostgreSQL, — и сборка Docker-образа. Запускается, когда меняется server/.
+
+name: Server
+
+on:
+  pull_request:
+    paths: ["server/**", ".github/workflows/server.yml"]
+  push:
+    branches: [main, develop]
+    paths: ["server/**", ".github/workflows/server.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: server tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: memory_test
+          POSTGRES_USER: memory
+          POSTGRES_PASSWORD: memory
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U memory -d memory_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Сборка и тесты
+        env:
+          TEST_DATABASE_URL: jdbc:postgresql://localhost:5432/memory_test
+          TEST_DB_USER: memory
+          TEST_DB_PASSWORD: memory
+        run: chmod +x gradlew && ./gradlew -p server test installDist --stacktrace
+
+      - name: Docker-образ собирается
+        run: docker build -f server/Dockerfile -t memory-server .
+
+      - name: Сервер отвечает
+        run: |
+          docker run -d --name memory -p 8080:8080 memory-server
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/health && exit 0; sleep 2; done
+          docker logs memory; exit 1

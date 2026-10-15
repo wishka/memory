@@ -65,7 +65,7 @@ enum DataExport {
 
     /// Где лежит файл: полный путь — как есть, имя — в папке вложений.
     static func url(_ path: String) -> URL {
-        path.hasPrefix("/") ? URL(fileURLWithPath: path) : MediaFiles.directory.appendingPathComponent(path)
+        path.hasPrefix("/") ? URL(fileURLWithPath: path) : MediaFiles.resolve(path)
     }
 
     private static func isFile(_ url: URL) -> Bool {

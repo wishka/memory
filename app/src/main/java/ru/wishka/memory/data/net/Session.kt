@@ -22,16 +22,22 @@ class Session(private val store: KeyValueStore?, login: String) {
     @Volatile var deviceId: String? = store?.get(prefix + "device")
         private set
 
+    /** Свой номер на сервере (ответ входа: user.id); 0 — неизвестен (демо-сервер его не шлёт). */
+    @Volatile var userId: Int = store?.get(prefix + "user")?.toIntOrNull() ?: 0
+        private set
+
     val signedIn: Boolean get() = refresh != null
 
     fun save(o: JSONObject) {
         access = o.optString("access").ifEmpty { null }
         refresh = o.optString("refresh").ifEmpty { refresh }
         o.optString("deviceId").ifEmpty { null }?.let { deviceId = it }
+        o.optJSONObject("user")?.optInt("id")?.takeIf { it > 0 }?.let { userId = it }
         store?.let { s ->
             access?.let { s.put(prefix + "access", it) }
             refresh?.let { s.put(prefix + "refresh", it) }
             deviceId?.let { s.put(prefix + "device", it) }
+            if (userId > 0) s.put(prefix + "user", userId.toString())
         }
     }
 
@@ -39,6 +45,7 @@ class Session(private val store: KeyValueStore?, login: String) {
         access = null
         refresh = null
         deviceId = null
+        // Номер на сервере остаётся: он не меняется, а записи с ним уже на телефоне
         store?.let { s -> listOf("access", "refresh", "device").forEach { s.remove(prefix + it) } }
     }
 }

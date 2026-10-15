@@ -87,6 +87,21 @@ final class Api {
         session?.save(tokens)
     }
 
+    /// Новый аккаунт на сервере (настоящем; демо-серверу не нужен — он
+    /// пускает любого). 409 — логин занят: NetError(.conflict).
+    func register(login: String, password: String, name: String, device: String, platform: String) async throws {
+        let deviceJson: JSONObject = ["name": device, "platform": platform]
+        var body: JSONObject = [:]
+        body["login"] = login
+        body["password"] = password
+        body["name"] = name
+        body["device"] = deviceJson
+        let request = HttpRequest(method: "POST", path: "/v1/auth/register", body: Json.data(body), contentType: Self.json)
+        let r = try await call(request)
+        let tokens = try parse(r)
+        session?.save(tokens)
+    }
+
     /// Выйти с этого устройства: токены на сервере отзываются.
     func signOut() async {
         _ = try? await call(HttpRequest(method: "POST", path: "/v1/auth/logout"))
@@ -119,6 +134,48 @@ final class Api {
         } catch let e as NetError where e.code == 404 {
             return nil
         }
+    }
+
+    // MARK: - Люди
+
+    /// Поиск людей на сервере (от 2 знаков): они же попадают в справочник.
+    func searchUsers(_ query: String) async throws -> [User] {
+        let o = try await getJson("/v1/users", ["q": query])
+        return Json.objects(o, "items").compactMap { Directory.remember($0) }
+    }
+
+    /// Человек по номеру (имя, ключ шифрования).
+    @discardableResult
+    func user(_ id: Int) async throws -> User? {
+        let o = try await getJson("/v1/users/\(id)")
+        return Directory.remember(o)
+    }
+
+    /// Личная переписка с человеком: номер выбирает сервер, у пары она одна.
+    func directChat(_ userId: Int) async throws -> Int {
+        let body: JSONObject = ["user": userId]
+        let o = try await sendJson("POST", "/v1/chats/direct", body, key: nil)
+        guard o["id"] != nil else { throw NetError(.badData, message: "Нет номера переписки") }
+        return Json.int(o, "id")
+    }
+
+    /// Свой открытый ключ — чтобы собеседники могли писать в секретную переписку.
+    func putKey(_ publicKey: [UInt8]) async throws {
+        let body: JSONObject = ["publicKey": Data(publicKey).base64EncodedString()]
+        _ = try await sendJson("PUT", "/v1/me/key", body, key: nil)
+    }
+
+    /// Мои переписки на сервере (личные и группы) — JSON как есть.
+    func chats() async throws -> [JSONObject] {
+        let o = try await getJson("/v1/chats")
+        return Json.objects(o, "items")
+    }
+
+    /// Скачать загруженный файл (GET /v1/uploads/{id}) — фото чужой записи или сообщения.
+    func download(_ path: String) async throws -> Data {
+        let request = HttpRequest(method: "GET", path: path, headers: ["Accept": "*/*"])
+        let r = try await call(request)
+        return r.body
     }
 
     private func getJson(_ path: String, _ query: [String: String] = [:]) async throws -> JSONObject {
@@ -225,10 +282,29 @@ final class Api {
 struct ApiCodec {
     let me: User
 
-    private func person(_ id: Int) -> User {
+    private func person(_ raw: Int) -> User {
+        // Свой номер на сервере — это я
+        let id = Directory.local(raw)
         if id == me.id { return me }
         return Demo.person(id) ?? User(id: id, name: "Неизвестный", handle: "unknown")
     }
+
+    /// «12:05» по часам телефона; 0 — пусто.
+    static func clockTime(_ ms: Int64) -> String {
+        if ms <= 0 { return "" }
+        let at = Date(timeIntervalSince1970: Double(ms) / 1000)
+        return clockFormatter.string(from: at)
+    }
+
+    /// Один на всё приложение: создавать форматтер на каждое сообщение дорого.
+    /// Пояс и язык — текущие (autoupdating), как Locale.getDefault() на Android.
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale.autoupdatingCurrent
+        f.timeZone = TimeZone.autoupdatingCurrent
+        f.dateFormat = "HH:mm"
+        return f
+    }()
 
     // MARK: Вложения
 
@@ -477,6 +553,7 @@ struct ApiCodec {
 
     func postOf(_ o: JSONObject) -> Post? {
         guard o["id"] != nil, o["author"] != nil, o["text"] is String else { return nil }
+        Directory.remember(Json.object(o, "authorInfo"))
         var p = Post(id: Json.long(o, "id"), author: person(Json.int(o, "author")),
                      text: Json.string(o, "text"), minutesAgo: Json.int(o, "minutesAgo"))
         p.artSeed = Json.isNull(o, "artSeed") ? nil : Json.int(o, "artSeed")
@@ -541,9 +618,13 @@ struct ApiCodec {
     }
 
     func messageOf(_ o: JSONObject) -> Message? {
-        guard o["id"] != nil, o["fromMe"] != nil, o["text"] is String, o["time"] is String else { return nil }
+        guard o["id"] != nil, o["fromMe"] != nil, o["text"] is String else { return nil }
+        Directory.remember(Json.object(o, "authorInfo"))
+        // С сервера время приходит числом (sentAt): «12:05» — по часам этого телефона
+        let given = Json.string(o, "time")
+        let time: String = given.isEmpty ? Self.clockTime(Json.long(o, "sentAt")) : given
         var m = Message(id: Json.long(o, "id"), fromMe: Json.bool(o, "fromMe"),
-                        text: Json.string(o, "text"), time: Json.string(o, "time"))
+                        text: Json.string(o, "text"), time: time)
         m.attachments = Json.objects(o, "attachments").compactMap { attachmentOf($0) }
         if let r = Json.object(o, "replyTo"), r["messageId"] != nil {
             m.replyTo = ReplyRef(messageId: Json.long(r, "messageId"), author: Json.string(r, "author"), preview: Json.string(r, "preview"))
@@ -564,7 +645,7 @@ struct ApiCodec {
         m.post = Json.object(o, "post").map { postRefOf($0) }
         m.call = Json.object(o, "call").map { callOf($0) }
         m.pending = Json.bool(o, "pending")
-        m.authorId = Json.int(o, "authorId")
+        m.authorId = Directory.local(Json.int(o, "authorId"))
         m.delivered = Json.bool(o, "delivered")
         m.readBy = Json.ints(o, "readBy")
         m.sentAt = Json.long(o, "sentAt")

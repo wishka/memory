@@ -1,0 +1,87 @@
+# Сервер Memory: база, сервер и выход в интернет. Инструкция — docs/SERVER.md.
+#
+#   cd server && cp .env.example .env   # заполнить .env
+#   docker compose up -d --build
+#
+# Как сервер виден снаружи — COMPOSE_PROFILES в .env:
+#   funnel — Tailscale Funnel: https://memory.<ваша-сеть>.ts.net, бесплатно,
+#            без домена, без белого IP и без открытых портов (подходит и для
+#            домашнего компьютера, и для VPS)
+#   caddy  — свой домен на VPS: HTTPS от Let's Encrypt, порты 80 и 443
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: memory
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Задайте DB_PASSWORD в .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory -d memory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      DATA_DIR: /data
+      DATABASE_URL: jdbc:postgresql://db:5432/memory
+      DB_USER: memory
+      DB_PASSWORD: ${DB_PASSWORD}
+      JAVA_OPTS: ${JAVA_OPTS:--Xmx384m}
+    volumes:
+      - files:/data
+    # Только для проверки с этого же компьютера: http://localhost:8080/health
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  # Профиль funnel: постоянный адрес https://<TS_HOSTNAME>.<сеть>.ts.net
+  tailscale:
+    image: tailscale/tailscale:stable
+    profiles: [funnel]
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-memory}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-memory}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/funnel.json
+      TS_USERSPACE: "true"
+    volumes:
+      - tailscale:/var/lib/tailscale
+      - ./funnel.json:/config/funnel.json:ro
+    depends_on:
+      - server
+
+  # Профиль caddy: свой домен (DOMAIN в .env), A-запись домена — на IP сервера
+  caddy:
+    image: caddy:2
+    profiles: [caddy]
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on:
+      - server
+
+volumes:
+  db:
+  files:
+  tailscale:
+  caddy:

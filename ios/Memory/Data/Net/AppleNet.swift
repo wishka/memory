@@ -140,10 +140,15 @@ final class URLSessionRealtime: NSObject, Realtime, URLSessionWebSocketDelegate 
             guard let self else { return }
             switch result {
             case .success(let message):
+                // Старое соединение (после reconnect) — молчит: иначе события пришли бы дважды
+                if !self.isCurrent(gen) { return }
                 self.handle(message)
                 self.receive(task, gen)
             case .failure:
-                let code: Int = task.closeCode.rawValue
+                var code: Int = task.closeCode.rawValue
+                // Не пустили (401 при подключении) — тоже обновить токен
+                let status: Int = (task.response as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 401 { code = 4401 }
                 self.dropped(gen, code: code)
             }
         }
@@ -172,6 +177,7 @@ final class URLSessionRealtime: NSObject, Realtime, URLSessionWebSocketDelegate 
         }
         // Повторный обрыв того же подключения (receive и делегат) — один раз
         generation += 1
+        let pause = generation
         open = false
         socket = nil
         let wait: Int64 = Backoff.delayMs(attempt, jitter: Double.random(in: 0..<1))
@@ -183,8 +189,17 @@ final class URLSessionRealtime: NSObject, Realtime, URLSessionWebSocketDelegate 
             if expired, let renew { await renew() }
             let nanos = UInt64(max(wait, 0)) * 1_000_000
             try? await Task.sleep(nanoseconds: nanos)
-            self?.start()
+            // За время паузы подключились заново (reconnect) — этот повтор уже не нужен
+            guard let self, self.isCurrent(pause) else { return }
+            self.start()
         }
+    }
+
+    /// Подключение gen — всё ещё текущее (не было reconnect, close или нового обрыва).
+    private func isCurrent(_ gen: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return gen == generation
     }
 
     func send(_ event: RtEvent) {
@@ -193,6 +208,24 @@ final class URLSessionRealtime: NSObject, Realtime, URLSessionWebSocketDelegate 
         lock.unlock()
         let text = Json.string(event.json())
         task?.send(.string(text)) { _ in }
+    }
+
+    /// Подключиться заново сейчас (после входа — с новым токеном). Старое
+    /// соединение закроется без повтора: его поколение уже не текущее.
+    func reconnect() {
+        lock.lock()
+        if closed || listener == nil {
+            lock.unlock()
+            return
+        }
+        let old = socket
+        socket = nil
+        open = false
+        attempt = 0
+        generation += 1
+        lock.unlock()
+        old?.cancel(with: .goingAway, reason: nil)
+        start()
     }
 
     func close() {

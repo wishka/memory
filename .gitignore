@@ -21,3 +21,6 @@ ios/Memory/Secrets.plist
 
 # Python
 __pycache__/
+
+# Пароли сервера (server/.env) — никогда в репозиторий
+server/.env

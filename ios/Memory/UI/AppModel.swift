@@ -294,6 +294,8 @@ struct UiState: Equatable {
     var netStatus: NetStatus = .online
     /// Старые записи ленты — подгружены с сервера (или из кэша) страницами.
     var olderFeed: [Post] = []
+    /// Справочник людей с сервера сменился (Directory.version) — перерисовать.
+    var peopleVersion: Int = 0
     var feedPaging = FeedPaging()
     /// Загрузки фото и видео: что идёт, что ждёт, что на паузе.
     var uploads: [UploadJob] = []
@@ -350,7 +352,18 @@ struct UiState: Equatable {
     var visibleLives: [LiveStream] { lives.filter { $0.live && !blocked.contains($0.hostId) } }
 
     /// Люди, которых можно найти и упомянуть: все, кроме себя и заблокированных.
-    var searchablePeople: [User] { Demo.people.filter { !blocked.contains($0.id) } }
+    var searchablePeople: [User] { knownPeople.filter { !blocked.contains($0.id) } }
+
+    /// Все, кого знает телефон: демо-люди и люди с сервера.
+    var knownPeople: [User] {
+        let server: [User] = Directory.all()
+        var seen: Set<Int> = []
+        var out: [User] = []
+        for u in Demo.people + server where seen.insert(u.id).inserted {
+            out.append(u)
+        }
+        return out
+    }
 
     /// Записи, которые можно найти: лента, свои и группы.
     var searchablePosts: [Post] {
@@ -457,7 +470,7 @@ struct UiState: Equatable {
         if followRequests.contains(userId) { return .incoming }
         return .notFriends
     }
-    var blockedPeople: [User] { Demo.people.filter { blocked.contains($0.id) } }
+    var blockedPeople: [User] { knownPeople.filter { blocked.contains($0.id) } }
     func isBlocked(_ userId: Int) -> Bool { blocked.contains(userId) }
     /// Друзья другого человека. Сервера нет, поэтому видны только знакомые
     /// по демо-данным — и вы, если вы друзья.
@@ -471,7 +484,7 @@ struct UiState: Equatable {
         posts.filter { (following.contains($0.author.id) || $0.author.id == me.id) && !blocked.contains($0.author.id) }
     }
     /// Мои друзья — люди.
-    var friends: [User] { Demo.people.filter { following.contains($0.id) } }
+    var friends: [User] { knownPeople.filter { following.contains($0.id) } }
     /// Записи, где меня отметили на фото, — «Отметки» в профиле.
     var taggedPosts: [Post] {
         var seen = Set<Int64>()
@@ -582,6 +595,8 @@ struct Snapshot: Codable, Equatable {
     var closeFriends: Set<Int>? = nil
     var highlights: [Highlight]? = nil
     var callLog: [CallRecord]? = nil
+    /// Люди с сервера (Directory): кого встретили в ленте, переписках, поиске.
+    var people: [DirectoryEntry]? = nil
 
     /// Меняется, когда меняется устройство файла: старый файл тогда не читается.
     static let currentVersion = 1
@@ -1055,6 +1070,26 @@ final class AppModel {
 
     func setSearchQuery(_ query: String) {
         state.searchQuery = String(query.prefix(80))
+        var q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.hasPrefix("@") { q.removeFirst() }
+        searchServer(q)
+    }
+
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+
+    /// Люди на сервере: через 0,4 с после последней буквы (демо-серверу искать некого).
+    private func searchServer(_ q: String) {
+        searchTask?.cancel()
+        searchTask = nil
+        if q.count < 2 || net.demo != nil { return }
+        let n = net
+        searchTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if Task.isCancelled { return }
+            _ = try? await n.api.searchUsers(q)
+            if Task.isCancelled { return }
+            self?.peopleChanged()
+        }
     }
 
     /// Запрос «состоялся» (нажали на результат или «Найти») — в историю. nil — то, что набрано.
@@ -1981,28 +2016,122 @@ final class AppModel {
         return key
     }
 
-    /// Открытый ключ собеседника. Пока сервера нет — его демо-ключ.
-    private func peerKeys(_ chat: Chat) -> ChatKeyPair { ChatCrypto.demoPeer(chat.peer.id) }
+    /// Открытый ключ собеседника: с сервера (Directory), у демо-людей — демо-ключ.
+    /// nil — человек с сервера без ключа: шифровать нечем (демо-ключ здесь был бы ошибкой).
+    private func peerPublic(_ chat: Chat) -> [UInt8]? {
+        if let key = Directory.key(chat.peer.id) { return key }
+        if isServerPerson(chat.peer.id) { return nil }
+        return ChatCrypto.demoPeer(chat.peer.id).publicKey
+    }
+
+    /// Ключ переписки (X25519 + HKDF): у обоих телефонов выходит один и тот же.
+    private func chatKey(_ chat: Chat) -> [UInt8]? {
+        guard let peer = peerPublic(chat) else { return nil }
+        return try? ChatCrypto.sessionKey(myKeys(), peer)
+    }
 
     private func aad(_ chat: Chat) -> String {
         "memory-chat:" + [state.me.handle, chat.peer.handle].sorted().joined(separator: "|")
     }
 
     private func sealFor(_ chat: Chat, _ text: String) -> String? {
-        guard let key = try? ChatCrypto.sessionKey(myKeys(), peerKeys(chat).publicKey) else { return nil }
+        guard let key = chatKey(chat) else { return nil }
         return try? ChatCrypto.seal(key, text, aad: aad(chat))
     }
 
-    /// «Телефон собеседника» открывает конверт своим ключом.
+    /// Проверка конверта перед отправкой: демо-собеседник открывает его своим
+    /// ключом; настоящий — тем же ключом переписки, что и у нас (X25519 симметричен).
     private func peerOpen(_ chat: Chat, _ envelope: String) -> String? {
-        guard let key = try? ChatCrypto.sessionKey(peerKeys(chat), myKeys().publicKey) else { return nil }
+        if Directory.key(chat.peer.id) != nil {
+            guard let key = chatKey(chat) else { return nil }
+            return ChatCrypto.open(key, envelope, aad: aad(chat))
+        }
+        guard let key = try? ChatCrypto.sessionKey(ChatCrypto.demoPeer(chat.peer.id), myKeys().publicKey) else { return nil }
         return ChatCrypto.open(key, envelope, aad: aad(chat))
+    }
+
+    /// Пришедшее сообщение: конверт секретной переписки — открыть (тогда и
+    /// переписка становится секретной: собеседник её включил); ключи файлов
+    /// в именах вложений — тоже.
+    private func openIncoming(_ chatId: Int, _ m: Message) -> Message {
+        guard let chat = state.chats.first(where: { $0.id == chatId }) else { return m }
+        if chat.isGroup || Directory.key(chat.peer.id) == nil { return m }
+        guard let key = chatKey(chat) else { return m }
+        let text: String? = m.text.isEmpty ? "" : ChatCrypto.open(key, m.text, aad: aad(chat))
+        let sealedFiles = m.attachments.contains { $0.name.hasPrefix(FileCrypto.sealed) }
+        if text == nil && !sealedFiles { return m }
+        if !chat.secret { updateChat(chatId) { $0.secret = true } }
+        var out = m
+        out.text = text ?? m.text
+        return out
+    }
+
+    /// Чужие фото и видео сообщения — скачать (секретные — расшифровать) и показать.
+    private func fetchMessageMedia(_ chatId: Int, _ m: Message) {
+        let n = net
+        let remote: [Attachment] = m.attachments.filter { n.isRemote($0.fileName) }
+        if remote.isEmpty { return }
+        guard let chat = state.chats.first(where: { $0.id == chatId }) else { return }
+        let key: [UInt8]? = chatKey(chat)
+        let ad = aad(chat)
+        Task { @MainActor [weak self] in
+            for a in remote {
+                let isSealed = a.name.hasPrefix(FileCrypto.sealed)
+                var fileKey: FileKey? = nil
+                if isSealed {
+                    let env = String(a.name.dropFirst(FileCrypto.sealed.count))
+                    let opened: String? = key.flatMap { ChatCrypto.open($0, env, aad: ad) }
+                    fileKey = opened.flatMap { FileKey.decode($0) }
+                    if fileKey == nil { continue }
+                }
+                let ext = AppModel.mediaExt(a)
+                guard let file = try? await n.fetchMedia(a.fileName, key: fileKey, ext: ext) else { continue }
+                self?.updateMessage(chatId, m.id) { msg in
+                    msg.attachments = msg.attachments.map { (x: Attachment) -> Attachment in
+                        guard x.id == a.id else { return x }
+                        var y = x
+                        y.fileName = n.mediaRef(file)
+                        if isSealed { y.name = "" }
+                        return y
+                    }
+                }
+            }
+        }
+    }
+
+    /// Расширение скачанного файла: фото — .jpg, видео — .mp4, документ — как в имени.
+    private static func mediaExt(_ a: Attachment) -> String {
+        switch a.kind {
+        case .photo: return ".jpg"
+        case .video: return ".mp4"
+        default:
+            let ext = (a.name as NSString).pathExtension
+            if ext.isEmpty || ext.count > 5 { return "" }
+            return "." + ext
+        }
+    }
+
+    /// Человек с настоящего сервера (а не из демо).
+    private func isServerPerson(_ userId: Int) -> Bool {
+        Directory.get(userId) != nil && !Demo.people.contains { $0.id == userId }
+    }
+
+    /// Справочник людей сменился — экранам перерисоваться.
+    private func peopleChanged() {
+        let v = Directory.version
+        if state.peopleVersion != v { state.peopleVersion = v }
     }
 
     /// Включить или выключить сквозное шифрование переписки. Выключили — отметка о сверке снимается.
     func setSecret(_ chatId: Int, _ on: Bool) {
         // Группы — без сквозного шифрования (ключи на каждого участника — следующий шаг)
-        if state.chats.first(where: { $0.id == chatId })?.isGroup == true { return }
+        guard let chat = state.chats.first(where: { $0.id == chatId }) else { return }
+        if chat.isGroup { return }
+        // Человек с сервера ещё не прислал ключ (старая версия приложения) — шифровать нечем
+        if on && isServerPerson(chat.peer.id) && Directory.key(chat.peer.id) == nil {
+            state.notice = t("У собеседника пока нет ключа шифрования")
+            return
+        }
         if on { Telemetry.track(.secretChat) }
         updateChat(chatId) { c in
             c.secret = on
@@ -2013,7 +2142,8 @@ final class AppModel {
     /// Код безопасности переписки — 12 групп по 5 цифр.
     func safetyNumber(_ chatId: Int) -> String? {
         guard let chat = state.chats.first(where: { $0.id == chatId }) else { return nil }
-        return ChatCrypto.safetyNumber(myKeys().publicKey, peerKeys(chat).publicKey)
+        guard let peer = peerPublic(chat) else { return nil }
+        return ChatCrypto.safetyNumber(myKeys().publicKey, peer)
     }
 
     /// Человек сверил код с собеседником — отметка «проверено».
@@ -2186,7 +2316,9 @@ final class AppModel {
     @discardableResult
     func invite(_ action: InviteAction, targetId: String = "", title: String = "") -> String {
         let s = state
-        let invite = Invite(code: s.inviteCode, action: action, targetId: targetId, from: s.me.firstName)
+        // Демо-аккаунт зовут «Гость» — от его имени не подписываемся
+        let from: String = s.me.handle == LocalAuth.demoLogin ? "" : s.me.firstName
+        let invite = Invite(code: s.inviteCode, action: action, targetId: targetId, from: from)
         log(.inviteSent, action.id + (targetId.isEmpty ? "" : ":\(targetId)"))
         return Invites.message(invite, title: title)
     }
@@ -2452,6 +2584,22 @@ final class AppModel {
         guard let person = Demo.person(userId) else { return }
         if let existing = state.chats.first(where: { $0.peer.id == userId }) {
             openChat(existing.id)
+            return
+        }
+        if isServerPerson(userId) {
+            // Человек с сервера: номер переписки выдаёт сервер (у пары она одна)
+            let n = net
+            Task { @MainActor [weak self] in
+                guard let id = try? await n.api.directChat(Directory.remote(userId)) else {
+                    self?.state.notice = t("Не получилось — проверьте сеть")
+                    return
+                }
+                guard let self else { return }
+                if !self.state.chats.contains(where: { $0.id == id }) {
+                    self.state.chats.insert(Chat(id: id, peer: person, messages: []), at: 0)
+                }
+                self.openChat(id)
+            }
             return
         }
         let id = (state.chats.map(\.id).max() ?? 0) + 1
@@ -2843,10 +2991,12 @@ final class AppModel {
 
     /// Событие живого канала: сообщение, «печатает», «прочитано», состав группы.
     func onRealtime(_ ev: RtEvent) {
+        // Свой номер на сервере — это «я»
         switch ev {
         case .newMessage(let chatId, let message):
             receiveMessage(chatId, message)
-        case .typing(let chatId, let userId, let on):
+        case .typing(let chatId, let rawId, let on):
+            let userId = Directory.local(rawId)
             if userId == state.me.id { return }
             updateChat(chatId) { c in
                 if on {
@@ -2855,11 +3005,29 @@ final class AppModel {
                     _ = c.typingIds.remove(userId)
                 }
             }
-        case .read(let chatId, let userId, let upTo):
-            markReadBy(chatId, userId, upTo)
-        case .groupChanged(let chatId, let title, let memberIds, let adminIds):
+        case .read(let chatId, let rawId, let upTo):
+            markReadBy(chatId, Directory.local(rawId), upTo)
+        case .groupChanged(let chatId, let title, let rawMembers, let rawAdmins):
+            let memberIds: [Int] = rawMembers.map { Directory.local($0) }
+            let adminIds: [Int] = rawAdmins.map { Directory.local($0) }
             applyGroupChange(chatId, title, memberIds, adminIds)
         }
+    }
+
+    /// Чужое сообщение с сервера — со своим номером на этом телефоне, дошедшее.
+    private func receivedCopy(_ m: Message) -> Message {
+        var incoming = Message(
+            id: newId(), fromMe: false, text: m.text, time: m.time,
+            attachments: m.attachments, replyTo: m.replyTo, forwardedFrom: m.forwardedFrom,
+            poll: m.poll, place: m.place, product: m.product
+        )
+        incoming.story = m.story
+        incoming.post = m.post
+        incoming.call = m.call
+        incoming.authorId = m.authorId
+        incoming.delivered = true
+        incoming.sentAt = m.sentAt
+        return incoming
     }
 
     /// Пришло сообщение: в свою переписку, от нового человека — в переписки
@@ -2869,17 +3037,7 @@ final class AppModel {
         guard let m = ApiCodec(me: s.me).messageOf(json) else { return }
         let author = m.authorId
         if author == s.me.id || s.blocked.contains(author) { return }
-        var incoming = Message(
-            id: newId(), fromMe: false, text: m.text, time: m.time,
-            attachments: m.attachments, replyTo: m.replyTo, forwardedFrom: m.forwardedFrom,
-            poll: m.poll, place: m.place, product: m.product
-        )
-        incoming.story = m.story
-        incoming.post = m.post
-        incoming.call = m.call
-        incoming.authorId = author
-        incoming.delivered = true
-        incoming.sentAt = m.sentAt
+        let incoming = receivedCopy(m)
         let byId: Chat? = s.chats.first(where: { $0.id == evChatId })
         let byPeer: Chat? = s.chats.first(where: { !$0.isGroup && $0.peer.id == author })
         let known: Chat? = byId ?? byPeer
@@ -2899,7 +3057,10 @@ final class AppModel {
             state.chats.insert(chat, at: 0)
             chatId = evChatId
         }
-        append(chatId, incoming)
+        peopleChanged()
+        let opened = openIncoming(chatId, incoming)
+        append(chatId, opened)
+        fetchMessageMedia(chatId, opened)
         // Пришло — значит, больше не печатает
         updateChat(chatId) { c in
             _ = c.typingIds.remove(author)
@@ -2908,7 +3069,7 @@ final class AppModel {
         if state.openChatId == chatId {
             sendRead(chatId)
         } else if !chat.muted && !chat.request {
-            let shown = chat.secret ? t("Новое сообщение") : incoming.text
+            let shown = chat.secret ? t("Новое сообщение") : opened.text
             notify(Nudges.message(Demo.person(author) ?? chat.peer, shown, chatId: chatId))
         }
     }
@@ -3062,21 +3223,15 @@ final class AppModel {
         // (демо-сервер новый при каждом запуске, вышли на другом устройстве)
         for attempt in 0..<2 {
             if !n.session.signedIn {
-                do {
-                    try await n.signIn(login: login, password: password ?? "", device: deviceName, platform: "ios")
-                } catch {
-                    let e = NetError.of(error)
-                    if e.kind == .auth || e.kind == .client { state.signedOut = true }
-                    return
-                }
-                // Что ждало входа — отправить сразу; живой канал — уже с токеном
+                let entered = await signInOrRegister(n, login: login, password: password)
+                if !entered { return }
+                // Что ждало входа — отправить сразу; живой канал — с новым токеном в onSignedIn
                 n.retryAuth()
                 kickNet()
-                if !(n.realtime is DemoRealtime) {
-                    n.realtime.close()
-                    connectRealtime()
-                }
             }
+            // Свой номер — сразу: даже если профиль дальше не придёт, свои записи останутся своими
+            let serverId = n.session.userId
+            if serverId > 0 { Directory.selfId = serverId }
             state.signedOut = false
             let remote: ProfileSync?
             do {
@@ -3085,16 +3240,112 @@ final class AppModel {
                 let e = NetError.of(error)
                 // Сохранённые токены сервер не знает (демо-сервер новый при каждом
                 // запуске, настоящий — вышли с этого телефона на другом): войти ещё раз
-                if e.kind != .auth || attempt > 0 { return }
-                n.session.clear()
-                continue
+                if e.kind == .auth && attempt == 0 {
+                    n.session.clear()
+                    continue
+                }
+                // Нет сети или сервер занят: профиль сверим в другой раз, остальное — сейчас
+                await onSignedIn()
+                return
             }
             if let remote, fresh {
                 applyProfile(remote.json)
             } else {
                 pushProfile()
             }
+            await onSignedIn()
             return
+        }
+    }
+
+    /// Войти; настоящий сервер этот аккаунт ещё не знает (заведён на
+    /// телефоне) — завести там. false — не вышло.
+    @MainActor private func signInOrRegister(_ n: Net, login: String, password: String?) async -> Bool {
+        let secret: String = password ?? ""
+        do {
+            try await n.signIn(login: login, password: secret, device: deviceName, platform: "ios")
+            return true
+        } catch {
+            let e = NetError.of(error)
+            if e.kind == .auth && !secret.isEmpty {
+                let name = state.me.name
+                let made: Void? = try? await n.api.register(login: login, password: secret, name: name, device: deviceName, platform: "ios")
+                if made != nil { return true }
+            }
+            if e.kind == .auth || e.kind == .client { state.signedOut = true }
+            return false
+        }
+    }
+
+    /// Вошли: свой номер на сервере, живой канал — с новым токеном, свой
+    /// открытый ключ — на сервер, переписки — сверить (пришедшее без нас).
+    @MainActor private func onSignedIn() async {
+        let n = net
+        let serverId = n.session.userId
+        if serverId > 0 { Directory.selfId = serverId }
+        n.realtime.reconnect()
+        let publicKey: String = Data(myKeys().publicKey).base64EncodedString()
+        let body: JSONObject = ["publicKey": publicKey]
+        n.queueCall("PUT", "/v1/me/key", body: body, coalesce: "key")
+        refreshNetCounters()
+        kickNet()
+        if n.demo == nil { try? await syncChats() }
+        peopleChanged()
+    }
+
+    /// Переписки с сервера: новые (кто-то написал, пока телефон был выключен;
+    /// позвали в группу) — добавить; в известных — дописать пропущенные
+    /// сообщения собеседников.
+    @MainActor func syncChats() async throws {
+        let n = net
+        let items: [JSONObject] = try await n.api.chats()
+        for o in items {
+            let chatId = Json.int(o, "id")
+            if chatId == 0 { continue }
+            if !state.chats.contains(where: { $0.id == chatId }) {
+                guard let chat = await serverChat(n, o, chatId) else { continue }
+                state.chats.insert(chat, at: 0)
+            }
+            await appendMissed(n, chatId)
+        }
+        peopleChanged()
+    }
+
+    /// Новая переписка с сервера: группа или личная (не друг — «Запросы»).
+    @MainActor private func serverChat(_ n: Net, _ o: JSONObject, _ chatId: Int) async -> Chat? {
+        let members: [Int] = Json.ints(o, "members").map { Directory.local($0) }
+        if Json.string(o, "kind") == "group" {
+            let admins: [Int] = Json.ints(o, "admins").map { Directory.local($0) }
+            for id in members where Demo.person(id) == nil {
+                _ = try? await n.api.user(id)
+            }
+            let owner = Directory.local(Json.int(o, "owner"))
+            let hue = Double.random(in: 0..<1)
+            let g = ChatGroup(title: Json.string(o, "title"), memberIds: members, adminIds: Set(admins), ownerId: owner, hue: hue)
+            var chat = Chat(id: chatId, peer: g.asUser(chatId), messages: [])
+            chat.group = g
+            return chat
+        }
+        guard let person = Directory.remember(Json.object(o, "user")) else { return nil }
+        if state.blocked.contains(person.id) { return nil }
+        var chat = Chat(id: chatId, peer: person, messages: [])
+        chat.request = !Json.bool(o, "accepted", true)
+        return chat
+    }
+
+    /// Пропущенное: сообщения собеседников новее последнего известного.
+    @MainActor private func appendMissed(_ n: Net, _ chatId: Int) async {
+        guard let known = state.chats.first(where: { $0.id == chatId }) else { return }
+        let theirs: [Int64] = known.messages.filter { !$0.fromMe }.map { $0.sentAt }
+        let last: Int64 = theirs.max() ?? 0
+        guard let page = try? await n.api.messages(chatId, nil) else { return }
+        let blocked = state.blocked
+        let fresh: [Message] = page.items.filter { !$0.fromMe && $0.sentAt > last && !blocked.contains($0.authorId) }
+        let sorted: [Message] = fresh.sorted { $0.sentAt < $1.sentAt }
+        for m in sorted {
+            let incoming = openIncoming(chatId, receivedCopy(m))
+            append(chatId, incoming)
+            fetchMessageMedia(chatId, incoming)
         }
     }
 
@@ -3275,6 +3526,8 @@ final class AppModel {
         // Прежний живой канал больше не нужен
         if net !== n { net.realtime.close() }
         net = n
+        // Свой номер на сервере — до того, как читать кэш: записи с ним — мои
+        Directory.selfId = n.session.userId
         let pager = n.feedPager()
         pager.restore()
         feedPager = pager
@@ -3294,6 +3547,9 @@ final class AppModel {
         tickTask = nil
         netKick.kick()
         net.realtime.close()
+        // Люди прежнего аккаунта новому не достаются; свои он загрузит в restore()
+        Directory.selfId = 0
+        Directory.clear()
         net = makeDemoNet()
         feedPager = net.feedPager()
         connectRealtime()
@@ -3302,8 +3558,54 @@ final class AppModel {
     private func publishFeed() {
         guard let p = feedPager?.state else { return }
         let paging = FeedPaging(loading: p.loading, end: p.end, fromCache: p.fromCache, cachedAt: p.cachedAt, error: p.error?.kind)
-        state.olderFeed = p.items
+        let items: [Post] = withLocalMedia(p.items)
+        state.olderFeed = items
+        state.peopleVersion = Directory.version
         state.feedPaging = paging
+    }
+
+    /// Какие файлы с сервера уже качаются — чтобы не дважды.
+    @ObservationIgnored private var fetchingMedia: Set<String> = []
+
+    /// Фото и видео чужих записей лежат на сервере: показываем скачанную
+    /// копию, а чего ещё нет — качаем и потом перерисовываем ленту.
+    private func withLocalMedia(_ posts: [Post]) -> [Post] {
+        let n = net
+        return posts.map { (p: Post) -> Post in
+            if !p.media.contains(where: { n.isRemote($0.fileName) }) { return p }
+            var out = p
+            out.media = p.media.map { localCopy($0) }
+            return out
+        }
+    }
+
+    private func localCopy(_ a: Attachment) -> Attachment {
+        let n = net
+        if !n.isRemote(a.fileName) { return a }
+        let f = n.mediaFile(a.fileName, ext: AppModel.mediaExt(a))
+        let attrs = try? FileManager.default.attributesOfItem(atPath: f.path)
+        let size: Int64 = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        if size > 0 {
+            var x = a
+            x.fileName = n.mediaRef(f)
+            return x
+        }
+        fetchFeedMedia(a)
+        return a
+    }
+
+    private func fetchFeedMedia(_ a: Attachment) {
+        if !fetchingMedia.insert(a.fileName).inserted { return }
+        let n = net
+        let path = a.fileName
+        let ext = AppModel.mediaExt(a)
+        Task { @MainActor [weak self] in
+            let ok = (try? await n.fetchMedia(path, ext: ext)) != nil
+            guard let self else { return }
+            if ok && n === self.net { self.publishFeed() }
+            // Не вышло (нет сети) — попробуем при следующем показе ленты
+            if !ok { self.fetchingMedia.remove(path) }
+        }
     }
 
     private func refreshNetCounters() {
@@ -5037,6 +5339,12 @@ final class AppModel {
 
     /// То, что сохраняется на телефоне между запусками (см. StateStore).
     func snapshot() -> Snapshot {
+        var snap = baseSnapshot()
+        snap.people = Directory.entries()
+        return snap
+    }
+
+    private func baseSnapshot() -> Snapshot {
         Snapshot(
             posts: state.posts, chats: state.chats, groups: state.groups, prisms: state.prisms,
             following: state.following, notifications: state.notifications.all, nextId: nextId,
@@ -5062,6 +5370,8 @@ final class AppModel {
     /// Вернуть сохранённое состояние после входа. Свои записи и
     /// комментарии получают текущее имя и сведения из профиля.
     func restore(_ snapshot: Snapshot) {
+        // Справочник — до записей: авторы с сервера не станут «Неизвестными»
+        Directory.restore(snapshot.people)
         nextId = max(nextId, snapshot.nextId)
         var s = state
         s.posts = snapshot.posts

@@ -51,8 +51,13 @@ object Invites {
         return (0 until 6).map { ALPHABET[((v shr (it * 5)) and 31).toInt()] }.joinToString("")
     }
 
+    /**
+     * Параметры ссылки: код, к чему (без «a» — просто в приложение) и номер.
+     * Имени в ссылке нет — оно и так в тексте сообщения, а кириллица в адресе
+     * превращается в «%D0%93…». С сервером имя найдётся по коду.
+     */
     private fun query(i: Invite): String = listOf(
-        "c" to i.code, "a" to i.action.id, "id" to i.targetId, "n" to i.from,
+        "c" to i.code, "a" to (if (i.action == InviteAction.App) "" else i.action.id), "id" to i.targetId,
     ).filter { it.second.isNotEmpty() }.joinToString("&") { (k, v) -> k + "=" + URLEncoder.encode(v, "UTF-8") }
 
     /** Ссылка для мессенджера: открывается в браузере и ведёт в приложение. */
@@ -79,7 +84,13 @@ object Invites {
     /** Текст сообщения: «Андрей зовёт вас дорисовать общий рисунок «Город» в Memory: ссылка». */
     fun message(i: Invite, title: String = ""): String {
         val what = if (title.isNotEmpty()) "${i.action.title} «$title»" else i.action.title
-        return tf("%s зовёт вас %s в Memory", i.from, what) + ": " + webLink(i)
+        val head = when {
+            i.action == InviteAction.App && i.from.isNotEmpty() -> tf("%s зовёт вас в Memory", i.from) + " — " + t("здесь друзья, истории и PRISM")
+            i.action == InviteAction.App -> t("Заходите в Memory — здесь друзья, истории и PRISM")
+            i.from.isNotEmpty() -> tf("%s зовёт вас %s в Memory", i.from, what)
+            else -> tf("Вас зовут %s в Memory", what)
+        }
+        return head + ": " + webLink(i)
     }
 }
 

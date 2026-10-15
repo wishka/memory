@@ -44,7 +44,15 @@ class StateStore(private val context: Context) {
 
     /** Как записи, сообщения и всё остальное ложатся в JSON — тот же формат и у API (data/net). */
     class Codec(private val me: User) {
-        private fun person(id: Int): User = if (id == me.id) me else Demo.person(id) ?: User(id, "Неизвестный", "unknown")
+        private fun person(raw: Int): User {
+            // Свой номер на сервере — это я
+            val id = Directory.local(raw)
+            return if (id == me.id) me else Demo.person(id) ?: User(id, "Неизвестный", "unknown")
+        }
+
+        /** «12:05» по часам телефона; 0 — пусто. */
+        private fun clockTime(ms: Long): String =
+            if (ms <= 0) "" else java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
 
         fun postJson(p: Post): JSONObject = post(p)
         fun postOf(o: JSONObject): Post = post(o)
@@ -57,6 +65,7 @@ class StateStore(private val context: Context) {
 
         fun json(s: Snapshot): JSONObject = JSONObject()
             .put("version", VERSION)
+            .put("people", Directory.json())
             .put("nextId", s.nextId)
             .put("notify", notify(s.notifications))
             .put("privacy", privacy(s.privacy))
@@ -109,7 +118,7 @@ class StateStore(private val context: Context) {
                 .put("autoRenew", s.subscription.autoRenew).put("trialUsed", s.subscription.trialUsed))
 
         fun snapshot(o: JSONObject) = Snapshot(
-            posts = o.getJSONArray("posts").objects().map { post(it) },
+            posts = o.getJSONArray("posts").also { Directory.load(o.optJSONArray("people")) }.objects().map { post(it) },
             chats = o.getJSONArray("chats").objects().map { chat(it) },
             groups = o.getJSONArray("groups").objects().map { group(it) },
             prisms = o.getJSONArray("prisms").objects().map { prism(it) },
@@ -481,7 +490,7 @@ class StateStore(private val context: Context) {
             .put("commentList", JSONArray(p.commentList.map { comment(it) }))
 
         private fun post(o: JSONObject) = Post(
-            id = o.getLong("id"),
+            id = o.getLong("id").also { Directory.remember(o.optJSONObject("authorInfo")) },
             author = person(o.getInt("author")),
             text = o.getString("text"),
             minutesAgo = o.optInt("minutesAgo"),
@@ -570,7 +579,9 @@ class StateStore(private val context: Context) {
             .put("authorId", m.authorId).put("delivered", m.delivered).put("readBy", JSONArray(m.readBy)).put("sentAt", m.sentAt)
 
         private fun message(o: JSONObject) = Message(
-            o.getLong("id"), o.getBoolean("fromMe"), o.getString("text"), o.getString("time"),
+            o.getLong("id").also { Directory.remember(o.optJSONObject("authorInfo")) }, o.getBoolean("fromMe"), o.getString("text"),
+            // С сервера время приходит числом (sentAt): «12:05» — по часам этого телефона
+            o.optString("time").ifEmpty { clockTime(o.optLong("sentAt")) },
             o.optJSONArray("attachments").objects().map { attachment(it) },
             replyTo = o.optJSONObject("replyTo")?.let { ReplyRef(it.getLong("messageId"), it.optString("author"), it.optString("preview")) },
             forwardedFrom = if (o.isNull("forwardedFrom")) null else o.optString("forwardedFrom"),
@@ -585,7 +596,7 @@ class StateStore(private val context: Context) {
             post = o.optJSONObject("post")?.let { postRef(it) },
             call = o.optJSONObject("call")?.let { call(it) },
             pending = o.optBoolean("pending"),
-            authorId = o.optInt("authorId"),
+            authorId = Directory.local(o.optInt("authorId")),
             delivered = o.optBoolean("delivered"),
             readBy = o.optJSONArray("readBy").ints(),
             sentAt = o.optLong("sentAt"),

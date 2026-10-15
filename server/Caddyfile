@@ -1,0 +1,5 @@
+# Профиль caddy: HTTPS для своего домена (DOMAIN в .env) — сертификат сам
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy server:8080
+}

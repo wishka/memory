@@ -68,6 +68,34 @@ class Net(
         return job.copy(uploadPath = dst.path, size = dst.length())
     }
 
+    /** Скачанные чужие файлы (фото и видео записей и сообщений). */
+    private val mediaDir = File(tempDir.parentFile ?: tempDir, "media")
+
+    /** Файл лежит на сервере (а не на этом телефоне). */
+    fun isRemote(path: String): Boolean = path.contains("/v1/uploads/")
+
+    /** Где на телефоне будет копия файла с сервера. */
+    fun mediaFile(path: String, ext: String = ""): File {
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(path.toByteArray()).joinToString("") { "%02x".format(it) }
+        return File(mediaDir, hash.take(32) + ext.filter { it.isLetterOrDigit() || it == '.' }.take(6))
+    }
+
+    /**
+     * Скачать файл с сервера (уже скачанный — сразу). key — файл секретной
+     * переписки: на сервере шифротекст, расшифровывается здесь.
+     */
+    suspend fun fetchMedia(path: String, key: FileKey? = null, ext: String = ""): File {
+        val f = mediaFile(path, ext)
+        if (f.exists() && f.length() > 0) return f
+        val bytes = api.download(path)
+        val plain = if (key != null) FileCrypto.decrypt(bytes, key) else bytes
+        mediaDir.mkdirs()
+        val part = File(mediaDir, f.name + ".part")
+        part.writeBytes(plain)
+        if (!part.renameTo(f)) { f.writeBytes(plain); part.delete() }
+        return f
+    }
+
     /** Встроенный демо-сервер, если работаем с ним (для «Данные и сеть»). */
     val demo: DemoServer? get() = transport as? DemoServer
 

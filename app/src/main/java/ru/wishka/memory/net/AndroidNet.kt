@@ -72,6 +72,11 @@ class OkHttpTransport(baseUrl: String, private val client: OkHttpClient = defaul
 class OkHttpRealtime(baseUrl: String, private val client: OkHttpClient = OkHttpTransport.defaultClient) : ru.wishka.memory.data.net.Realtime {
     /** Токен доступа — из сессии Net. */
     var token: () -> String? = { null }
+    /** Сервер закрыл канал кодом 4401 (токен истёк) — обновить токен перед переподключением. */
+    var refresh: () -> Unit = {}
+    @Volatile private var expired = false
+    /** Номер текущего подключения: события старых (после reconnect) не трогают новое. */
+    @Volatile private var generation = 0
     private val url = baseUrl.trimEnd('/').replaceFirst("http", "ws") + "/v1/realtime"
     @Volatile private var socket: okhttp3.WebSocket? = null
     @Volatile private var open = false
@@ -90,6 +95,7 @@ class OkHttpRealtime(baseUrl: String, private val client: OkHttpClient = OkHttpT
     private fun start() {
         if (closed) return
         val request = Request.Builder().url(url).apply { token()?.let { header("Authorization", "Bearer $it") } }.build()
+        val gen = ++generation
         socket = client.newWebSocket(request, object : okhttp3.WebSocketListener() {
             override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
                 open = true
@@ -97,15 +103,26 @@ class OkHttpRealtime(baseUrl: String, private val client: OkHttpClient = OkHttpT
             }
 
             override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                // Старое соединение (после reconnect) — молчит: иначе события пришли бы дважды
+                if (gen != generation) return
                 ru.wishka.memory.data.net.RtEvent.parse(text)?.let { ev -> listener?.invoke(ev) }
             }
 
+            override fun onClosing(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                if (code == 4401) expired = true
+                webSocket.close(1000, null)
+            }
+
             override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                if (gen != generation) return
                 open = false
                 retry()
             }
 
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                if (gen != generation) return
+                // Не пустили (401 при подключении) — тоже обновить токен
+                if (response?.code == 401) expired = true
                 open = false
                 retry()
             }
@@ -115,11 +132,32 @@ class OkHttpRealtime(baseUrl: String, private val client: OkHttpClient = OkHttpT
     private fun retry() {
         if (closed) return
         val wait = ru.wishka.memory.data.net.Backoff.delayMs(attempt++, jitter = Math.random())
-        timer.schedule({ start() }, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
+        val gen = generation
+        timer.schedule({
+            // За время паузы подключились заново (reconnect) — этот повтор уже не нужен
+            if (gen != generation) return@schedule
+            if (expired) {
+                expired = false
+                runCatching { refresh() }
+            }
+            start()
+        }, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     override fun send(event: ru.wishka.memory.data.net.RtEvent) {
         socket?.send(event.json().toString())
+    }
+
+    override fun reconnect() {
+        if (closed || listener == null) return
+        val old = socket
+        socket = null
+        open = false
+        attempt = 0
+        generation++
+        // Старое соединение закроется без повтора: его поколение уже не текущее
+        old?.cancel()
+        start()
     }
 
     override fun close() {
@@ -271,6 +309,7 @@ object NetSetup {
         )
         // Живой канал входит тем же токеном, что и запросы
         realtime?.token = { net.session.access }
+        realtime?.refresh = { kotlinx.coroutines.runBlocking { runCatching { net.api.refreshTokens() } } }
         return net
     }
 }

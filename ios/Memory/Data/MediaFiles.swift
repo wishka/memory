@@ -27,8 +27,25 @@ enum MediaFiles {
         return dir
     }
 
-    static func url(_ attachment: Attachment) -> URL {
-        directory.appendingPathComponent(attachment.fileName)
+    static func url(_ attachment: Attachment) -> URL { resolve(attachment.fileName) }
+
+    /// Скачанное с сервера (Net.fetchMedia) — «netmedia/<имя>»: папка ищется
+    /// заново при каждом обращении (полный путь меняется после обновления приложения).
+    static let netPrefix = "netmedia/"
+
+    /// Скачанные с сервера файлы: Caches/media — одна папка и для Net.fetchMedia, и для показа.
+    static var netDirectory: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent("media", isDirectory: true)
+    }
+
+    /// Имя файла вложения → где он на телефоне.
+    static func resolve(_ fileName: String) -> URL {
+        if fileName.hasPrefix(netPrefix) {
+            let name = String(fileName.dropFirst(netPrefix.count))
+            return netDirectory.appendingPathComponent(name)
+        }
+        return directory.appendingPathComponent(fileName)
     }
 
     /// Сохранить данные (фото из галереи или камеры) как вложение.

@@ -100,6 +100,13 @@ protocol Realtime: AnyObject {
     func connect(_ onEvent: @escaping (RtEvent) -> Void)
     func send(_ event: RtEvent)
     func close()
+    /// Подключиться заново сейчас (после входа — с новым токеном).
+    func reconnect()
+}
+
+extension Realtime {
+    /// По умолчанию — ничего: демо-каналу переподключаться не к чему.
+    func reconnect() {}
 }
 
 /// Живой канал демо-сервера: события, которые «пришли бы» с сервера,
