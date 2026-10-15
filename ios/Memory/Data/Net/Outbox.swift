@@ -6,6 +6,8 @@ enum OpKind: String {
     case like = "like"
     case unlike = "unlike"
     case sendMessage = "message"
+    /// История: payload — Story в JSON (ApiCodec.storyJson), вложение — после загрузки.
+    case createStory = "story"
     /// Любой запрос: группы, «прочитано», профиль. payload — {method, path, body, coalesce}.
     case call = "call"
 

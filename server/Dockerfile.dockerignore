@@ -6,3 +6,4 @@
 server/build
 server/.gradle
 server/.env
+server/secrets

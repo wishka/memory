@@ -26,6 +26,51 @@ struct FeedScreen: View {
         ]
     }
 
+    /// Карточка записи — одна и та же в ленте и в «Интересном».
+    private func feedCard(_ post: Post, _ state: UiState) -> some View {
+        let mine = model.isMine(post)
+        let friend: FriendState? = post.author.id == state.me.id ? nil : state.friendState(post.author.id)
+        return PostCard(
+            post: post,
+            onLike: { model.toggleLike(post.id) },
+            friend: friend,
+            onFriend: { model.toggleFriend(post.author.id) },
+            onAuthor: { model.openPerson(post.author.id) },
+            onComments: { model.openComments(post.id) },
+            onOpenMedia: model.openMedia,
+            onVote: { model.votePost(post.id, $0) },
+            onClosePoll: mine ? { model.closePostPoll(post.id) } : nil,
+            menu: ownMenu(post),
+            onReport: mine ? nil : { model.reportPost(post) }
+        )
+    }
+
+    private var exploreTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(t("Интересное"))
+                .textStyle(.headline, Palette.ink)
+            Text(t("Люди, на которых вы ещё не подписаны"))
+                .textStyle(.bodySmall, Palette.mist)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+    }
+
+    /// Низ «Интересного»: дошли — следующая страница.
+    private func exploreFooter(_ state: UiState) -> some View {
+        let paging = state.explorePaging
+        let count: Int = state.explore.count
+        return Group {
+            if paging.loading {
+                FeedFooter(paging: paging) { model.loadMoreExplore() }
+            } else {
+                Color.clear.frame(height: 1)
+            }
+        }
+        .task(id: count) { model.loadMoreExplore() }
+    }
+
     var body: some View {
         let state = model.state
         ScrollView {
@@ -63,24 +108,23 @@ struct FeedScreen: View {
                 }
 
                 ForEach(state.feedWithOlder) { post in
-                    PostCard(
-                        post: post,
-                        onLike: { model.toggleLike(post.id) },
-                        friend: post.author.id == state.me.id ? nil : state.friendState(post.author.id),
-                        onFriend: { model.toggleFriend(post.author.id) },
-                        onAuthor: { model.openPerson(post.author.id) },
-                        onComments: { model.openComments(post.id) },
-                        onOpenMedia: model.openMedia,
-                        onVote: { model.votePost(post.id, $0) },
-                        onClosePoll: model.isMine(post) ? { model.closePostPoll(post.id) } : nil,
-                        menu: ownMenu(post),
-                        onReport: model.isMine(post) ? nil : { model.reportPost(post) }
-                    )
+                    feedCard(post, state)
                 }
 
                 // Низ ленты: дошли — подгрузить старое с сервера
                 FeedFooter(paging: state.feedPaging) { model.loadMoreFeed() }
                     .task(id: footerKey(state)) { model.loadMoreFeed() }
+
+                // «Интересное»: лента друзей кончилась — записи остальных людей сервера
+                let explore: [Post] = state.exploreVisible
+                if state.feedPaging.end && !explore.isEmpty {
+                    exploreTitle
+                    // Свои ключи («x» + номер): не путаются с записями ленты выше
+                    ForEach(explore, id: \.exploreKey) { post in
+                        feedCard(post, state)
+                    }
+                    exploreFooter(state)
+                }
             }
             .padding(.top, 12)
             .padding(.bottom, tabBarSpace)
@@ -90,6 +134,11 @@ struct FeedScreen: View {
         .refreshable { await model.refreshFeedNow() }
         .shareSheet($sharing)
     }
+}
+
+private extension Post {
+    /// Ключ записи в «Интересном» — отдельный от ключей ленты.
+    var exploreKey: String { "x\(id)" }
 }
 
 /// Низ ленты появился, подгрузилось старое или вернулась сеть — пробовать дальше.

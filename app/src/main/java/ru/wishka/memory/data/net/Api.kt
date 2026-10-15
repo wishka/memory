@@ -142,6 +142,54 @@ class Api(
         sendJson("PUT", "/v1/me/key", JSONObject().put("publicKey", java.util.Base64.getEncoder().encodeToString(publicKey)), null)
     }
 
+    // ── Подписки ─────────────────────────────────────────────────────
+
+    /** Подписаться: ответ — "following" (открытый профиль) или "requested" (заявка). */
+    suspend fun follow(userId: Int): String = sendJson("PUT", "/v1/users/$userId/follow", JSONObject(), null).optString("state")
+
+    private suspend fun people(path: String): List<User> {
+        val arr = getJson(path).optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { Directory.remember(arr.optJSONObject(it)) }
+    }
+
+    /** На кого я подписан. */
+    suspend fun following(): List<User> = people("/v1/me/following")
+
+    /** Мои заявки, которые ещё ждут ответа. */
+    suspend fun sentRequests(): List<User> = people("/v1/me/sent")
+
+    /** Заявки ко мне. */
+    suspend fun followRequests(): List<User> = people("/v1/me/requests")
+
+    /** «Интересное»: записи людей, на которых я не подписан. */
+    suspend fun explore(cursor: String?, limit: Int = PAGE): Page<Post> = posts(getJson("/v1/explore", query(cursor, limit)))
+
+    // ── Комментарии и истории ────────────────────────────────────────
+
+    /** Комментарии к записи по порядку (до 100 — больше под одной записью не показываем). */
+    suspend fun comments(postId: Long): List<ru.wishka.memory.data.Comment> {
+        val arr = getJson("/v1/posts/$postId/comments", mapOf("limit" to "100")).optJSONArray("items") ?: JSONArray()
+        val c = codec()
+        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { c.commentOf(it) }.getOrNull() } }
+    }
+
+    /** Комментарий: ответ — он же с номером сервера. */
+    suspend fun addComment(postId: Long, comment: ru.wishka.memory.data.Comment, key: String): ru.wishka.memory.data.Comment {
+        val c = codec()
+        val body = JSONObject().put("text", comment.text).put("replyTo", comment.replyTo)
+        comment.sticker?.let { body.put("sticker", c.attachmentJson(it)) }
+        return c.commentOf(sendJson("POST", "/v1/posts/$postId/comments", body, key))
+    }
+
+    /** Живые истории тех, на кого подписан, и свои; второе — смотрел ли я её. */
+    suspend fun stories(): List<Pair<ru.wishka.memory.data.Story, Boolean>> {
+        val arr = getJson("/v1/stories").optJSONArray("items") ?: JSONArray()
+        val c = codec()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { o -> runCatching { c.storyOf(o) to o.optBoolean("seen") }.getOrNull() }
+        }
+    }
+
     /** Мои переписки на сервере (личные и группы) — JSON как есть. */
     suspend fun chats(): List<JSONObject> {
         val arr = getJson("/v1/chats").optJSONArray("items") ?: JSONArray()

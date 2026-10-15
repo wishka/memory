@@ -54,6 +54,7 @@ object CacheKeys {
     const val OP = "op:"
     const val UPLOAD = "up:"
     const val FEED = "page:feed"
+    const val EXPLORE = "page:explore"
     fun chat(chatId: Int) = "page:chat:$chatId"
     fun user(userId: Int) = "page:user:$userId"
 }

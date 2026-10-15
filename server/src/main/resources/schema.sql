@@ -93,3 +93,62 @@ CREATE TABLE IF NOT EXISTS idem (
     PRIMARY KEY (user_id, key)
 );
 CREATE INDEX IF NOT EXISTS idem_created ON idem (created);
+
+-- Раунд 25: подписки, комментарии, истории, пуши
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS closed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS push_token TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS devices_push ON devices (push_token);
+
+CREATE TABLE IF NOT EXISTS follows (
+    follower INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    followee INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    accepted BOOLEAN NOT NULL,
+    created  BIGINT NOT NULL,
+    PRIMARY KEY (follower, followee)
+);
+CREATE INDEX IF NOT EXISTS follows_followee ON follows (followee, accepted);
+
+-- Номера комментариев и историй — с 10 000 001, как у записей: у телефона свои, меньше
+CREATE SEQUENCE IF NOT EXISTS comment_seq START 10000001;
+CREATE SEQUENCE IF NOT EXISTS story_seq START 10000001;
+
+CREATE TABLE IF NOT EXISTS comments (
+    id      BIGINT PRIMARY KEY DEFAULT nextval('comment_seq'),
+    post_id BIGINT NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+    author  INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    created BIGINT NOT NULL,
+    body    TEXT NOT NULL,
+    likes   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS comments_post ON comments (post_id, id);
+
+CREATE TABLE IF NOT EXISTS comment_likes (
+    comment_id BIGINT NOT NULL REFERENCES comments (id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    PRIMARY KEY (comment_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS stories (
+    id            BIGINT PRIMARY KEY DEFAULT nextval('story_seq'),
+    author        INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    created       BIGINT NOT NULL,
+    expires       BIGINT NOT NULL,
+    body          TEXT NOT NULL,
+    close_friends BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS stories_author ON stories (author, expires);
+
+CREATE TABLE IF NOT EXISTS story_views (
+    story_id BIGINT NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+    user_id  INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    at       BIGINT NOT NULL,
+    liked    BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (story_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS close_friends (
+    owner  INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    friend INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    PRIMARY KEY (owner, friend)
+);

@@ -50,8 +50,12 @@ object PushSetup {
 object PushTokens {
     private const val PREFS = "push"
 
+    /** Кому сказать о новом токене (приложение открыто — сразу на сервер). */
+    @Volatile var listener: ((String) -> Unit)? = null
+
     fun save(context: Context, token: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("fcm", token).apply()
+        listener?.invoke(token)
     }
 
     fun current(context: Context): String? =

@@ -1,7 +1,7 @@
 // Сервер Memory: Kotlin + Ktor 3 (Netty), PostgreSQL через JDBC.
 // Kotlin той же версии, что в приложении (build.gradle.kts в корне).
 plugins {
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     application
 }
 

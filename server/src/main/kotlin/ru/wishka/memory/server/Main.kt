@@ -35,6 +35,7 @@ import java.io.File
  *  DATA_DIR      — где лежат загруженные файлы (/data)
  *  DATABASE_URL  — jdbc:postgresql://db:5432/memory; пусто — всё в памяти
  *  DB_USER, DB_PASSWORD
+ *  FCM_CREDENTIALS — путь к ключу сервисного аккаунта Firebase (JSON); нет файла — без пушей
  */
 fun main() {
     val env = System.getenv()
@@ -47,7 +48,15 @@ fun main() {
     } else {
         PgStore(dbUrl, env["DB_USER"].orEmpty(), env["DB_PASSWORD"].orEmpty())
     }
-    val core = Core(store, dataDir)
+    val fcm = File(env["FCM_CREDENTIALS"] ?: "/run/secrets/firebase.json")
+    val pusher: Pusher = if (fcm.isFile) {
+        println("Пуши: FCM, ключ ${fcm.path}")
+        FcmPusher(fcm.readText())
+    } else {
+        println("Пуши выключены: нет ${fcm.path} (docs/SERVER.md → «Пуши»)")
+        NoPush
+    }
+    val core = Core(store, dataDir, pusher = pusher)
     println("Memory server: порт $port, файлы — ${dataDir.absolutePath}")
     embeddedServer(Netty, port = port, host = "0.0.0.0") { memory(core) }.start(wait = true)
 }
@@ -57,6 +66,7 @@ private val WITH_BODY = setOf(HttpMethod.Post, HttpMethod.Put, HttpMethod.Patch)
 
 fun Application.memory(core: Core) {
     install(WebSockets) {
+        // Поля самого WebSocketOptions (мс) — есть во всех версиях Ktor 2 и 3
         pingPeriodMillis = 30_000
         timeoutMillis = 60_000
         maxFrameSize = 64L * 1024

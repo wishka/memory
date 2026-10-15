@@ -24,3 +24,4 @@ __pycache__/
 
 # Пароли сервера (server/.env) — никогда в репозиторий
 server/.env
+server/secrets/

@@ -13,6 +13,8 @@ data class UserRow(
     val profile: String = "",
     val profileUpdated: Long = 0,
     val created: Long = 0,
+    /** Закрытый профиль: подписка — по заявке, записи и истории — только подписчикам. */
+    val closed: Boolean = false,
 )
 
 /** Устройство, с которого вошли; токены хранятся только отпечатками (SHA-256). */
@@ -25,6 +27,8 @@ data class DeviceRow(
     val refreshHash: String,
     val accessHash: String,
     val accessUntil: Long,
+    /** Токен пушей FCM этого телефона; "" — пуши не нужны или ещё не прислал. */
+    val pushToken: String = "",
 )
 
 /** Запись: body — JSON записи в формате API (без автора и счётчиков — их сервер подставляет сам). */
@@ -39,6 +43,17 @@ data class MemberRow(val chatId: Int, val userId: Int, val admin: Boolean, val a
 data class MessageRow(val id: Long, val chatId: Int, val author: Int, val sentAt: Long, val body: String)
 
 data class UploadRow(val id: String, val owner: Int, val length: Long, val offset: Long, val meta: String, val created: Long)
+
+/** Подписка follower → followee; accepted = false — заявка к закрытому профилю. */
+data class FollowRow(val follower: Int, val followee: Int, val accepted: Boolean, val created: Long)
+
+/** Комментарий: body — JSON (text, replyTo, sticker) как у приложения. */
+data class CommentRow(val id: Long, val postId: Long, val author: Int, val created: Long, val body: String, val likes: Int)
+
+/** История: живёт до expires; body — JSON (media, text, bg, seed). */
+data class StoryRow(val id: Long, val author: Int, val created: Long, val expires: Long, val body: String, val closeFriends: Boolean)
+
+data class StoryViewRow(val storyId: Long, val userId: Int, val at: Long, val liked: Boolean)
 
 /** Сохранённый ответ на запрос с Idempotency-Key: повтор получит его же. */
 data class IdemRow(val status: Int, val body: String)
@@ -63,6 +78,8 @@ interface Store {
     fun deviceByRefresh(hash: String): DeviceRow?
     fun devices(userId: Int): List<DeviceRow>
     fun deleteDevice(id: String)
+    /** Токен пушей больше не действует (FCM: UNREGISTERED) — забыть. */
+    fun clearPushToken(token: String)
 
     // Записи
     fun createPost(author: Int, created: Long, body: String): PostRow
@@ -73,6 +90,44 @@ interface Store {
     /** Поставить или снять «нравится»; ответ — сколько теперь. */
     fun setLike(postId: Long, userId: Int, liked: Boolean): Int
     fun likedBy(userId: Int, postIds: List<Long>): Set<Long>
+
+    /** Записи этих авторов (лента друзей). */
+    fun postsBy(authors: Collection<Int>, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
+    /** «Интересное»: записи открытых профилей, кроме этих авторов. */
+    fun explore(exclude: Collection<Int>, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
+
+    // Подписки
+    fun follow(follower: Int, followee: Int): FollowRow?
+    fun saveFollow(row: FollowRow)
+    fun removeFollow(follower: Int, followee: Int)
+    /** На кого подписан человек (accepted) или куда отправил заявки (!accepted). */
+    fun following(userId: Int, accepted: Boolean = true): List<Int>
+    /** Подписчики (accepted) или входящие заявки (!accepted). */
+    fun followers(userId: Int, accepted: Boolean = true): List<Int>
+
+    // Комментарии
+    fun createComment(postId: Long, author: Int, created: Long, body: String): CommentRow
+    fun comment(id: Long): CommentRow?
+    /** По порядку (старые сверху), после afterId. */
+    fun comments(postId: Long, afterId: Long?, limit: Int): List<CommentRow>
+    /** Последние n — для превью под записью (старые сверху). */
+    fun lastComments(postId: Long, n: Int): List<CommentRow>
+    fun commentCounts(postIds: Collection<Long>): Map<Long, Int>
+    fun deleteComment(id: Long)
+    fun setCommentLike(commentId: Long, userId: Int, liked: Boolean): Int
+    fun commentsLikedBy(userId: Int, ids: Collection<Long>): Set<Long>
+
+    // Истории
+    fun createStory(author: Int, created: Long, expires: Long, body: String, closeFriends: Boolean): StoryRow
+    fun story(id: Long): StoryRow?
+    /** Живые (expires > now) истории этих авторов, по времени. */
+    fun stories(authors: Collection<Int>, now: Long): List<StoryRow>
+    fun deleteStory(id: Long)
+    fun saveStoryView(row: StoryViewRow)
+    fun storyViews(storyId: Long): List<StoryViewRow>
+    fun storiesSeenBy(userId: Int, ids: Collection<Long>): Set<Long>
+    fun closeFriends(owner: Int): Set<Int>
+    fun setCloseFriends(owner: Int, ids: Collection<Int>)
 
     // Переписки
     fun createChat(row: ChatRow, members: List<MemberRow>): Boolean
