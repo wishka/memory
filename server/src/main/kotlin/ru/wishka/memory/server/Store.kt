@@ -1,0 +1,100 @@
+package ru.wishka.memory.server
+
+/** Человек на сервере. Номера — с 100 000: не пересекаются с демо-людьми приложения. */
+data class UserRow(
+    val id: Int,
+    val login: String,
+    val name: String,
+    val hue: Float,
+    val passHash: String,
+    val salt: String,
+    val publicKey: String = "",
+    /** Профиль и приватность (JSON, как PUT /v1/me); "" — ещё не присылали. */
+    val profile: String = "",
+    val profileUpdated: Long = 0,
+    val created: Long = 0,
+)
+
+/** Устройство, с которого вошли; токены хранятся только отпечатками (SHA-256). */
+data class DeviceRow(
+    val id: String,
+    val userId: Int,
+    val name: String,
+    val platform: String,
+    val lastSeen: Long,
+    val refreshHash: String,
+    val accessHash: String,
+    val accessUntil: Long,
+)
+
+/** Запись: body — JSON записи в формате API (без автора и счётчиков — их сервер подставляет сам). */
+data class PostRow(val id: Long, val author: Int, val created: Long, val body: String, val likes: Int, val commentsOff: Boolean)
+
+data class ChatRow(val id: Int, val kind: String, val title: String, val owner: Int, val created: Long) {
+    val direct: Boolean get() = kind == "direct"
+}
+
+data class MemberRow(val chatId: Int, val userId: Int, val admin: Boolean, val accepted: Boolean)
+
+data class MessageRow(val id: Long, val chatId: Int, val author: Int, val sentAt: Long, val body: String)
+
+data class UploadRow(val id: String, val owner: Int, val length: Long, val offset: Long, val meta: String, val created: Long)
+
+/** Сохранённый ответ на запрос с Idempotency-Key: повтор получит его же. */
+data class IdemRow(val status: Int, val body: String)
+
+/**
+ * Хранилище сервера. Две реализации: PgStore (PostgreSQL — в Docker) и
+ * MemoryStore (тесты и запуск без базы). Логика — в Core, здесь только
+ * чтение и запись.
+ */
+interface Store {
+    // Люди
+    fun createUser(login: String, name: String, hue: Float, passHash: String, salt: String, now: Long): UserRow?
+    fun user(id: Int): UserRow?
+    fun userByLogin(login: String): UserRow?
+    fun searchUsers(query: String, limit: Int): List<UserRow>
+    fun updateUser(row: UserRow)
+
+    // Устройства
+    fun saveDevice(row: DeviceRow)
+    fun device(id: String): DeviceRow?
+    fun deviceByAccess(hash: String): DeviceRow?
+    fun deviceByRefresh(hash: String): DeviceRow?
+    fun devices(userId: Int): List<DeviceRow>
+    fun deleteDevice(id: String)
+
+    // Записи
+    fun createPost(author: Int, created: Long, body: String): PostRow
+    fun post(id: Long): PostRow?
+    /** Новые сверху; после (createdAt, id) — следующая страница. author == null — все. */
+    fun posts(author: Int?, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
+    fun setCommentsOff(id: Long, off: Boolean)
+    /** Поставить или снять «нравится»; ответ — сколько теперь. */
+    fun setLike(postId: Long, userId: Int, liked: Boolean): Int
+    fun likedBy(userId: Int, postIds: List<Long>): Set<Long>
+
+    // Переписки
+    fun createChat(row: ChatRow, members: List<MemberRow>): Boolean
+    fun chat(id: Int): ChatRow?
+    fun directChat(a: Int, b: Int): ChatRow?
+    /** Все переписки, где человек участник. */
+    fun chatsOf(userId: Int): List<ChatRow>
+    fun updateChatTitle(id: Int, title: String)
+    fun members(chatId: Int): List<MemberRow>
+    fun saveMember(row: MemberRow)
+    fun removeMember(chatId: Int, userId: Int)
+    fun addMessage(chatId: Int, author: Int, sentAt: Long, body: String): MessageRow
+    /** Новые сверху; before — номер сообщения (следующая страница). */
+    fun messages(chatId: Int, before: Long?, limit: Int): List<MessageRow>
+
+    // Загрузки
+    fun createUpload(row: UploadRow)
+    fun upload(id: String): UploadRow?
+    fun setUploadOffset(id: String, offset: Long)
+    fun deleteUpload(id: String)
+
+    // Повторы
+    fun idem(userId: Int, key: String): IdemRow?
+    fun saveIdem(userId: Int, key: String, row: IdemRow, now: Long)
+}

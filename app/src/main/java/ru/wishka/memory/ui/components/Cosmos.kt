@@ -19,6 +19,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import ru.wishka.memory.data.User
 import ru.wishka.memory.ui.theme.Inter
 import ru.wishka.memory.ui.theme.Palette
+import ru.wishka.memory.ui.theme.ThemeState
 import kotlin.random.Random
 
 /**
@@ -48,6 +51,7 @@ fun CosmicBackground(modifier: Modifier = Modifier) {
     }
     Canvas(modifier = modifier.fillMaxSize()) {
         drawRect(Brush.verticalGradient(listOf(Palette.Night, Palette.Void, Palette.Void)))
+        val light = ThemeState.light
         drawRect(
             Brush.radialGradient(
                 listOf(Palette.Orchid.copy(alpha = 0.32f), Color.Transparent),
@@ -62,7 +66,8 @@ fun CosmicBackground(modifier: Modifier = Modifier) {
                 radius = size.width * 1.0f,
             )
         )
-        stars.forEach { (x, y, s) ->
+        // Днём звёзд не видно
+        if (!light) stars.forEach { (x, y, s) ->
             drawCircle(
                 Palette.Ink.copy(alpha = 0.15f + s * 0.45f),
                 radius = 0.6f + s * 1.3f,
@@ -76,7 +81,8 @@ fun CosmicBackground(modifier: Modifier = Modifier) {
 fun Modifier.glass(shape: Shape = RoundedCornerShape(22.dp), strong: Boolean = false): Modifier =
     this
         .clip(shape)
-        .background(Palette.Plum.copy(alpha = if (strong) 0.62f else 0.38f))
+        // На светлом фоне стекло — почти белое, иначе карточки сливаются с фоном
+        .background(Palette.Plum.copy(alpha = if (ThemeState.light) (if (strong) 0.95f else 0.72f) else if (strong) 0.7f else 0.38f))
         .border(
             1.dp,
             Brush.linearGradient(listOf(Palette.Lilac.copy(alpha = 0.38f), Palette.Sky.copy(alpha = 0.12f))),
@@ -121,13 +127,29 @@ fun Avatar(user: User, size: Dp = 44.dp, ring: Boolean = false, showOnline: Bool
                 .background(avatarBrush(user.hue)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                user.initials,
-                color = Palette.Ink,
-                fontFamily = Inter,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = (size.value * 0.34f).sp,
-            )
+            // Своё фото — поверх градиента; пока читается, видны буквы
+            val photo = if (user.avatar.isNotEmpty()) {
+                rememberThumbnail(
+                    ru.wishka.memory.data.Attachment(user.avatar, ru.wishka.memory.data.MediaKind.Photo, user.avatar),
+                    maxSide = 512,
+                )
+            } else null
+            if (photo != null) {
+                androidx.compose.foundation.Image(
+                    photo,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                )
+            } else {
+                Text(
+                    user.initials,
+                    color = Palette.Ink,
+                    fontFamily = Inter,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = (size.value * 0.34f).sp,
+                )
+            }
         }
         if (showOnline && user.online) {
             Box(
@@ -147,7 +169,7 @@ fun Avatar(user: User, size: Dp = 44.dp, ring: Boolean = false, showOnline: Bool
 /** Заголовок экрана — тонкий широкий Unbounded капслоком, как в референсах. */
 @Composable
 fun ScreenTitle(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
+    Column(modifier = modifier.semantics(mergeDescendants = true) { heading() }) {
         Text(title.uppercase(), style = MaterialTheme.typography.displaySmall, color = Palette.Ink)
         if (subtitle != null) {
             Text(

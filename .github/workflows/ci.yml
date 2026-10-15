@@ -27,14 +27,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
+
+      # Документы для iPhone (ios/Memory/Legal) — копии docs/legal
+      - name: Документы совпадают
+        run: python3 scripts/sync_legal.py --check
+
+      # Гид в приложении собран из docs/guide/guide.json (Kotlin и Swift)
+      - name: Гид совпадает
+        run: python3 scripts/sync_guide.py --check
+
+      # Список звуков собран из scripts/sounds/catalog.py (Kotlin и Swift)
+      - name: Звуки совпадают
+        run: python3 scripts/make_sounds.py --check
 
       - name: Сборка
+        env:
+          JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
+          GIPHY_API_KEY: ${{ secrets.ANDROID_GIPHY_API_KEY }}
+          SENTRY_DSN: ${{ secrets.ANDROID_SENTRY_DSN }}
+          # Сервер Memory; пусто — встроенный демо-сервер
+          API_URL: ${{ secrets.API_URL }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_SENDER_ID: ${{ secrets.FIREBASE_SENDER_ID }}
         run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
 
       - name: Юнит-тесты
@@ -46,13 +68,13 @@ jobs:
         continue-on-error: true
         run: ./gradlew lintDebug
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: memory-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: reports

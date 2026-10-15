@@ -1,0 +1,89 @@
+package ru.wishka.memory.data
+
+import android.content.Context
+import ru.wishka.memory.i18n.L10n
+import ru.wishka.memory.i18n.Lang
+
+/**
+ * Настройки телефона, а не аккаунта: язык и размер текста. Одни на всех,
+ * кто входит с этого телефона, и действуют уже на экране входа.
+ */
+class DevicePrefs(context: Context) {
+    private val prefs = context.getSharedPreferences("device", Context.MODE_PRIVATE)
+
+    /** Прочитать сохранённое в L10n — при запуске, до первого экрана. */
+    fun load() {
+        L10n.choice = Lang.entries.firstOrNull { it.code == prefs.getString("lang", null) } ?: Lang.System
+        L10n.textScale = prefs.getFloat("textScale", 1f).coerceIn(TEXT_SCALES.first(), TEXT_SCALES.last())
+        ru.wishka.memory.ui.theme.ThemeState.mode = ru.wishka.memory.ui.theme.ThemeMode.of(prefs.getString("theme", null))
+    }
+
+    /** Оформление — на этом телефоне, как язык и размер текста. */
+    fun setTheme(mode: ru.wishka.memory.ui.theme.ThemeMode) {
+        ru.wishka.memory.ui.theme.ThemeState.mode = mode
+        prefs.edit().putString("theme", mode.id).apply()
+    }
+
+    /** Качество фото и видео при отправке («Данные и сеть»). */
+    val mediaQuality: ru.wishka.memory.data.net.MediaQuality
+        get() = ru.wishka.memory.data.net.MediaQuality.of(prefs.getString("mediaQuality", null))
+
+    fun setMediaQuality(q: ru.wishka.memory.data.net.MediaQuality) {
+        prefs.edit().putString("mediaQuality", q.id).apply()
+    }
+
+    /** Кто вошёл последним — для отправки в фоне (NetWorker). */
+    val lastLogin: String? get() = prefs.getString("lastLogin", null)
+    val lastMeId: Int get() = prefs.getInt("lastMeId", 0)
+    val lastMeName: String get() = prefs.getString("lastMeName", null).orEmpty()
+
+    fun setLastAccount(login: String?, meId: Int = 0, meName: String = "") {
+        val e = prefs.edit()
+        if (login == null) e.remove("lastLogin") else e.putString("lastLogin", login).putInt("lastMeId", meId).putString("lastMeName", meName)
+        e.apply()
+    }
+
+    /** Демо: «как будто нет сети». */
+    val demoOffline: Boolean get() = prefs.getBoolean("demoOffline", false)
+
+    fun setDemoOffline(on: Boolean) {
+        prefs.edit().putBoolean("demoOffline", on).apply()
+    }
+
+    fun setLanguage(lang: Lang) {
+        L10n.choice = lang
+        prefs.edit().putString("lang", lang.code).apply()
+    }
+
+    fun setTextScale(scale: Float) {
+        L10n.textScale = scale
+        prefs.edit().putFloat("textScale", scale).apply()
+    }
+
+    /** Знакомство «выберите любимое» уже показали на этом телефоне. */
+    val onboarded: Boolean get() = prefs.getBoolean("onboarded", false)
+
+    fun setOnboarded() {
+        prefs.edit().putBoolean("onboarded", true).apply()
+    }
+
+    /** Любимое, выбранное до регистрации: попадёт на полку нового аккаунта. */
+    fun pendingPicks(): List<CatalogTitle> =
+        prefs.getString("picks", "").orEmpty().lines().filter { '\t' in it }.mapNotNull { line ->
+            val (kind, title) = line.split('\t', limit = 2)
+            Catalog.find(kind, title)
+        }
+
+    fun savePicks(picks: List<CatalogTitle>) {
+        prefs.edit().putString("picks", picks.joinToString("\n") { it.kind + "\t" + it.title }).apply()
+    }
+
+    fun clearPicks() {
+        prefs.edit().remove("picks").apply()
+    }
+
+    companion object {
+        /** Варианты размера текста: мелкий, обычный, крупный, очень крупный. */
+        val TEXT_SCALES = listOf(0.9f, 1f, 1.15f, 1.3f)
+    }
+}

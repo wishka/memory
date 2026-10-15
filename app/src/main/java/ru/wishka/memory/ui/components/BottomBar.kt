@@ -23,6 +23,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import ru.wishka.memory.i18n.tf
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected as tabSelected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -33,8 +39,13 @@ import ru.wishka.memory.ui.Tab
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Нижняя панель: парящая стеклянная «капсула» с четырьмя вкладками —
- * Лента · Истории · Чаты · Профиль. Выбранная вкладка светится сиренью, под ней
+ * Нижняя панель: парящая «капсула» с шестью вкладками —
+ * Лента · Истории · PRISM · Чаты · Группы · Профиль.
+ *
+ * Почти непрозрачная: под ней прокручивается лента, и сквозь слишком
+ * прозрачное стекло текст записей мешал читать значки. Подпись видна
+ * только у выбранной вкладки — шесть подписей на узком экране не
+ * помещаются, а значки и так узнаваемы. Выбранная вкладка светится сиренью, под ней
  * короткая светящаяся черта. На «Чатах» — счётчик непрочитанных.
  */
 @Composable
@@ -42,7 +53,9 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .background(Palette.Night.copy(alpha = 0.92f))
             .glass(RoundedCornerShape(28.dp), strong = true)
             .height(68.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -60,6 +73,12 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                         indication = null,
                         onClick = { onSelect(tab) },
                     )
+                    // Диктор: «Чаты, вкладка, выбрано, непрочитанных 3»
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Tab
+                        tabSelected = active
+                        contentDescription = if (tab == Tab.Chats && unread > 0) tf("%s, непрочитанных: %s", tab.title, unread) else tab.title
+                    }
                     .padding(vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -78,7 +97,10 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                         when (tab) {
                             Tab.Feed -> LineIcon.Feed
                             Tab.Stories -> LineIcon.Stories
+                            Tab.Prism -> LineIcon.Prism
                             Tab.Chats -> LineIcon.Chats
+                            Tab.Groups -> LineIcon.Groups
+                            Tab.Together -> LineIcon.Together
                             Tab.Profile -> LineIcon.Profile
                         },
                         tint,
@@ -96,12 +118,15 @@ fun BottomBar(selected: Tab, unread: Int, onSelect: (Tab) -> Unit, modifier: Mod
                         }
                     }
                 }
-                Text(
-                    tab.title.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = tint,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+                if (active) {
+                    Text(
+                        tab.title.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tint,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .padding(top = 4.dp)

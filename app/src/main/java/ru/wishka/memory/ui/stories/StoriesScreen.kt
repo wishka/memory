@@ -1,7 +1,10 @@
 package ru.wishka.memory.ui.stories
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,8 +32,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.User
+import ru.wishka.memory.data.plural
 import ru.wishka.memory.ui.AppViewModel
 import ru.wishka.memory.ui.Tab
+import ru.wishka.memory.ui.ProfileSection
+import ru.wishka.memory.ui.components.PostComposer
 import ru.wishka.memory.ui.UiState
 import ru.wishka.memory.ui.components.Avatar
 import ru.wishka.memory.ui.components.GlassCard
@@ -40,17 +46,17 @@ import ru.wishka.memory.ui.feed.PostCard
 import ru.wishka.memory.ui.theme.Palette
 
 /**
- * Вкладка «Истории»: записи только тех, на кого человек подписан.
+ * Вкладка «Истории»: свои записи и записи друзей.
  *
- * Сверху ряд подписок в светящихся кольцах; нажатие оставляет записи
+ * Сверху ряд друзей в светящихся кольцах; нажатие оставляет записи
  * одного человека, повторное — снова всех.
  */
 @Composable
 fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) {
     var only by rememberSaveable { mutableStateOf<Int?>(null) }
-    // Отписались от выбранного — фильтр снимается сам
+    // Выбранный больше не друг — фильтр снимается сам
     val selected = only?.takeIf { it in state.following }
-    val posts = state.stories.filter { selected == null || it.author.id == selected }
+    val posts = state.friendPosts.filter { selected == null || it.author.id == selected }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -59,21 +65,34 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
     ) {
         item {
             ScreenTitle(
-                "Истории",
-                if (state.following.isEmpty()) "Пока ни одной подписки"
-                else "Подписки: ${state.following.size}",
+                t("Истории"),
+                if (state.friends.isEmpty()) t("Пока нет друзей")
+                else plural(state.friends.size, "друг", "друга", "друзей"),
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
 
-        if (state.followedPeople.isNotEmpty()) {
+        // Истории (сутки), свой эфир и эфиры друзей — одним рядом кружков
+        item(key = "stories") { StoriesRow(vm, state) }
+
+        // Под историями — записи друзей; фильтр по человеку
+        if (state.friends.isNotEmpty()) {
+            item {
+                Text(
+                    t("Записи друзей").uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.Mist,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            }
             item {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(state.followedPeople, key = { it.id }) { person ->
-                        StoryRing(person, active = selected == null || selected == person.id) {
+                    item { ru.wishka.memory.ui.components.Chip(t("Все"), active = selected == null) { only = null } }
+                    items(state.friends, key = { it.id }) { person ->
+                        ru.wishka.memory.ui.components.Chip(person.name.substringBefore(' '), active = selected == person.id) {
                             only = if (selected == person.id) null else person.id
                         }
                     }
@@ -90,15 +109,15 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
                     ) {
                         Text(
                             if (state.following.isEmpty()) {
-                                "Здесь будут записи людей, на которых вы подписаны. " +
-                                    "Подписаться можно прямо в ленте — кнопкой у имени автора."
+                                t("Здесь будут записи ваших друзей. ") +
+                                    t("Добавить в друзья можно прямо в ленте — кнопкой у имени автора.")
                             } else {
-                                "У ваших подписок пока нет записей."
+                                t("У ваших друзей пока нет записей.")
                             },
                             style = MaterialTheme.typography.bodyLarge,
                             color = Palette.Ink,
                         )
-                        GlowButton("Открыть ленту", onClick = { vm.selectTab(Tab.Feed) })
+                        GlowButton(t("Открыть ленту"), onClick = { vm.selectTab(Tab.Feed) })
                     }
                 }
             }
@@ -108,22 +127,32 @@ fun StoriesScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValue
             PostCard(
                 post,
                 onLike = { vm.toggleLike(post.id) },
-                following = true,
-                onFollow = { vm.toggleFollow(post.author.id) },
+                onVote = { vm.votePost(post.id, it) },
+                onClosePoll = if (vm.isMine(post)) ({ vm.closePostPoll(post.id) }) else null,
+                onReport = if (vm.isMine(post)) null else ({ vm.reportPost(post) }),
+                friend = if (post.author.id == state.me.id) null else state.friendState(post.author.id),
+                onFriend = { vm.toggleFriend(post.author.id) },
+                onAuthor = { vm.openPerson(post.author.id) },
+                onComments = { vm.openComments(post.id) },
+                onOpenMedia = vm::openMedia,
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-/** Аватар в кольце-градиенте, как у историй; неактивные приглушены. */
+/**
+ * Аватар в кольце-градиенте, как у историй; неактивные приглушены.
+ * Нажатие — записи только этого человека, долгое нажатие — его страница.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StoryRing(person: User, active: Boolean, onClick: () -> Unit) {
+private fun StoryRing(person: User, active: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(72.dp)
             .alpha(if (active) 1f else 0.45f)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(

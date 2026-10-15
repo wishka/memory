@@ -1,5 +1,7 @@
 package ru.wishka.memory.ui.auth
 
+import ru.wishka.memory.i18n.t
+import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,12 +29,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import ru.wishka.memory.data.auth.LocalAuth
 import ru.wishka.memory.ui.components.GlassCard
+import ru.wishka.memory.ui.components.ConsentChecks
+import ru.wishka.memory.ui.components.ConsentState
+import ru.wishka.memory.ui.components.LegalDocViewer
+import ru.wishka.memory.ui.components.LegalLinks
+import ru.wishka.memory.data.LegalDoc
 import ru.wishka.memory.ui.components.GlassField
 import ru.wishka.memory.ui.components.GlowButton
 import ru.wishka.memory.ui.components.glass
@@ -47,14 +55,18 @@ import ru.wishka.memory.ui.theme.Palette
  * снова только если выйдет из профиля.
  */
 @Composable
-fun AuthScreen(vm: AuthViewModel, state: AuthState) {
-    var registering by rememberSaveable { mutableStateOf(false) }
+fun AuthScreen(vm: AuthViewModel, state: AuthState, startRegistering: Boolean = false) {
+    var registering by rememberSaveable { mutableStateOf(startRegistering) }
+    var forgot by rememberSaveable { mutableStateOf(false) }
     var login by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
     // Пароли не сохраняются при повороте экрана: им нечего делать в
     // сохранённом состоянии активности
     var password by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("") }
+    // Возраст, соглашение и согласие на обработку — три отдельные галочки
+    val consent = remember { ConsentState() }
+    var openDoc by remember { mutableStateOf<LegalDoc?>(null) }
     val density = LocalDensity.current.density
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -74,14 +86,18 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
             Spacer(Modifier.height(40.dp))
             Text("MEMORY", style = MaterialTheme.typography.displaySmall, color = Palette.Ink)
             Text(
-                "МОМЕНТЫ, КОТОРЫЕ ОСТАЮТСЯ",
+                t("МОМЕНТЫ, КОТОРЫЕ ОСТАЮТСЯ"),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Mist,
             )
             Spacer(Modifier.height(28.dp))
 
             GlassCard(modifier = Modifier.fillMaxWidth()) {
-                Column(
+                if (forgot) {
+                    Column(Modifier.padding(18.dp)) {
+                        ForgotPasswordForm(vm, state, login, onLogin = { login = it }, onBack = { forgot = false })
+                    }
+                } else Column(
                     modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -91,7 +107,7 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
                             .fillMaxWidth()
                             .glass(RoundedCornerShape(50)),
                     ) {
-                        listOf(false to "Вход", true to "Регистрация").forEach { (mode, title) ->
+                        listOf(false to t("Вход"), true to t("Регистрация")).forEach { (mode, title) ->
                             val active = registering == mode
                             Box(
                                 modifier = Modifier
@@ -113,31 +129,44 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
                         }
                     }
 
-                    Field(login, { login = it.take(24) }, "Логин", keyboard = KeyboardType.Ascii)
-                    if (registering) Field(name, { name = it.take(40) }, "Имя — как вас видят другие")
-                    Field(password, { password = it.take(64) }, "Пароль", password = true)
-                    if (registering) Field(repeat, { repeat = it.take(64) }, "Пароль ещё раз", password = true)
+                    Field(login, { login = it.take(24) }, t("Логин"), keyboard = KeyboardType.Ascii)
+                    if (registering) Field(name, { name = it.take(40) }, t("Имя — как вас видят другие"))
+                    Field(password, { password = it.take(64) }, t("Пароль"), password = true)
+                    if (registering) Field(repeat, { repeat = it.take(64) }, t("Пароль ещё раз"), password = true)
+
+                    if (registering) ConsentChecks(consent) { openDoc = it }
 
                     state.error?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                     }
 
                     GlowButton(
-                        if (state.busy) "Подождите…" else if (registering) "Создать аккаунт" else "Войти",
-                        enabled = !state.busy && login.isNotBlank() && password.isNotEmpty(),
+                        if (state.busy) t("Подождите…") else if (registering) t("Создать аккаунт") else t("Войти"),
+                        enabled = !state.busy && login.isNotBlank() && password.isNotEmpty() && (!registering || consent.all),
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
-                            if (registering) vm.register(login, name, password, repeat) else vm.login(login, password)
+                            if (registering) vm.register(login, name, password, repeat, consented = consent.all) else vm.login(login, password)
                         },
                     )
 
+                    if (!registering) {
+                        Text(
+                            t("Забыли пароль?"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Palette.Lilac,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { vm.clearError(); forgot = true },
+                        )
+                    }
+
                     Text(
                         if (registering) {
-                            "Логин — латиница, цифры, точка и «_», от 3 символов. " +
-                                "Пароль — от 8 символов, с буквами и цифрами."
+                            t("Логин — латиница, цифры, точка и «_», от 3 символов. ") +
+                                t("Пароль — от 8 символов, с буквами и цифрами.")
                         } else {
-                            "Попробовать без регистрации: логин ${LocalAuth.DEMO_LOGIN}, " +
-                                "пароль ${LocalAuth.DEMO_PASSWORD}"
+                            tf("Попробовать без регистрации: логин %s, ", LocalAuth.DEMO_LOGIN) +
+                                tf("пароль %s", LocalAuth.DEMO_PASSWORD)
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Mist,
@@ -149,13 +178,16 @@ fun AuthScreen(vm: AuthViewModel, state: AuthState) {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "Аккаунты пока хранятся только на этом телефоне.",
+                t("Аккаунты пока хранятся только на этом телефоне."),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Palette.Mist,
                 textAlign = TextAlign.Center,
             )
+            Spacer(Modifier.height(8.dp))
+            LegalLinks(listOf(LegalDoc.Terms, LegalDoc.Privacy), onOpen = { openDoc = it })
         }
     }
+    openDoc?.let { LegalDocViewer(it) { openDoc = null } }
 }
 
 @Composable

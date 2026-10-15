@@ -14,4 +14,13 @@ captures/
 *.keystore
 keystore.properties
 
+# Ключи API (Jamendo) для iPhone — никогда в репозиторий
+ios/Memory/Secrets.plist
+
 .DS_Store
+
+# Python
+__pycache__/
+
+# Пароли сервера (server/.env) — никогда в репозиторий
+server/.env

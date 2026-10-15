@@ -1,7 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Камера PRISM: видео и звук. Без камеры приложение тоже ставится —
+         ролик можно выбрать из галереи. -->
+    <!-- Медиатека PRISM: поиск и прослушивание музыки Jamendo и Openverse -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Есть ли сеть: очередь отправки ждёт её и уходит сама -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Микрофон: звук роликов PRISM и голосовые сообщения -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Персональные уведомления (Android 13+ спрашивает разрешение) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Вкладка «Вместе»: миссии, клады и вылазки рядом с вами -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <application
+        android:name=".MemoryApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -20,6 +37,67 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Приглашение к действию: memory://invite?c=КОД&a=drawing&id=… (его открывает страница docs/invite) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="memory" android:host="invite" />
+            </intent-filter>
+            <!-- Ссылки на запись, профиль, PRISM, группу и тег: memory://post/123, memory://u/vera…
+                 (их открывает страница docs/l, на которую ведут веб-ссылки «Поделиться») -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="memory" />
+                <data android:host="post" />
+                <data android:host="u" />
+                <data android:host="prism" />
+                <data android:host="group" />
+                <data android:host="tag" />
+            </intent-filter>
         </activity>
+
+        <!-- Пуши FCM: приёмник сообщений. Сам Firebase запускается только
+             с ключами проекта (push/PushSetup.kt), поэтому автозапуск выключен. -->
+        <service
+            android:name=".push.MemoryMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <!-- Sentry запускается вручную и только с согласия (telemetry/TelemetrySetup.kt) -->
+        <meta-data
+            android:name="io.sentry.auto-init"
+            android:value="false" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="memory_default_v2" />
+        <!-- Вырезка объекта для стикеров: модель ML Kit скачивается через
+             Google Play заранее, при установке, а не при первом стикере. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="subject_segment" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+
+        <!-- Выдаёт файлы из files/media наружу по временному разрешению:
+             камере — чтобы записать снимок, другому приложению — чтобы
+             открыть документ. Сама папка остаётся закрытой. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>
