@@ -70,6 +70,14 @@ struct MainScreen: View {
                 .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
+        // «Нет сети» / «Сервер не отвечает» — пилюлей сверху, под строкой состояния
+        .overlay(alignment: .top) {
+            NetBanner(status: state.netStatus, waiting: state.outboxCount)
+                .padding(.top, 4)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
+        .animation(.easeOut(duration: 0.2), value: state.netStatus)
         // Уведомление, пока приложение открыто, — плашкой сверху
         .overlay(alignment: .top) {
             if let nudge = state.banner {
@@ -183,6 +191,14 @@ struct MainScreen: View {
         .animation(.easeOut(duration: 0.25), value: state.openPostId)
         // #теги, @упоминания и ссылки в тексте; ссылка на запись и правка — в меню любой карточки
         .environment(\.linkActions, links)
+        // Своя запись в очереди: есть ли сеть и сколько ушло
+        .environment(\.syncInfo, sync)
+    }
+
+    /// Сеть и прогресс отправок — для SyncLine под своими записями.
+    private var sync: SyncInfo {
+        let model = self.model
+        return SyncInfo(status: model.state.netStatus, progress: { owner in model.state.uploadProgress(owner) })
     }
 
     /// Что делают ссылки в тексте и меню «⋯» записи — для всех экранов сразу.

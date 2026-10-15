@@ -64,6 +64,8 @@ jobs:
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
           GIPHY_API_KEY: ${{ secrets.ANDROID_GIPHY_API_KEY }}
           SENTRY_DSN: ${{ secrets.ANDROID_SENTRY_DSN }}
+          # Сервер Memory; пусто — встроенный демо-сервер
+          API_URL: ${{ secrets.API_URL }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}

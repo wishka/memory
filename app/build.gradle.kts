@@ -36,6 +36,8 @@ val sentryDsn: String = (env("SENTRY_DSN") ?: localProperties.getProperty("sentr
 // Прямые эфиры (LiveKit): адрес сервера — local.properties (livekit.url=wss://…) или LIVEKIT_URL.
 // Нет адреса — эфиры в демо-режиме (docs/LIVE.md).
 val livekitUrl: String = (env("LIVEKIT_URL") ?: localProperties.getProperty("livekit.url").orEmpty()).replace("\"", "")
+// Сервер Memory (API): local.properties (api.url=https://…) или API_URL. Пусто — встроенный демо-сервер на телефоне.
+val apiUrl: String = (env("API_URL") ?: localProperties.getProperty("api.url").orEmpty()).replace("\"", "")
 
 fun firebase(envName: String, property: String): String =
     (env(envName) ?: localProperties.getProperty(property).orEmpty()).replace("\"", "")
@@ -60,6 +62,7 @@ android {
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebase("FIREBASE_SENDER_ID", "firebase.senderId")}\"")
         buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")
         buildConfigField("String", "LIVEKIT_URL", "\"$livekitUrl\"")
+        buildConfigField("String", "API_URL", "\"$apiUrl\"")
     }
 
     signingConfigs {
@@ -166,6 +169,9 @@ dependencies {
     // проекта приходят через BuildConfig, Firebase запускается вручную
     implementation(platform("com.google.firebase:firebase-bom:34.0.0"))
     implementation("com.google.firebase:firebase-messaging")
+
+    // Сеть: запросы к серверу Memory (data/net, net/AndroidNet.kt)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Отчёты о сбоях и статистика — только с согласия (telemetry/TelemetrySetup.kt)
     implementation("io.sentry:sentry-android:8.58.0")

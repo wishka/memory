@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.feed
 
+import ru.wishka.memory.ui.components.glass
 import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.t
 import androidx.compose.foundation.Image
@@ -133,7 +134,21 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
         if (memories.isNotEmpty() && state.memorySeen != java.time.LocalDate.now().toString()) {
             item(key = "memory") { MemoryCard(vm, memories.first(), memories.size) }
         }
-        items(state.feed, key = { it.id }) { post ->
+        state.netNotice?.let { notice ->
+            item(key = "net-notice") {
+                Row(
+                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).glass(RoundedCornerShape(16.dp)).padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(notice, style = MaterialTheme.typography.bodyMedium, color = Palette.Ink, modifier = Modifier.weight(1f))
+                    Box(
+                        Modifier.size(32.dp).clip(CircleShape).clickable(onClickLabel = t("Закрыть"), role = androidx.compose.ui.semantics.Role.Button, onClick = vm::dismissNetNotice),
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(LineIcon.Close, Palette.Mist, size = 16.dp, description = t("Закрыть")) }
+                }
+            }
+        }
+        items(state.feedWithOlder, key = { it.id }) { post ->
             val mine = post.author.id == state.me.id
             PostCard(
                 post,
@@ -165,6 +180,11 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                     }
                 },
             )
+        }
+        // Низ ленты: дошли — подгрузить старое с сервера
+        item(key = "feed-footer") {
+            androidx.compose.runtime.LaunchedEffect(state.olderFeed.size, state.netStatus) { vm.loadMoreFeed() }
+            ru.wishka.memory.ui.components.FeedFooter(state.feedPaging, onRetry = vm::loadMoreFeed)
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
@@ -302,6 +322,7 @@ fun PostCard(
             if (post.text.isNotEmpty()) {
                 ru.wishka.memory.ui.components.RichText(post.text)
             }
+            ru.wishka.memory.ui.components.SyncLine(post.outboxKey)
             post.repostOf?.let { ref ->
                 ru.wishka.memory.ui.components.PostRefCard(ref, onOpen = { links?.onOpenRef?.invoke(ref) }, modifier = Modifier.fillMaxWidth())
             }

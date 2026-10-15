@@ -24,6 +24,21 @@ class DevicePrefs(context: Context) {
         prefs.edit().putString("theme", mode.id).apply()
     }
 
+    /** Качество фото и видео при отправке («Данные и сеть»). */
+    val mediaQuality: ru.wishka.memory.data.net.MediaQuality
+        get() = ru.wishka.memory.data.net.MediaQuality.of(prefs.getString("mediaQuality", null))
+
+    fun setMediaQuality(q: ru.wishka.memory.data.net.MediaQuality) {
+        prefs.edit().putString("mediaQuality", q.id).apply()
+    }
+
+    /** Демо: «как будто нет сети». */
+    val demoOffline: Boolean get() = prefs.getBoolean("demoOffline", false)
+
+    fun setDemoOffline(on: Boolean) {
+        prefs.edit().putBoolean("demoOffline", on).apply()
+    }
+
     fun setLanguage(lang: Lang) {
         L10n.choice = lang
         prefs.edit().putString("lang", lang.code).apply()

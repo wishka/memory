@@ -16,6 +16,20 @@ struct DevicePrefs {
         defaults.set(mode.id, forKey: "theme")
     }
 
+    /// Качество фото и видео при отправке («Данные и сеть»).
+    var mediaQuality: MediaQuality { MediaQuality.of(defaults.string(forKey: "mediaQuality")) }
+
+    func setMediaQuality(_ q: MediaQuality) {
+        defaults.set(q.rawValue, forKey: "mediaQuality")
+    }
+
+    /// Демо: «как будто нет сети».
+    var demoOffline: Bool { defaults.bool(forKey: "demoOffline") }
+
+    func setDemoOffline(_ on: Bool) {
+        defaults.set(on, forKey: "demoOffline")
+    }
+
     /// Знакомство уже показали на этом телефоне.
     var onboarded: Bool { defaults.bool(forKey: "onboarded") }
 

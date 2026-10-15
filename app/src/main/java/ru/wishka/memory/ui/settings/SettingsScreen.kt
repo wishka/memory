@@ -1,5 +1,11 @@
 package ru.wishka.memory.ui.settings
 
+import androidx.compose.material3.LinearProgressIndicator
+
+import androidx.compose.foundation.shape.CircleShape
+
+import androidx.compose.foundation.layout.size
+
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
 import ru.wishka.memory.data.Guide
@@ -168,6 +174,7 @@ fun SettingsScreen(
             SettingsPage.TextSize -> item { TextSizePage(prefs) }
             SettingsPage.Language -> item { LanguagePage(prefs) }
             SettingsPage.Theme -> item { ThemePage(prefs) }
+            SettingsPage.Network -> item { NetworkPage(vm, state, prefs) }
             SettingsPage.About -> item { AboutPage(version, vm) }
             SettingsPage.Growth -> item { GrowthPage(vm, state, version) }
             SettingsPage.Sounds -> item { SoundsPage(vm, state) }
@@ -224,6 +231,8 @@ private fun LazyListScope.mainPage(vm: AppViewModel, state: UiState, version: St
             NavRow(LineIcon.TextSize, t("Размер текста"), textScaleTitle(L10n.textScale)) { vm.openSettings(SettingsPage.TextSize) }
             Divider()
             NavRow(LineIcon.Eye, t("Оформление"), themeTitle(ru.wishka.memory.ui.theme.ThemeState.mode)) { vm.openSettings(SettingsPage.Theme) }
+            Divider()
+            NavRow(LineIcon.Globe, t("Данные и сеть"), qualityTitle(state.mediaQuality)) { vm.openSettings(SettingsPage.Network) }
             Divider()
             NavRow(LineIcon.Globe, t("Язык"), L10n.choice.title) { vm.openSettings(SettingsPage.Language) }
             Divider()
@@ -381,6 +390,130 @@ private fun ThemePage(prefs: DevicePrefs) {
         Hint(
             t("«Как в системе» — днём светлое, ночью тёмное, если так настроен телефон. PRISM, эфиры, звонки и фото на весь экран всегда тёмные.")
         )
+    }
+}
+
+// ==================== ДАННЫЕ И СЕТЬ ====================
+
+private fun qualityTitle(q: ru.wishka.memory.data.net.MediaQuality): String = when (q) {
+    ru.wishka.memory.data.net.MediaQuality.Standard -> t("Стандартное")
+    ru.wishka.memory.data.net.MediaQuality.Saver -> t("Экономия трафика")
+    ru.wishka.memory.data.net.MediaQuality.OriginalOnWifi -> t("Оригинал по Wi‑Fi")
+}
+
+private fun qualityHint(q: ru.wishka.memory.data.net.MediaQuality): String = when (q) {
+    ru.wishka.memory.data.net.MediaQuality.Standard -> t("Фото до 2048 точек, видео 720p — чётко на любом экране и быстро уходит.")
+    ru.wishka.memory.data.net.MediaQuality.Saver -> t("Фото до 1280 точек, видео 480p — бережёт мобильный интернет.")
+    ru.wishka.memory.data.net.MediaQuality.OriginalOnWifi -> t("По Wi‑Fi — без сжатия, в мобильной сети — как «Стандартное».")
+}
+
+/**
+ * Данные и сеть: качество отправки, загрузки (пауза, продолжить, отменить),
+ * очередь, сохранённое для офлайна, демо «без сети».
+ */
+@Composable
+private fun NetworkPage(vm: AppViewModel, state: UiState, prefs: DevicePrefs) {
+    val server = if (ru.wishka.memory.net.NetSetup.usesDemo) t("демо на телефоне")
+    else ru.wishka.memory.BuildConfig.API_URL.substringAfter("://").substringBefore('/')
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(tf("Сервер: %s", server), style = MaterialTheme.typography.bodyLarge, color = Palette.Ink)
+                Text(
+                    when (state.netStatus) {
+                        ru.wishka.memory.ui.NetStatus.Online -> t("Связь есть")
+                        ru.wishka.memory.ui.NetStatus.Offline -> t("Нет сети")
+                        ru.wishka.memory.ui.NetStatus.ServerDown -> t("Сервер не отвечает")
+                    } + " · " + tf("ждут отправки: %s", state.outboxCount),
+                    style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+                )
+            }
+        }
+        Caption(t("Качество фото и видео"), Modifier.padding(horizontal = 24.dp))
+        Card {
+            ru.wishka.memory.data.net.MediaQuality.entries.forEach { q ->
+                ChoiceRow(qualityTitle(q), q == state.mediaQuality) {
+                    prefs.setMediaQuality(q)
+                    vm.setMediaQuality(q)
+                }
+            }
+        }
+        Hint(qualityHint(state.mediaQuality))
+        Caption(t("Загрузки"), Modifier.padding(horizontal = 24.dp))
+        Card {
+            if (state.uploads.isEmpty()) {
+                Text(t("Сейчас ничего не загружается."), style = MaterialTheme.typography.bodyMedium, color = Palette.Mist, modifier = Modifier.padding(16.dp))
+            }
+            state.uploads.forEachIndexed { i, u ->
+                if (i > 0) Divider()
+                UploadRow(u, vm)
+            }
+        }
+        Hint(t("Оборвалась связь — загрузка продолжится с того же места, даже после перезапуска."))
+        Caption(t("Сохранено для офлайна"), Modifier.padding(horizontal = 24.dp))
+        Card {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(ru.wishka.memory.data.sizeTitle(state.cacheBytes), style = MaterialTheme.typography.bodyLarge, color = Palette.Ink, modifier = Modifier.weight(1f))
+                GhostButton(t("Очистить"), onClick = vm::clearNetCache)
+            }
+        }
+        Hint(t("Лента и переписки, которые вы уже видели, открываются и без сети. Очистка не трогает неотправленное."))
+        if (ru.wishka.memory.net.NetSetup.usesDemo) {
+            Card {
+                SwitchRow(t("Демо: как будто нет сети"), state.demoOffline) {
+                    prefs.setDemoOffline(it)
+                    vm.setDemoOffline(it)
+                }
+            }
+            Hint(t("Проверьте: без сети запись и сообщение встают в очередь и уходят сами, когда сеть «вернётся»."))
+        }
+    }
+}
+
+@Composable
+private fun UploadRow(u: ru.wishka.memory.data.net.UploadJob, vm: AppViewModel) {
+    val name = java.io.File(u.path).name
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Glyph(if (u.video) LineIcon.Video else LineIcon.Image, Palette.Lilac, size = 20.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.bodyMedium, color = Palette.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    when (u.state) {
+                        ru.wishka.memory.data.net.UploadState.Waiting -> if (u.uploadPath.isEmpty()) t("Ждёт сжатия") else if (u.attempts > 0) t("Ждёт сети") else t("В очереди")
+                        ru.wishka.memory.data.net.UploadState.Uploading -> tf("%s из %s", ru.wishka.memory.data.sizeTitle(u.offset), ru.wishka.memory.data.sizeTitle(u.size))
+                        ru.wishka.memory.data.net.UploadState.Paused -> t("На паузе")
+                        ru.wishka.memory.data.net.UploadState.Done -> t("Загружено")
+                        ru.wishka.memory.data.net.UploadState.Failed -> t("Не вышло: файл не найден")
+                    },
+                    style = MaterialTheme.typography.labelSmall, color = Palette.Mist,
+                )
+            }
+            val paused = u.state == ru.wishka.memory.data.net.UploadState.Paused || u.state == ru.wishka.memory.data.net.UploadState.Failed
+            if (u.state != ru.wishka.memory.data.net.UploadState.Done) {
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape)
+                        .clickable(onClickLabel = if (paused) t("Продолжить") else t("Пауза"), role = androidx.compose.ui.semantics.Role.Button) {
+                            if (paused) vm.resumeUpload(u.id) else vm.pauseUpload(u.id)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(if (paused) LineIcon.Play else LineIcon.Pause, Palette.Ink, size = 18.dp, description = if (paused) t("Продолжить") else t("Пауза")) }
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape)
+                        .clickable(onClickLabel = t("Отменить загрузку"), role = androidx.compose.ui.semantics.Role.Button) { vm.cancelUpload(u.id) },
+                    contentAlignment = Alignment.Center,
+                ) { Glyph(LineIcon.Close, Palette.Mist, size = 18.dp, description = t("Отменить загрузку")) }
+            }
+        }
+        if (u.state == ru.wishka.memory.data.net.UploadState.Uploading || u.offset > 0) {
+            LinearProgressIndicator(
+                progress = { u.progress },
+                modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)),
+                color = Palette.Lilac,
+                trackColor = Palette.Line,
+            )
+        }
     }
 }
 

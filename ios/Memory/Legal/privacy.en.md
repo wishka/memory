@@ -27,6 +27,8 @@ The legal basis is the consent you give when you register, and the performance o
 
 Currently (before the server launches), your account, posts and conversations are stored only on your phone. Messages in chats where you turned on end-to-end encryption are encrypted on the phone with a key known only to the two phones: the server will store and relay them only in encrypted form and cannot read them. Disappearing messages are deleted for both participants when the chosen period ends. After the server launches, data will be stored on servers in [country and cloud provider name]. If that country is not on the list of countries with adequate data protection maintained by the Personal Data Protection Agency, the transfer is based on your explicit consent or on standard contractual clauses registered with the Agency.
 
+Content saved for offline use — the feed you've viewed, the queue of unsent items and unfinished uploads — is kept in a database on your phone, separate for each account. Photos and videos are compressed before sending: the compressed copy is kept in the app's cache and deleted once sent; the original on your phone is not changed. To clear saved content: Settings → Data and network.
+
 ## 4. Who data is shared with
 
 - **Other users**: what you publish, according to your privacy settings.

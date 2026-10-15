@@ -55,8 +55,27 @@ enum SettingsPage: String, CaseIterable {
     case guide = "Гид по Memory"
     /// Оформление: как в системе, тёмное или светлое.
     case theme = "Оформление"
+    /// Качество фото и видео при отправке, загрузки, очередь, кэш.
+    case network = "Данные и сеть"
 
     var title: String { t(rawValue) }
+}
+
+/// Связь с сервером — для полоски «нет сети».
+enum NetStatus: Equatable {
+    case online, offline, serverDown
+}
+
+/// Как подгружается старое в ленте.
+struct FeedPaging: Equatable {
+    var loading = false
+    /// Дальше ничего нет.
+    var end = false
+    /// Показано сохранённое, свежего с сервера ещё не было.
+    var fromCache = false
+    var cachedAt: Int64 = 0
+    /// Не загрузилось: «нет сети», «сервер не отвечает».
+    var error: NetError.Kind? = nil
 }
 
 /// Разделы полки.
@@ -267,6 +286,23 @@ struct UiState: Equatable {
     var repostingPostId: Int64? = nil
     /// «Отправить в чат»: какую запись отправляют (открыт выбор переписки).
     var sharingPostId: Int64? = nil
+    /// Связь: есть, нет сети, сервер не отвечает.
+    var netStatus: NetStatus = .online
+    /// Старые записи ленты — подгружены с сервера (или из кэша) страницами.
+    var olderFeed: [Post] = []
+    var feedPaging = FeedPaging()
+    /// Загрузки фото и видео: что идёт, что ждёт, что на паузе.
+    var uploads: [UploadJob] = []
+    /// Сколько действий ждут отправки.
+    var outboxCount = 0
+    /// Качество отправки (настройка телефона — DevicePrefs).
+    var mediaQuality: MediaQuality = .standard
+    /// Демо: «как будто нет сети» — проверить очередь и кэш.
+    var demoOffline = false
+    /// Сколько места занимает сохранённое для офлайна.
+    var cacheBytes: Int64 = 0
+    /// Что сказать о сети: «запись не отправлена» и т. п.; nil — нечего.
+    var netNotice: String? = nil
 
     /// Кружки историй друзей (свой — отдельно).
     func storyCircles(_ now: Date) -> [StoryCircle] {
@@ -347,6 +383,28 @@ struct UiState: Equatable {
     /// Лента без записей тех, кто в чёрном списке, и без записей закрытых
     /// профилей тех, кто вам не друг.
     var feed: [Post] { posts.filter { !blocked.contains($0.author.id) && canSee($0.author) } }
+    /// Лента целиком: свежее с телефона, ниже — старое с сервера (без повторов и заблокированных).
+    var feedWithOlder: [Post] {
+        let local = feed
+        let ids = Set(local.map(\.id))
+        let older = olderFeed.filter { !ids.contains($0.id) && !blocked.contains($0.author.id) && canSee($0.author) }
+        return local + older
+    }
+
+    /// Прогресс отправки записи или сообщения по ключу очереди (0…1); нет загрузок — nil.
+    func uploadProgress(_ owner: String) -> Float? {
+        let mine = uploads.filter { $0.owner == owner }
+        if mine.isEmpty { return nil }
+        var total: Int64 = 0
+        var done: Int64 = 0
+        for job in mine {
+            let size = max(job.size, 1)
+            total += size
+            done += job.state == .done ? size : job.offset
+        }
+        let ratio = Float(done) / Float(total)
+        return min(max(ratio, 0), 1)
+    }
     /// Записи человека видны: профиль открыт, вы друзья или это вы.
     /// Закрытость берётся из демо-данных: в сохранённых записях автор может быть старым.
     func canSee(_ user: User) -> Bool {
@@ -522,6 +580,8 @@ final class AppModel {
     init(clock: @escaping () -> Date = { Date() }, demoReplies: Bool = true) {
         self.clock = clock
         self.demoReplies = demoReplies
+        net = makeDemoNet()
+        feedPager = net.feedPager()
     }
 
     private func newId() -> Int64 {
@@ -1957,6 +2017,12 @@ final class AppModel {
 
     func toggleLike(_ postId: Int64) {
         state.posts = state.posts.map { Self.toggled($0, postId) }
+        if let p = state.posts.first(where: { $0.id == postId }), p.outboxKey.isEmpty {
+            // Своя ещё не ушедшая запись — серверу пока нечего отмечать
+            net.queueLike(postId, liked: p.liked)
+        }
+        refreshNetCounters()
+        kickNet()
     }
 
     /// Новая запись: текст, фото и видео, чек-ин, опрос, место. Пустую (без текста и вложений) не публикуем.
@@ -1975,10 +2041,12 @@ final class AppModel {
             return x
         }
         media.filter(\.isGif).forEach(rememberGif)
-        let post = Post(
+        var post = Post(
             id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
             media: Array(cleanMedia.prefix(Self.maxMedia)), createdAt: clock(), checkIn: checkIn, poll: built, place: place
         )
+        // На сервер — через очередь: без сети запись видна сразу и уйдёт, когда сеть появится
+        post.outboxKey = net.queuePost(post)
         let before = state
         var next = state
         next.posts.insert(post, at: 0)
@@ -1990,6 +2058,8 @@ final class AppModel {
             next.echo = echoFor(checkIn, before: before, after: next)
         }
         state = next
+        refreshNetCounters()
+        kickNet()
     }
 
     private func echoFor(_ c: CheckIn, before: UiState, after: UiState) -> CheckInEcho {
@@ -2339,16 +2409,36 @@ final class AppModel {
         let built = poll.flatMap { $0.build(newId()) }
         if trimmed.isEmpty && attachments.isEmpty && built == nil && place == nil { return }
         // Секретная переписка: на сервер ушёл бы только конверт; демо-собеседник его расшифровывает своим ключом
+        let isSecret = state.chats.first(where: { $0.id == chatId })?.secret ?? false
         if let secretChat = state.chats.first(where: { $0.id == chatId }), secretChat.secret, !trimmed.isEmpty {
             let sealed = sealFor(secretChat, trimmed)
             lastEnvelope = sealed
             guard let envelope = sealed, peerOpen(secretChat, envelope) == trimmed else { return }
         }
-        append(chatId, Message(
+        var outgoing = Message(
             id: newId(), fromMe: true, text: trimmed, time: Self.now(),
             attachments: Array(attachments.prefix(Self.maxMedia)),
             replyTo: replyTo, poll: built, place: place
-        ))
+        )
+        outgoing.pending = true
+        append(chatId, outgoing)
+        // На сервер — через очередь. Секретная переписка: уходит только конверт, без вложений
+        // (шифрование файлов — следующий шаг), так что сервер ничего не прочтёт
+        var wire = outgoing
+        if isSecret {
+            wire.text = trimmed.isEmpty ? "" : (lastEnvelope ?? "")
+            wire.attachments = []
+        }
+        let hasText: Bool = !wire.text.isEmpty || !wire.attachments.isEmpty
+        let hasExtra: Bool = wire.poll != nil || wire.place != nil
+        let hasContent: Bool = hasText || hasExtra
+        if hasContent {
+            net.queueMessage(chatId, wire)
+        } else {
+            updateMessage(chatId, outgoing.id) { $0.pending = false }
+        }
+        refreshNetCounters()
+        kickNet()
         attachments.filter(\.isGif).forEach(rememberGif)
         // Опрос в переписке: собеседник отвечает голосом через пару секунд
         if let built {
@@ -2494,6 +2584,272 @@ final class AppModel {
             if c.id == chatId { c.typing = typing }
             return c
         }
+    }
+
+    // MARK: - Сеть
+
+    /// Всё сетевое: API, очередь отправки, загрузки, кэш. Пока аккаунт не
+    /// открыт (и в тестах) — встроенный демо-сервер и кэш в памяти;
+    /// MemoryApp подставляет сеть аккаунта (NetSetup.forAccount).
+    @ObservationIgnored private(set) var net: Net = Net.demo(clock: { 0 }, me: { Demo.me })
+    @ObservationIgnored private var feedPager: Pager<Post>?
+    @ObservationIgnored private var netTask: Task<Void, Never>?
+    @ObservationIgnored private let netKick = NetKicker()
+    /// Есть ли сеть у телефона (NetMonitor).
+    @ObservationIgnored private var deviceOnline = true
+    /// Сжатая копия файла больше не нужна (в приложении — MediaCompressor.cleanup).
+    @ObservationIgnored var uploadCleanup: (UploadJob) -> Void = { _ in }
+
+    /// Часы модели в мс — для сети.
+    private func nowMs() -> Int64 { Json.ms(clock()) }
+
+    private func makeDemoNet() -> Net {
+        let clock = self.clock
+        let ms: () -> Int64 = { Json.ms(clock()) }
+        return Net.demo(clock: ms, me: { [weak self] in self?.state.me ?? Demo.me })
+    }
+
+    /// Подключить сеть аккаунта: сохранённая лента — сразу, без сети.
+    func attachNet(_ n: Net) {
+        net = n
+        let pager = n.feedPager()
+        pager.restore()
+        feedPager = pager
+        publishFeed()
+        refreshNetCounters()
+        applyOnline()
+    }
+
+    /// Отключить (выход из аккаунта): назад к демо в памяти.
+    private func detachNet() {
+        netTask?.cancel()
+        netTask = nil
+        netKick.kick()
+        net = makeDemoNet()
+        feedPager = net.feedPager()
+    }
+
+    private func publishFeed() {
+        guard let p = feedPager?.state else { return }
+        let paging = FeedPaging(loading: p.loading, end: p.end, fromCache: p.fromCache, cachedAt: p.cachedAt, error: p.error?.kind)
+        state.olderFeed = p.items
+        state.feedPaging = paging
+    }
+
+    private func refreshNetCounters() {
+        let jobs = net.uploads.all()
+        let count = net.outbox.count
+        let bytes = net.cache.sizeBytes()
+        if state.uploads != jobs { state.uploads = jobs }
+        if state.outboxCount != count { state.outboxCount = count }
+        if state.cacheBytes != bytes { state.cacheBytes = bytes }
+    }
+
+    /// Есть ли сеть — от NetMonitor. Появилась — сразу отправить накопленное.
+    func setDeviceOnline(_ online: Bool) {
+        deviceOnline = online
+        applyOnline()
+    }
+
+    func setDemoOffline(_ on: Bool) {
+        state.demoOffline = on
+        applyOnline()
+    }
+
+    func setMediaQuality(_ q: MediaQuality) {
+        state.mediaQuality = q
+    }
+
+    private func applyOnline() {
+        let online = deviceOnline && !state.demoOffline
+        net.demo?.online = online
+        let status: NetStatus
+        if !online {
+            status = .offline
+        } else if state.netStatus == .serverDown {
+            status = .serverDown
+        } else {
+            status = .online
+        }
+        if state.netStatus != status { state.netStatus = status }
+        if online {
+            net.wake()
+            kickNet()
+        }
+    }
+
+    /// Разбудить отправку: что-то добавили в очередь или появилась сеть.
+    func kickNet() {
+        netKick.kick()
+    }
+
+    /// Фоновая отправка: пока приложение открыто, догружает и отправляет.
+    /// Ждёт пинка (kickNet) или ближайшей повторной попытки.
+    func startNetLoop() {
+        guard netTask == nil, demoReplies else { return }
+        let kick = netKick
+        netTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let wait = await self?.netStep() else { return }
+                if Task.isCancelled { return }
+                await kick.wait(timeoutMs: wait)
+            }
+        }
+    }
+
+    /// Проход отправки, если есть что слать; ответ — сколько ждать до следующего (мс).
+    @MainActor private func netStep() async -> Int64 {
+        if state.netStatus != .offline && net.busy {
+            await pumpNet()
+        }
+        if !net.busy { return 60_000 }
+        let delta: Int64 = net.nextAttemptAt() - nowMs()
+        return min(max(delta, 1_000), 30_000)
+    }
+
+    /// Один проход отправки: загрузки, потом очередь. Результат — на экраны.
+    @MainActor func pumpNet() async {
+        let n = net
+        let r = await n.pump(onProgress: { [weak self] _ in
+            let jobs = n.uploads.all()
+            // В @Sendable-замыкание — не слабую переменную self, а постоянную ссылку
+            guard let model = self else { return }
+            DispatchQueue.main.async { model.state.uploads = jobs }
+        })
+        for item in r.sent {
+            let op = item.op
+            switch op.kind {
+            case .createPost: clearOutboxKey(op.key)
+            case .sendMessage: markDelivered(op)
+            case .like, .unlike: break
+            }
+        }
+        for job in r.uploads where job.state == .done {
+            uploadCleanup(job)
+        }
+        for op in r.failed {
+            switch op.kind {
+            case .createPost:
+                clearOutboxKey(op.key)
+                state.netNotice = t("Запись не отправлена: файл не нашёлся. Она осталась только на этом телефоне.")
+            case .sendMessage:
+                markDelivered(op)
+                state.netNotice = t("Сообщение не отправлено: вложение не нашлось.")
+            case .like, .unlike: break
+            }
+        }
+        let status: NetStatus
+        if !deviceOnline || state.demoOffline {
+            status = .offline
+        } else if r.offline {
+            status = .serverDown
+        } else {
+            status = .online
+        }
+        if state.netStatus != status { state.netStatus = status }
+        refreshNetCounters()
+    }
+
+    /// Запись ушла (или не уйдёт никогда) — больше не «ждёт сети».
+    private func clearOutboxKey(_ key: String) {
+        guard state.posts.contains(where: { $0.outboxKey == key }) else { return }
+        state.posts = state.posts.map { p -> Post in
+            guard p.outboxKey == key else { return p }
+            var x = p
+            x.outboxKey = ""
+            return x
+        }
+    }
+
+    /// Сообщение больше не ждёт очереди: ушло или не уйдёт никогда.
+    private func markDelivered(_ op: OutboxOp) {
+        guard let o = Json.parse(op.payload), o["id"] != nil else { return }
+        let localId = Json.long(o, "id")
+        updateMessage(Int(op.target), localId) { $0.pending = false }
+    }
+
+    private func updateMessage(_ chatId: Int, _ messageId: Int64, _ change: (inout Message) -> Void) {
+        updateChat(chatId) { c in
+            c.messages = c.messages.map { m -> Message in
+                guard m.id == messageId else { return m }
+                var x = m
+                change(&x)
+                return x
+            }
+        }
+    }
+
+    /// Долистали ленту до конца — подгрузить старое (в тестах — loadMoreFeedNow).
+    func loadMoreFeed() {
+        if !demoReplies || state.feedPaging.loading || state.feedPaging.end { return }
+        Task { @MainActor [weak self] in
+            await self?.loadMoreFeedNow()
+        }
+    }
+
+    @MainActor func loadMoreFeedNow() async {
+        guard let pager = feedPager else { return }
+        state.feedPaging.loading = true
+        state.feedPaging.error = nil
+        let err = await pager.loadMore()
+        publishFeed()
+        if err?.kind == .offline && deviceOnline && !state.demoOffline { state.netStatus = .serverDown }
+        if err == nil && state.netStatus == .serverDown { state.netStatus = .online }
+        refreshNetCounters()
+    }
+
+    /// Потянули ленту вниз: заново с сервера.
+    func refreshFeed() {
+        if !demoReplies { return }
+        Task { @MainActor [weak self] in
+            await self?.refreshFeedNow()
+        }
+    }
+
+    @MainActor func refreshFeedNow() async {
+        guard let pager = feedPager else { return }
+        await pager.refresh()
+        publishFeed()
+        refreshNetCounters()
+    }
+
+    func pauseUpload(_ id: String) {
+        net.uploads.pause(id)
+        refreshNetCounters()
+    }
+
+    func resumeUpload(_ id: String) {
+        net.uploads.resume(id)
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /// Отменить загрузку: её запись или сообщение не уйдёт (останется
+    /// только на этом телефоне), остальные загрузки того же — тоже снимаются.
+    func cancelUpload(_ id: String) {
+        guard let job = net.uploads.get(id) else { return }
+        for j in net.uploads.all() where j.owner == job.owner {
+            uploadCleanup(j)
+            net.uploads.remove(j.id)
+        }
+        if let op = net.outbox.get(job.owner) {
+            net.outbox.remove(op.key)
+            if op.kind == .createPost { clearOutboxKey(op.key) }
+            if op.kind == .sendMessage { markDelivered(op) }
+        }
+        refreshNetCounters()
+    }
+
+    /// Стереть сохранённые страницы (очередь и загрузки — не трогаем).
+    func clearNetCache() {
+        net.cache.clearPages()
+        feedPager = net.feedPager()
+        publishFeed()
+        refreshNetCounters()
+    }
+
+    func dismissNetNotice() {
+        state.netNotice = nil
     }
 
     // MARK: - PRISM
@@ -3138,6 +3494,7 @@ final class AppModel {
 
     /// После выхода состояние сбрасывается: следующий вошедший не увидит чужие черновики и переписку.
     func reset() {
+        detachNet()
         lifeTask?.cancel()
         lifeTask = nil
         liveTask?.cancel()

@@ -6,6 +6,7 @@ Memory builds on the work of others, and we thank its authors.
 
 - **OpenStreetMap**: map data © OpenStreetMap contributors, Open Database License (ODbL). openstreetmap.org/copyright
 - **osmdroid** (Android): Apache License 2.0.
+- **OkHttp** (Android, server requests): Apache License 2.0.
 - **Apple MapKit** (iPhone): Apple Maps, Apple's terms.
 
 ## GIFs and music

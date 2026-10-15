@@ -5,6 +5,8 @@
          ролик можно выбрать из галереи. -->
     <!-- Медиатека PRISM: поиск и прослушивание музыки Jamendo и Openverse -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Есть ли сеть: очередь отправки ждёт её и уходит сама -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Микрофон: звук роликов PRISM и голосовые сообщения -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />

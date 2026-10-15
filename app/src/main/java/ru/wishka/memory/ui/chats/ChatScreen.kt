@@ -665,7 +665,8 @@ private fun Bubble(
                     }
                     Text(
                         // 🔒 — ушло зашифрованным, ⏱ — исчезнет
-                        listOfNotNull(if (message.expiresAt > 0) "⏱" else null, if (message.secret) "🔒" else null, message.time).joinToString(" "),
+                        // 🕓 — ещё не дошло до сервера (ждёт сети в очереди)
+                        listOfNotNull(if (message.expiresAt > 0) "⏱" else null, if (message.secret) "🔒" else null, message.time, if (message.pending) "🕓" else null).joinToString(" "),
                         style = MaterialTheme.typography.labelSmall,
                         color = Palette.Ink.copy(alpha = 0.6f),
                         modifier = Modifier.align(Alignment.End),

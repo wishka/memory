@@ -1,5 +1,6 @@
 package ru.wishka.memory
 
+import androidx.compose.foundation.layout.statusBarsPadding
 import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.runtime.SideEffect
@@ -183,6 +184,13 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
     val context = LocalContext.current
     val store = remember(context) { StateStore(context.applicationContext) }
     val device = remember(context) { DevicePrefs(context.applicationContext) }
+    // Есть ли сеть: пропала — очередь ждёт, появилась — отправляет
+    val netMonitor = remember(context) { ru.wishka.memory.net.NetMonitor(context.applicationContext) }
+    androidx.compose.runtime.DisposableEffect(netMonitor) {
+        netMonitor.start()
+        onDispose { netMonitor.stop() }
+    }
+    LaunchedEffect(netMonitor) { netMonitor.online.collect { vm.setDeviceOnline(it) } }
     // Знакомство «выберите любимое» — один раз на телефоне, до регистрации
     var onboarded by rememberSaveable { mutableStateOf(device.onboarded) }
     var registerNext by rememberSaveable { mutableStateOf(false) }
@@ -210,6 +218,17 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
             // Сохранённое на месте — можно считать итоги и оживлять демо
             vm.checkRecapReady()
             vm.startDemoLife()
+            // Сеть аккаунта: очередь, загрузки и сохранённое — в своей базе
+            vm.setMediaQuality(device.mediaQuality)
+            vm.setDemoOffline(device.demoOffline)
+            vm.uploadCleanup = ru.wishka.memory.net.MediaCompressor::cleanup
+            vm.attachNet(
+                ru.wishka.memory.net.NetSetup.forAccount(
+                    context, account.username, { vm.state.value.me }, System::currentTimeMillis,
+                    quality = { vm.state.value.mediaQuality }, unmetered = { netMonitor.unmetered.value },
+                ),
+            )
+            vm.startNetLoop()
         } else {
             vm.reset()
         }
@@ -289,7 +308,13 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
                         val login = account?.username
                         val error = authVm.deleteAccount(password)
                         if (error == null && login != null) {
-                            withContext(Dispatchers.IO) { store.delete(login) }
+                            // База сети ещё открыта — закрыть, потом стирать
+                            (vm.net.cache as? ru.wishka.memory.net.SqliteCache)?.close()
+                            withContext(Dispatchers.IO) {
+                                store.delete(login)
+                                // И сохранённое для офлайна, очередь, незаконченные загрузки
+                                ru.wishka.memory.net.NetSetup.deleteAccount(context, login)
+                            }
                             ru.wishka.memory.data.ChatKeys(ru.wishka.memory.data.auth.SecurePrefs(context.applicationContext)).forget(login)
                         }
                         error
@@ -453,7 +478,8 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
             onUntagMe = { post -> vm.untagMe(post.id) },
         )
     }
-    CompositionLocalProvider(LocalLinkActions provides links) {
+    val sync = ru.wishka.memory.ui.components.SyncInfo(state.netStatus) { owner -> state.uploadProgress(owner) }
+    CompositionLocalProvider(LocalLinkActions provides links, ru.wishka.memory.ui.components.LocalSync provides sync) {
     Box(modifier = Modifier.fillMaxSize()) {
         CosmicBackground()
 
@@ -584,6 +610,11 @@ private fun MainScreen(vm: AppViewModel, onSaveProfile: (String, ProfileInfo) ->
         // Истории — просмотр и новая — во весь экран
         if (state.storyComposer) ru.wishka.memory.ui.stories.StoryComposerScreen(vm, state)
         if (state.storyViewer != null) ru.wishka.memory.ui.stories.StoryViewerScreen(vm, state)
+        // «Нет сети» — поверх всего, кроме звонка
+        ru.wishka.memory.ui.components.NetBanner(
+            state.netStatus, state.outboxCount,
+            Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 4.dp),
+        )
         state.call?.let { ru.wishka.memory.ui.calls.CallScreen(vm, state, it) }
         // Эфир — во весь экран, поверх всего
         state.watchingLive?.let { ru.wishka.memory.ui.live.LiveScreen(vm, state, it) }

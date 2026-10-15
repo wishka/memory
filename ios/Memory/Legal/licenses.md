@@ -6,6 +6,7 @@ Memory использует чужой труд — спасибо его авт
 
 - **OpenStreetMap** — данные карт © участники OpenStreetMap, лицензия Open Database License (ODbL). openstreetmap.org/copyright
 - **osmdroid** (Android) — Apache License 2.0.
+- **OkHttp** (Android, запросы к серверу) — Apache License 2.0.
 - **Apple MapKit** (iPhone) — карты Apple, условия Apple.
 
 ## Гифки и музыка

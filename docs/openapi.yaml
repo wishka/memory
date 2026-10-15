@@ -1,0 +1,246 @@
+openapi: 3.1.0
+info:
+  title: Memory API
+  version: "1.0"
+  description: |
+    Контракт сервера Memory. Его уже исполняет встроенный демо-сервер на
+    телефоне (Android: data/net/DemoServer.kt, iPhone: Data/Net/DemoServer.swift);
+    настоящий сервер должен отвечать так же. Подробно — docs/API.md.
+
+    Общие правила:
+    - Все изменения принимают заголовок `Idempotency-Key` (UUID). Повтор с тем же
+      ключом возвращает тот же ответ (200) и ничего не создаёт второй раз.
+    - Списки — страницами по курсору: `?limit=20&cursor=…`; в ответе `next`
+      (null — дальше пусто). Курсор непрозрачный для клиента.
+    - Ошибки: 4xx — не повторять (кроме 408 и 429), 5xx и 429 — повторить позже;
+      `Retry-After` (секунды) — когда.
+    - Записи и сообщения — тот же JSON, что клиент хранит на телефоне
+      (StateStore.Codec): люди — по номеру (`author`), время — мс.
+servers:
+  - url: https://api.example.am
+    description: Замените на адрес сервера (API_URL)
+security:
+  - bearer: []
+paths:
+  /v1/feed:
+    get:
+      summary: Лента — новые сверху
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Страница записей
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostPage" }
+  /v1/users/{userId}/posts:
+    get:
+      summary: Записи человека
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: integer } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Страница записей
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostPage" }
+  /v1/posts:
+    post:
+      summary: Опубликовать запись
+      description: |
+        Вложения — уже загруженные через /v1/uploads: `media[].path` — адрес
+        загрузки (`/v1/uploads/{id}`). Незаконченная загрузка — 422.
+      parameters:
+        - $ref: "#/components/parameters/idempotency"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Post" }
+      responses:
+        "201":
+          description: Создана; ответ — запись с номером сервера
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "200":
+          description: Уже была создана с этим Idempotency-Key — та же запись
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "422": { description: Вложение не загружено целиком или запись не разобрать }
+  /v1/posts/{postId}/like:
+    parameters:
+      - { name: postId, in: path, required: true, schema: { type: integer, format: int64 } }
+      - $ref: "#/components/parameters/idempotency"
+    put:
+      summary: Нравится (повтор безопасен)
+      responses: { "204": { description: Готово } }
+    delete:
+      summary: Больше не нравится (повтор безопасен)
+      responses: { "204": { description: Готово } }
+  /v1/chats/{chatId}/messages:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: История переписки — новые сверху
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Страница сообщений
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Message" } }
+                  next: { type: [string, "null"] }
+    post:
+      summary: Отправить сообщение
+      description: |
+        В секретной переписке `text` — конверт (base64, X25519 + AES-256-GCM):
+        сервер хранит и пересылает его, прочитать не может. Вложения в
+        секретных переписках пока не отправляются.
+      parameters:
+        - $ref: "#/components/parameters/idempotency"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Message" }
+      responses:
+        "201":
+          description: Принято
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "200":
+          description: Уже было с этим Idempotency-Key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+  /v1/uploads:
+    options:
+      summary: Возможности tus
+      security: []
+      responses:
+        "204":
+          description: Tus-Version, Tus-Max-Size, Tus-Extension
+    post:
+      summary: Создать загрузку (tus 1.0, расширение creation)
+      parameters:
+        - { name: Tus-Resumable, in: header, required: true, schema: { const: "1.0.0" } }
+        - { name: Upload-Length, in: header, required: true, schema: { type: integer, format: int64 } }
+        - { name: Upload-Metadata, in: header, schema: { type: string }, description: "filename <base64>,filetype <base64>" }
+      responses:
+        "201":
+          description: Создана
+          headers:
+            Location: { schema: { type: string }, description: "Адрес загрузки (/v1/uploads/{id})" }
+        "412": { description: Не та версия tus }
+        "413": { description: Слишком большой файл (больше 2 ГБ) }
+  /v1/uploads/{uploadId}:
+    parameters:
+      - { name: uploadId, in: path, required: true, schema: { type: string } }
+      - { name: Tus-Resumable, in: header, required: true, schema: { const: "1.0.0" } }
+    head:
+      summary: Сколько уже дошло — с этого места продолжать
+      responses:
+        "200":
+          description: Upload-Offset, Upload-Length
+        "404": { description: Нет такой (или истёк срок) — начать заново }
+    patch:
+      summary: Дослать кусок
+      parameters:
+        - { name: Upload-Offset, in: header, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "204":
+          description: Принято; Upload-Offset — новое смещение
+        "409": { description: Смещение не совпало — спросить HEAD и продолжить }
+        "415": { description: Нужен Content-Type application/offset+octet-stream }
+    delete:
+      summary: Отменить загрузку (расширение termination)
+      responses: { "204": { description: Удалена } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  parameters:
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    cursor: { name: cursor, in: query, schema: { type: string }, description: "Из `next` прошлой страницы" }
+    idempotency:
+      name: Idempotency-Key
+      in: header
+      schema: { type: string, format: uuid }
+      description: Один и тот же при каждом повторе одного действия
+  schemas:
+    PostPage:
+      type: object
+      required: [items, next]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Post" } }
+        next: { type: [string, "null"] }
+    Attachment:
+      type: object
+      required: [id, kind, path]
+      properties:
+        id: { type: string }
+        kind: { enum: [Photo, Video, Document] }
+        path: { type: string, description: На сервере — адрес загрузки }
+        name: { type: string }
+        size: { type: integer, format: int64 }
+        mime: { type: string }
+        voice: { type: boolean }
+        durationMs: { type: integer, format: int64 }
+        sticker: { type: boolean }
+        tags:
+          type: array
+          items:
+            type: object
+            properties: { user: { type: integer }, x: { type: number }, y: { type: number } }
+    Post:
+      type: object
+      required: [id, author, text]
+      properties:
+        id: { type: integer, format: int64 }
+        author: { type: integer, description: Номер человека }
+        text: { type: string, maxLength: 2000 }
+        createdAt: { type: integer, format: int64, description: мс }
+        editedAt: { type: integer, format: int64 }
+        likes: { type: integer }
+        liked: { type: boolean }
+        comments: { type: integer }
+        artSeed: { type: [integer, "null"] }
+        media: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        checkIn: { type: [object, "null"] }
+        poll: { type: [object, "null"] }
+        repostOf: { type: [object, "null"] }
+        reposts: { type: integer }
+        place:
+          type: [object, "null"]
+          properties: { lat: { type: number }, lon: { type: number }, title: { type: string } }
+    Message:
+      type: object
+      required: [id, fromMe, text, time]
+      properties:
+        id: { type: integer, format: int64 }
+        fromMe: { type: boolean }
+        text: { type: string, maxLength: 4000 }
+        time: { type: string }
+        secret: { type: boolean }
+        expiresAt: { type: integer, format: int64 }
+        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        replyTo: { type: [object, "null"] }
+        poll: { type: [object, "null"] }
+        place: { type: [object, "null"] }
+        sentAt: { type: integer, format: int64, description: Время сервера, мс }

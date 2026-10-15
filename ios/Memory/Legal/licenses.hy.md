@@ -6,6 +6,7 @@ Memory-ն օգտագործում է ուրիշների աշխատանքը. շն�
 
 - **OpenStreetMap**՝ քարտեզների տվյալներ © OpenStreetMap-ի մասնակիցներ, Open Database License (ODbL) լիցենզիա։ openstreetmap.org/copyright
 - **osmdroid** (Android)՝ Apache License 2.0։
+- **OkHttp** (Android, հարցումներ սերվերին)՝ Apache License 2.0։
 - **Apple MapKit** (iPhone)՝ Apple-ի քարտեզներ, Apple-ի պայմաններ։
 
 ## Գիֆեր և երաժշտություն

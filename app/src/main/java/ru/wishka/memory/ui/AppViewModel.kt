@@ -114,6 +114,13 @@ import kotlin.random.Random
 import ru.wishka.memory.i18n.t
 import ru.wishka.memory.i18n.tf
 import java.time.LocalTime
+import ru.wishka.memory.data.net.MediaQuality
+import ru.wishka.memory.data.net.Net
+import ru.wishka.memory.data.net.NetError
+import ru.wishka.memory.data.net.OpKind
+import ru.wishka.memory.data.net.Pager
+import ru.wishka.memory.data.net.UploadJob
+import ru.wishka.memory.data.net.UploadState
 import java.time.format.DateTimeFormatter
 
 /** Разделы профиля за счётчиками: записи, друзья, группы, сохранённое, заявки в друзья. */
@@ -139,6 +146,21 @@ enum class ProfileSection(private val ru: String) {
     val title: String get() = t(ru)
 }
 
+/** Связь с сервером — для полоски «нет сети». */
+enum class NetStatus { Online, Offline, ServerDown }
+
+/** Как подгружается старое в ленте. */
+data class FeedPaging(
+    val loading: Boolean = false,
+    /** Дальше ничего нет. */
+    val end: Boolean = false,
+    /** Показано сохранённое, свежего с сервера ещё не было. */
+    val fromCache: Boolean = false,
+    val cachedAt: Long = 0,
+    /** Не загрузилось: «нет сети», «сервер не отвечает». */
+    val error: NetError.Kind? = null,
+)
+
 /** Страницы настроек за шестерёнкой в профиле. Main — сам список настроек. */
 enum class SettingsPage(private val ru: String) {
     Main("Настройки"),
@@ -157,6 +179,8 @@ enum class SettingsPage(private val ru: String) {
     Guide("Гид по Memory"),
     /** Оформление: как в системе, тёмное или светлое. */
     Theme("Оформление"),
+    /** Качество фото и видео при отправке, загрузки, очередь, кэш. */
+    Network("Данные и сеть"),
     ;
 
     val title: String get() = t(ru)
@@ -351,6 +375,23 @@ data class UiState(
     val repostingPostId: Long? = null,
     /** «Отправить в чат»: какую запись отправляют (открыт выбор переписки). */
     val sharingPostId: Long? = null,
+    /** Связь: есть, нет сети, сервер не отвечает. */
+    val netStatus: NetStatus = NetStatus.Online,
+    /** Старые записи ленты — подгружены с сервера (или из кэша) страницами. */
+    val olderFeed: List<Post> = emptyList(),
+    val feedPaging: FeedPaging = FeedPaging(),
+    /** Загрузки фото и видео: что идёт, что ждёт, что на паузе. */
+    val uploads: List<UploadJob> = emptyList(),
+    /** Сколько действий ждут отправки. */
+    val outboxCount: Int = 0,
+    /** Качество отправки (настройка телефона — DevicePrefs). */
+    val mediaQuality: MediaQuality = MediaQuality.Standard,
+    /** Демо: «как будто нет сети» — проверить очередь и кэш. */
+    val demoOffline: Boolean = false,
+    /** Сколько места занимает сохранённое для офлайна. */
+    val cacheBytes: Long = 0,
+    /** Что сказать о сети: «запись не отправлена» и т. п.; null — нечего. */
+    val netNotice: String? = null,
 ) {
     /** Кружки историй друзей (свой — отдельно). */
     fun storyCircles(now: Long): List<StoryCircle> =
@@ -417,6 +458,22 @@ data class UiState(
     val feed: List<Post> get() = posts.filter { it.author.id !in blocked && canSee(it.author) }
     /** Записи человека видны: профиль открыт, вы друзья или это вы. */
     fun canSee(user: User): Boolean = !user.closed || user.id in following || user.id == me.id
+
+    /** Лента целиком: свежее с телефона, ниже — старое с сервера (без повторов и заблокированных). */
+    val feedWithOlder: List<Post>
+        get() {
+            val local = feed
+            val ids = local.map { it.id }.toHashSet()
+            return local + olderFeed.filter { it.id !in ids && it.author.id !in blocked && canSee(it.author) }
+        }
+
+    /** Прогресс отправки записи или сообщения по ключу очереди (0…1); нет загрузок — null. */
+    fun uploadProgress(owner: String): Float? {
+        val mine = uploads.filter { it.owner == owner }
+        if (mine.isEmpty()) return null
+        val total = mine.sumOf { maxOf(it.size, 1) }
+        return (mine.sumOf { if (it.state == UploadState.Done) maxOf(it.size, 1) else it.offset }.toFloat() / total).coerceIn(0f, 1f)
+    }
     /** Люди, приславшие мне заявку в друзья. */
     val requestPeople: List<User> get() = followRequests.mapNotNull { Demo.person(it) }
     /** Люди, которым я отправил заявку в друзья. */
@@ -906,6 +963,12 @@ class AppViewModel(
                 else it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1)
             })
         }
+        _state.value.posts.firstOrNull { it.id == postId }?.let { p ->
+            // Своя ещё не ушедшая запись — серверу пока нечего отмечать
+            if (p.outboxKey.isEmpty()) runCatching { net.queueLike(postId, p.liked) }
+        }
+        refreshNetCounters()
+        kickNet()
     }
 
     /** Новая запись: текст, фото и видео. Пустую (без текста и вложений) не публикуем. */
@@ -918,9 +981,12 @@ class AppViewModel(
         val friendIds = _state.value.following
         val cleanMedia = media.map { a -> if (a.tags.isEmpty()) a else a.copy(tags = a.tags.filter { it.userId in friendIds }.distinctBy { it.userId }) }
         media.filter { it.isGif }.forEach(::rememberGif)
+        // На сервер — через очередь: без сети запись видна сразу и уйдёт, когда сеть появится
+        val draft = Post(nextId++, _state.value.me, trimmed, 0, media = cleanMedia.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn, poll = built, place = place)
+        val key = runCatching { net.queuePost(draft) }.getOrDefault("")
         _state.update { s ->
             val next = s.copy(
-                posts = listOf(Post(nextId++, s.me, trimmed, 0, media = cleanMedia.take(MAX_MEDIA), createdAt = clock(), checkIn = checkIn, poll = built, place = place)) + s.posts,
+                posts = listOf(draft.copy(outboxKey = key)) + s.posts,
                 // Чек-ин сам засчитывается в общие цели «Вместе»
                 together = if (checkIn != null) s.together.afterCheckIn(checkIn) else s.together,
                 growth = if (checkIn != null) s.growth.logged(GrowthEvent(GrowthEventType.CheckIn, clock(), checkIn.activity)) else s.growth,
@@ -928,6 +994,8 @@ class AppViewModel(
             // Отклик: что изменилось от чек-ина — полка, цели, план, что откроется дальше
             if (checkIn == null) next else next.copy(echo = echoFor(checkIn, s, next))
         }
+        refreshNetCounters()
+        kickNet()
     }
 
     private fun echoFor(c: CheckIn, before: UiState, after: UiState): CheckInEcho {
@@ -1274,10 +1342,17 @@ class AppViewModel(
             lastEnvelope = envelope
             if (envelope == null || peerOpen(secretChat, envelope) != trimmed) return
         }
-        append(
-            chatId,
-            Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA), replyTo = replyTo, poll = built, place = place),
-        )
+        val outgoing = Message(nextId++, fromMe = true, text = trimmed, time = now(), attachments = attachments.take(MAX_MEDIA), replyTo = replyTo, poll = built, place = place, pending = true)
+        append(chatId, outgoing)
+        // На сервер — через очередь. Секретная переписка: уходит только конверт, без вложений
+        // (шифрование файлов — следующий шаг), так что сервер ничего не прочтёт
+        runCatching {
+            val wire = if (secretChat != null) outgoing.copy(text = if (trimmed.isNotEmpty()) lastEnvelope.orEmpty() else "", attachments = emptyList()) else outgoing
+            if (wire.text.isNotEmpty() || wire.attachments.isNotEmpty() || wire.poll != null || wire.place != null) net.queueMessage(chatId, wire)
+            else updateMessage(chatId, outgoing.id) { it.copy(pending = false) }
+        }
+        refreshNetCounters()
+        kickNet()
         attachments.filter { it.isGif }.forEach(::rememberGif)
         // Опрос в переписке: собеседник отвечает голосом через пару секунд
         if (built != null) later(4_000, 12_000) {
@@ -1556,6 +1631,221 @@ class AppViewModel(
             val stories = s.stories.filter { it.authorId == me || it.active(now) || it.id in kept }
             if (stories.size == s.stories.size) s else s.copy(stories = stories, seenStories = s.seenStories intersect stories.map { it.id }.toSet())
         }
+    }
+
+    // ==================== СЕТЬ ====================
+
+    /**
+     * Всё сетевое: API, очередь отправки, загрузки, кэш. Пока аккаунт не
+     * открыт (и в тестах) — встроенный демо-сервер и кэш в памяти;
+     * MainActivity подставляет настоящий (NetSetup.forAccount).
+     */
+    var net: Net = Net.demo(clock, { _state.value.me })
+        private set
+
+    private var feedPager: Pager<Post> = net.feedPager()
+    private var netJob: Job? = null
+    private val netKick = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    /** Есть ли сеть у телефона (NetMonitor). */
+    private var deviceOnline = true
+
+    /** Сжатая копия файла больше не нужна (на телефоне — MediaCompressor.cleanup). */
+    var uploadCleanup: (UploadJob) -> Unit = {}
+
+    /** Подключить сеть аккаунта: сохранённая лента — сразу, без сети. */
+    fun attachNet(n: Net) {
+        net = n
+        feedPager = n.feedPager()
+        feedPager.restore()
+        publishFeed()
+        refreshNetCounters()
+        applyOnline()
+    }
+
+    /** Отключить (выход из аккаунта): назад к демо в памяти. */
+    private fun detachNet() {
+        netJob?.cancel()
+        netJob = null
+        net = Net.demo(clock, { _state.value.me })
+        feedPager = net.feedPager()
+    }
+
+    private fun publishFeed() {
+        val p = feedPager.state
+        _state.update {
+            it.copy(
+                olderFeed = p.items,
+                feedPaging = FeedPaging(p.loading, p.end, p.fromCache, p.cachedAt, p.error?.kind),
+            )
+        }
+    }
+
+    private fun refreshNetCounters() {
+        _state.update { it.copy(uploads = net.uploads.all(), outboxCount = net.outbox.count, cacheBytes = runCatching { net.cache.sizeBytes() }.getOrDefault(0)) }
+    }
+
+    /** Есть ли сеть — от NetMonitor. Появилась — сразу отправить накопленное. */
+    fun setDeviceOnline(online: Boolean) {
+        deviceOnline = online
+        applyOnline()
+    }
+
+    fun setDemoOffline(on: Boolean) {
+        _state.update { it.copy(demoOffline = on) }
+        applyOnline()
+    }
+
+    fun setMediaQuality(q: MediaQuality) {
+        _state.update { it.copy(mediaQuality = q) }
+    }
+
+    private fun applyOnline() {
+        val online = deviceOnline && !_state.value.demoOffline
+        net.demo?.online = online
+        _state.update {
+            it.copy(netStatus = when {
+                !online -> NetStatus.Offline
+                it.netStatus == NetStatus.ServerDown -> NetStatus.ServerDown
+                else -> NetStatus.Online
+            })
+        }
+        if (online) {
+            net.wake()
+            kickNet()
+        }
+    }
+
+    /** Разбудить отправку: что-то добавили в очередь или появилась сеть. */
+    fun kickNet() {
+        netKick.trySend(Unit)
+    }
+
+    /**
+     * Фоновая отправка: пока приложение открыто, догружает и отправляет.
+     * Ждёт пинка (kickNet) или ближайшей повторной попытки.
+     */
+    fun startNetLoop() {
+        if (netJob != null || !demoReplies) return
+        netJob = viewModelScope.launch {
+            while (true) {
+                if (_state.value.netStatus != NetStatus.Offline && net.busy) {
+                    runCatching { pumpNet() }
+                }
+                val wait = if (net.busy) (net.nextAttemptAt() - clock()).coerceIn(1_000, 30_000) else 60_000
+                kotlinx.coroutines.withTimeoutOrNull(wait) { netKick.receive() }
+            }
+        }
+    }
+
+    /** Один проход отправки: загрузки, потом очередь. Результат — на экраны. */
+    suspend fun pumpNet() {
+        val r = net.pump(onProgress = { _state.update { s -> s.copy(uploads = net.uploads.all()) } })
+        val c = StateStore.Codec(_state.value.me)
+        for ((op, answer) in r.sent) {
+            when (op.kind) {
+                OpKind.CreatePost -> _state.update { s -> s.copy(posts = s.posts.map { if (it.outboxKey == op.key) it.copy(outboxKey = "") else it }) }
+                OpKind.SendMessage -> {
+                    val localId = runCatching { org.json.JSONObject(op.payload).getLong("id") }.getOrNull()
+                    if (localId != null) updateMessage(op.target.toInt(), localId) { it.copy(pending = false) }
+                }
+                else -> Unit
+            }
+            if (answer != null) runCatching { c.postOf(answer) }
+        }
+        r.uploads.filter { it.state == UploadState.Done }.forEach(uploadCleanup)
+        for (op in r.failed) {
+            when (op.kind) {
+                OpKind.CreatePost -> {
+                    _state.update { s -> s.copy(posts = s.posts.map { if (it.outboxKey == op.key) it.copy(outboxKey = "") else it }, netNotice = t("Запись не отправлена: файл не нашёлся. Она осталась только на этом телефоне.")) }
+                }
+                OpKind.SendMessage -> {
+                    val localId = runCatching { org.json.JSONObject(op.payload).getLong("id") }.getOrNull()
+                    if (localId != null) updateMessage(op.target.toInt(), localId) { it.copy(pending = false) }
+                    _state.update { it.copy(netNotice = t("Сообщение не отправлено: вложение не нашлось.")) }
+                }
+                else -> Unit
+            }
+        }
+        _state.update {
+            it.copy(netStatus = when {
+                !deviceOnline || it.demoOffline -> NetStatus.Offline
+                r.offline -> NetStatus.ServerDown
+                else -> NetStatus.Online
+            })
+        }
+        refreshNetCounters()
+    }
+
+    private fun updateMessage(chatId: Int, messageId: Long, change: (Message) -> Message) {
+        _state.update { s ->
+            s.copy(chats = s.chats.map { ch -> if (ch.id != chatId) ch else ch.copy(messages = ch.messages.map { if (it.id == messageId) change(it) else it }) })
+        }
+    }
+
+    /** Долистали ленту до конца — подгрузить старое (в тестах — loadMoreFeedNow). */
+    fun loadMoreFeed() {
+        if (!demoReplies || _state.value.feedPaging.loading || _state.value.feedPaging.end) return
+        viewModelScope.launch { loadMoreFeedNow() }
+    }
+
+    suspend fun loadMoreFeedNow() {
+        _state.update { it.copy(feedPaging = it.feedPaging.copy(loading = true, error = null)) }
+        val err = feedPager.loadMore()
+        publishFeed()
+        if (err?.kind == NetError.Kind.Offline && deviceOnline && !_state.value.demoOffline) _state.update { it.copy(netStatus = NetStatus.ServerDown) }
+        if (err == null && _state.value.netStatus == NetStatus.ServerDown) _state.update { it.copy(netStatus = NetStatus.Online) }
+        refreshNetCounters()
+    }
+
+    /** Потянули ленту вниз: заново с сервера. */
+    fun refreshFeed() {
+        if (!demoReplies) return
+        viewModelScope.launch {
+            feedPager.refresh()
+            publishFeed()
+            refreshNetCounters()
+        }
+    }
+
+    fun pauseUpload(id: String) {
+        net.uploads.pause(id)
+        refreshNetCounters()
+    }
+
+    fun resumeUpload(id: String) {
+        net.uploads.resume(id)
+        refreshNetCounters()
+        kickNet()
+    }
+
+    /**
+     * Отменить загрузку: её запись или сообщение не уйдёт (останется
+     * только на этом телефоне), остальные загрузки того же — тоже снимаются.
+     */
+    fun cancelUpload(id: String) {
+        val job = net.uploads.get(id) ?: return
+        net.uploads.all().filter { it.owner == job.owner }.forEach { j -> uploadCleanup(j); net.uploads.remove(j.id) }
+        net.outbox.get(job.owner)?.let { op ->
+            net.outbox.remove(op.key)
+            if (op.kind == OpKind.CreatePost) _state.update { s -> s.copy(posts = s.posts.map { if (it.outboxKey == op.key) it.copy(outboxKey = "") else it }) }
+            if (op.kind == OpKind.SendMessage) {
+                val localId = runCatching { org.json.JSONObject(op.payload).getLong("id") }.getOrNull()
+                if (localId != null) updateMessage(op.target.toInt(), localId) { it.copy(pending = false) }
+            }
+        }
+        refreshNetCounters()
+    }
+
+    /** Стереть сохранённые страницы (очередь и загрузки — не трогаем). */
+    fun clearNetCache() {
+        net.cache.clearPages()
+        feedPager = net.feedPager()
+        publishFeed()
+        refreshNetCounters()
+    }
+
+    fun dismissNetNotice() {
+        _state.update { it.copy(netNotice = null) }
     }
 
     // ==================== РЕПОСТЫ ====================
@@ -2859,6 +3149,7 @@ class AppViewModel(
 
     /** После выхода состояние сбрасывается: следующий вошедший не увидит чужие черновики и переписку. */
     fun reset() {
+        detachNet()
         lifeJob?.cancel()
         lifeJob = null
         liveJob?.cancel()

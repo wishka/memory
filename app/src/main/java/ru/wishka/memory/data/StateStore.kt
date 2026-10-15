@@ -42,8 +42,16 @@ class StateStore(private val context: Context) {
         file(login).delete()
     }
 
-    private class Codec(private val me: User) {
+    /** Как записи, сообщения и всё остальное ложатся в JSON — тот же формат и у API (data/net). */
+    class Codec(private val me: User) {
         private fun person(id: Int): User = if (id == me.id) me else Demo.person(id) ?: User(id, "Неизвестный", "unknown")
+
+        fun postJson(p: Post): JSONObject = post(p)
+        fun postOf(o: JSONObject): Post = post(o)
+        fun messageJson(m: Message): JSONObject = message(m)
+        fun messageOf(o: JSONObject): Message = message(o)
+        fun attachmentJson(a: Attachment): JSONObject = attachment(a)
+        fun attachmentOf(o: JSONObject): Attachment = attachment(o)
 
         fun json(s: Snapshot): JSONObject = JSONObject()
             .put("version", VERSION)
@@ -460,6 +468,7 @@ class StateStore(private val context: Context) {
             .put("createdAt", p.createdAt).put("editedAt", p.editedAt)
             .put("repostOf", p.repostOf?.let { postRef(it) } ?: JSONObject.NULL).put("reposts", p.reposts)
             .put("place", p.place?.let { JSONObject().put("lat", it.lat).put("lon", it.lon).put("title", it.title) } ?: JSONObject.NULL)
+            .put("outboxKey", p.outboxKey)
             .put("checkIn", p.checkIn?.let { checkIn(it) } ?: JSONObject.NULL)
             .put("poll", p.poll?.let { poll(it) } ?: JSONObject.NULL)
             .put("media", JSONArray(p.media.map { attachment(it) }))
@@ -483,6 +492,7 @@ class StateStore(private val context: Context) {
             repostOf = o.optJSONObject("repostOf")?.let { postRef(it) },
             reposts = o.optInt("reposts"),
             place = o.optJSONObject("place")?.let { SharedPlace(it.optDouble("lat", 0.0), it.optDouble("lon", 0.0), it.optString("title")) },
+            outboxKey = o.optString("outboxKey"),
         )
 
         private fun postRef(r: PostRef) = JSONObject()
@@ -549,6 +559,7 @@ class StateStore(private val context: Context) {
             .put("story", m.story?.let { storyRef(it) } ?: JSONObject.NULL)
             .put("post", m.post?.let { postRef(it) } ?: JSONObject.NULL)
             .put("call", m.call?.let { call(it) } ?: JSONObject.NULL)
+            .put("pending", m.pending)
 
         private fun message(o: JSONObject) = Message(
             o.getLong("id"), o.getBoolean("fromMe"), o.getString("text"), o.getString("time"),
@@ -565,6 +576,7 @@ class StateStore(private val context: Context) {
             story = o.optJSONObject("story")?.let { storyRef(it) },
             post = o.optJSONObject("post")?.let { postRef(it) },
             call = o.optJSONObject("call")?.let { call(it) },
+            pending = o.optBoolean("pending"),
         )
 
         private fun poll(p: Poll) = JSONObject()
