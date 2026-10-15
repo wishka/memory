@@ -500,7 +500,8 @@ private struct Bubble: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     // 🔒 — ушло зашифрованным, ⏱ — исчезнет
-                    Text(([message.expiresAt != nil ? "⏱" : nil, message.secret ? "🔒" : nil, message.time] as [String?]).compactMap { $0 }.joined(separator: " "))
+                    // 🕓 — ещё не дошло до сервера (ждёт сети в очереди)
+                    Text(messageMeta(message))
                         .textStyle(.label, Palette.inkRGB.opacity(0.6))
                 }
                 .padding(.horizontal, 8)
@@ -695,4 +696,15 @@ private struct PinnedBar: View {
             FadeLine()
         }
     }
+}
+
+/// Строка под пузырём: ⏱, 🔒, время, 🕓 — по отдельности, чтобы компилятор не
+/// разбирал один длинный литерал с тернарными операторами.
+private func messageMeta(_ message: Message) -> String {
+    var parts: [String] = []
+    if message.expiresAt != nil { parts.append("⏱") }
+    if message.secret { parts.append("🔒") }
+    parts.append(message.time)
+    if message.pending { parts.append("🕓") }
+    return parts.joined(separator: " ")
 }

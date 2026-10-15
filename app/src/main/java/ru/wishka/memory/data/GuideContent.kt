@@ -726,6 +726,15 @@ internal object GuideContent {
                 action = GuideAction.Settings,
             ),
             GuideTopic(
+                "network", GuideText("Данные и сеть", "Data and network", "Տվյալներ և ցանց"),
+                listOf(
+                    GuideText("Настройки → «Данные и сеть»: качество фото и видео при отправке — «Стандартное», «Экономия трафика» или «Оригинал по Wi‑Fi».", "Settings → “Data and network”: photo and video quality when sending — “Standard”, “Data saver” or “Original on Wi‑Fi”.", "Կարգավորումներ → «Տվյալներ և ցանց»՝ լուսանկարների և տեսանյութերի որակը ուղարկելիս՝ «Ստանդարտ», «Թրաֆիկի խնայում» կամ «Բնօրինակ Wi‑Fi-ով»։"),
+                    GuideText("Там же — загрузки: пауза, продолжить, отменить; и сколько места занимает сохранённое для офлайна.", "There you'll also find uploads — pause, resume, cancel — and how much space offline content takes.", "Այնտեղ են նաև վերբեռնումները՝ դադար, շարունակել, չեղարկել, և որքան տեղ է զբաղեցնում անցանցի համար պահպանվածը։"),
+                ),
+                tip = GuideText("Оборвалась связь — загрузка продолжится с того же места, даже после перезапуска.", "Connection dropped? The upload resumes from the same place, even after a restart.", "Կապը կտրվե՞ց։ Վերբեռնումը կշարունակվի նույն տեղից, նույնիսկ վերագործարկումից հետո։"),
+                action = GuideAction.Settings,
+            ),
+            GuideTopic(
                 "screen-reader", GuideText("Экранный диктор", "Screen reader", "Էկրանի ընթերցիչ"),
                 listOf(
                     GuideText("Memory работает с TalkBack на Android и VoiceOver на iPhone: у кнопок-значков есть названия.", "Memory works with TalkBack on Android and VoiceOver on iPhone: icon buttons have names.", "Memory-ն աշխատում է TalkBack-ի (Android) և VoiceOver-ի (iPhone) հետ՝ պատկերակ-կոճակներն ունեն անուններ։"),
@@ -759,6 +768,14 @@ internal object GuideContent {
                 "where-data", GuideText("Где хранятся мои записи?", "Where are my posts stored?", "Որտե՞ղ են պահվում իմ գրառումները"),
                 listOf(
                     GuideText("Пока на вашем телефоне — отдельно для каждого аккаунта. Они переживают перезапуск приложения.", "For now, on your phone — separately for each account. They survive app restarts.", "Առայժմ՝ ձեր հեռախոսում, յուրաքանչյուր հաշվի համար առանձին։ Դրանք պահպանվում են հավելվածը վերագործարկելուց հետո։"),
+                ),
+            ),
+            GuideTopic(
+                "offline", GuideText("Что работает без сети", "What works offline", "Ինչ է աշխատում առանց ցանցի"),
+                listOf(
+                    GuideText("Лента, которую вы уже видели, открывается и без сети — сверху полоска «Нет сети».", "The feed you've already seen opens offline — a “No network” strip appears at the top.", "Արդեն դիտված լրահոսը բացվում է նաև առանց ցանցի — վերևում «Ցանց չկա» շերտն է։"),
+                    GuideText("Записи, «нравится» и сообщения можно отправлять как обычно: они встанут в очередь и уйдут сами, когда сеть появится.", "You can post, like and message as usual: everything queues up and sends itself once you're back online.", "Կարող եք գրառել, հավանել և գրել ինչպես սովորաբար․ ամեն ինչ հերթագրվում է և ինքնուրույն ուղարկվում, երբ ցանցը հայտնվի։"),
+                    GuideText("Пока не ушло — у записи «Ждёт сети», у сообщения 🕓.", "Until it's sent, a post shows “Waiting for network” and a message shows 🕓.", "Մինչև ուղարկվելը գրառման մոտ գրված է «Սպասում է ցանցին», հաղորդագրության մոտ՝ 🕓։"),
                 ),
             ),
             GuideTopic(

@@ -57,7 +57,12 @@ struct FeedScreen: View {
                     MemoryCard(model: model, memory: first, count: memories.count)
                 }
 
-                ForEach(state.feed) { post in
+                // Запись или сообщение не ушли — сказать один раз, можно закрыть
+                if let notice = state.netNotice {
+                    NetNoticeCard(text: notice) { model.dismissNetNotice() }
+                }
+
+                ForEach(state.feedWithOlder) { post in
                     PostCard(
                         post: post,
                         onLike: { model.toggleLike(post.id) },
@@ -72,12 +77,49 @@ struct FeedScreen: View {
                         onReport: model.isMine(post) ? nil : { model.reportPost(post) }
                     )
                 }
+
+                // Низ ленты: дошли — подгрузить старое с сервера
+                FeedFooter(paging: state.feedPaging) { model.loadMoreFeed() }
+                    .task(id: footerKey(state)) { model.loadMoreFeed() }
             }
             .padding(.top, 12)
             .padding(.bottom, tabBarSpace)
         }
         .scrollDismissesKeyboard(.interactively)
+        // Потянули вниз — свежее с сервера
+        .refreshable { await model.refreshFeedNow() }
         .shareSheet($sharing)
+    }
+}
+
+/// Низ ленты появился, подгрузилось старое или вернулась сеть — пробовать дальше.
+private func footerKey(_ state: UiState) -> String {
+    let count: Int = state.olderFeed.count
+    return "\(count)-\(state.netStatus)"
+}
+
+/// «Запись не отправлена…» — стеклянная карточка над лентой с крестиком.
+private struct NetNoticeCard: View {
+    let text: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(text)
+                .textStyle(.bodySmall, Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: onDismiss) {
+                Glyph(kind: .close, color: Palette.mist, size: 16)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(t("Закрыть"))
+        }
+        .padding(12)
+        .glass(radius: 16)
+        .padding(.horizontal, 16)
     }
 }
 
@@ -224,6 +266,8 @@ struct PostCard: View {
                     RichText(text: post.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // Своя запись ещё не на сервере: «Отправляется · 45%» или «Ждёт сети»
+                SyncLine(owner: post.outboxKey)
                 if let ref = post.repostOf {
                     PostRefCard(ref: ref) { links?.onOpenRef(ref) }
                 }

@@ -63,19 +63,21 @@ jobs:
           ')
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
-      # Ключи Jamendo (медиатека), GIPHY (поиск гифок), Sentry (отчёты о сбоях) и LiveKit (эфиры) — из секретов; без них — пустые
+      # Ключи Jamendo (медиатека), GIPHY (поиск гифок), Sentry (отчёты о сбоях), LiveKit (эфиры) и адрес сервера Memory (API_URL) — из секретов; без них — пустые
       - name: Ключи API
         env:
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
           GIPHY_API_KEY: ${{ secrets.IOS_GIPHY_API_KEY }}
           SENTRY_DSN: ${{ secrets.IOS_SENTRY_DSN }}
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          API_URL: ${{ secrets.API_URL }}
         run: |
           plutil -create xml1 Memory/Secrets.plist
           plutil -insert JAMENDO_CLIENT_ID -string "$JAMENDO_CLIENT_ID" Memory/Secrets.plist
           plutil -insert GIPHY_API_KEY -string "$GIPHY_API_KEY" Memory/Secrets.plist
           plutil -insert SENTRY_DSN -string "$SENTRY_DSN" Memory/Secrets.plist
           plutil -insert LIVEKIT_URL -string "$LIVEKIT_URL" Memory/Secrets.plist
+          plutil -insert API_URL -string "$API_URL" Memory/Secrets.plist
 
       - name: Сборка и юнит-тесты
         run: |

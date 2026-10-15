@@ -112,6 +112,10 @@ struct RootView: View {
                             if error == nil, let login {
                                 saveTask?.cancel()
                                 store.delete(login)
+                                // И сохранённое для офлайна, очередь, незаконченные загрузки:
+                                // база сети ещё открыта — закрыть, потом стирать
+                                (model.net.cache as? SqliteCache)?.close()
+                                NetSetup.deleteAccount(login: login)
                                 // Ключ сквозного шифрования уходит вместе с аккаунтом
                                 ChatKeys(SecureStore()).forget(login)
                             }
@@ -185,6 +189,8 @@ struct RootView: View {
                 // Сохранённое на месте — можно считать итоги и оживлять демо
                 model.checkRecapReady()
                 model.startDemoLife()
+                // Сеть аккаунта: очередь, загрузки и сохранённое — в своей базе
+                attachNet(account.username)
                 push.requestPermission()
             } else {
                 model.reset()
@@ -204,6 +210,12 @@ struct RootView: View {
             }
         }
         .task {
+            // Есть ли сеть: пропала — очередь ждёт, появилась — отправляет
+            let monitor = NetMonitor.shared
+            let netModel = model
+            monitor.onChange = { online in netModel.setDeviceOnline(online) }
+            monitor.start()
+            model.setDeviceOnline(monitor.online)
             // Входящий звонок: приложение открыто — он и так во весь экран
             model.isForeground = { UIApplication.shared.applicationState == .active }
             // Уведомления: приложение открыто — плашкой сверху, свёрнуто — системным
@@ -272,6 +284,25 @@ struct RootView: View {
     }
 
     /// Открыть ссылку Memory; такого на телефоне нет — сказать об этом.
+    /// Сеть вошедшего аккаунта: своя база очереди и сохранённого, демо-сервер
+    /// или настоящий (API_URL в Secrets.plist), сжатие перед отправкой.
+    private func attachNet(_ login: String) {
+        let netModel = model
+        let monitor = NetMonitor.shared
+        netModel.setMediaQuality(device.mediaQuality)
+        netModel.setDemoOffline(device.demoOffline)
+        netModel.uploadCleanup = { job in MediaCompressor.cleanup(job) }
+        let net = NetSetup.forAccount(
+            login: login,
+            me: { [weak netModel] in netModel?.state.me ?? Demo.me },
+            clock: { Json.ms(Date()) },
+            quality: { [weak netModel] in netModel?.state.mediaQuality ?? .standard },
+            unmetered: { monitor.unmetered }
+        )
+        netModel.attachNet(net)
+        netModel.startNetLoop()
+    }
+
     private func open(_ link: LinkTarget) {
         if !model.openLink(link) {
             linkNotice = t("Это недоступно на этом телефоне — возможно, запись удалили или профиль закрыт.")

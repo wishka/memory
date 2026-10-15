@@ -59,6 +59,7 @@ struct SettingsScreen: View {
                     case .sounds: SoundsPage(model: model)
                     case .guide: GuidePage(model: model, query: $guideQuery, expanded: $guideOpen)
                     case .theme: ThemePage()
+                    case .network: NetworkPage(model: model)
                     case .wallpaper:
                         VStack(alignment: .leading, spacing: 12) {
                             BackdropChooser(
@@ -132,6 +133,8 @@ private struct MainSettings: View {
             }
             Divider()
             NavRow(icon: .eye, title: t("Оформление"), value: ThemeState.shared.mode.title) { model.openSettings(.theme) }
+            Divider()
+            NavRow(icon: .globe, title: t("Данные и сеть"), value: qualityTitle(state.mediaQuality)) { model.openSettings(.network) }
             Divider()
             NavRow(icon: .globe, title: t("Язык"), value: L10n.shared.choice.title) { model.openSettings(.language) }
             Divider()
@@ -619,6 +622,171 @@ private struct ThemePage: View {
             }
         }
         Hint(text: t("«Как в системе» — днём светлое, ночью тёмное, если так настроен телефон. PRISM, эфиры, звонки и фото на весь экран всегда тёмные."))
+    }
+}
+
+// MARK: - Данные и сеть
+
+private func qualityTitle(_ q: MediaQuality) -> String {
+    switch q {
+    case .standard: return t("Стандартное")
+    case .saver: return t("Экономия трафика")
+    case .originalOnWifi: return t("Оригинал по Wi‑Fi")
+    }
+}
+
+private func qualityHint(_ q: MediaQuality) -> String {
+    switch q {
+    case .standard: return t("Фото до 2048 точек, видео 720p — чётко на любом экране и быстро уходит.")
+    case .saver: return t("Фото до 1280 точек, видео 480p — бережёт мобильный интернет.")
+    case .originalOnWifi: return t("По Wi‑Fi — без сжатия, в мобильной сети — как «Стандартное».")
+    }
+}
+
+private func netStatusTitle(_ status: NetStatus) -> String {
+    switch status {
+    case .online: return t("Связь есть")
+    case .offline: return t("Нет сети")
+    case .serverDown: return t("Сервер не отвечает")
+    }
+}
+
+/// Данные и сеть: качество отправки, загрузки (пауза, продолжить, отменить),
+/// очередь, сохранённое для офлайна, демо «без сети». То же — NetworkPage на Android.
+private struct NetworkPage: View {
+    let model: AppModel
+
+    private var server: String {
+        NetSetup.usesDemo ? t("демо на телефоне") : NetSetup.serverHost
+    }
+
+    private func caption(_ text: String) -> some View {
+        Caption(text: text)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+    }
+
+    var body: some View {
+        let state = model.state
+        let waiting: String = tf("ждут отправки: %s", state.outboxCount)
+        let statusLine: String = netStatusTitle(state.netStatus) + " · " + waiting
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tf("Сервер: %s", server)).textStyle(.body)
+                Text(statusLine).textStyle(.bodySmall, Palette.mist)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+        }
+        caption(t("Качество фото и видео"))
+        SettingsCard {
+            ForEach(Array(MediaQuality.allCases.enumerated()), id: \.element) { i, q in
+                if i > 0 { Divider() }
+                ChoiceRow(title: qualityTitle(q), selected: q == state.mediaQuality) {
+                    DevicePrefs().setMediaQuality(q)
+                    model.setMediaQuality(q)
+                }
+            }
+        }
+        Hint(text: qualityHint(state.mediaQuality))
+        caption(t("Загрузки"))
+        SettingsCard {
+            if state.uploads.isEmpty {
+                Text(t("Сейчас ничего не загружается."))
+                    .textStyle(.bodySmall, Palette.mist)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+            ForEach(Array(state.uploads.enumerated()), id: \.element.id) { i, job in
+                if i > 0 { Divider() }
+                UploadRow(job: job, model: model)
+            }
+        }
+        Hint(text: t("Оборвалась связь — загрузка продолжится с того же места, даже после перезапуска."))
+        caption(t("Сохранено для офлайна"))
+        SettingsCard {
+            HStack(spacing: 12) {
+                Text(sizeTitle(state.cacheBytes))
+                    .textStyle(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                GhostButton(title: t("Очистить")) { model.clearNetCache() }
+            }
+            .padding(16)
+        }
+        Hint(text: t("Лента и переписки, которые вы уже видели, открываются и без сети. Очистка не трогает неотправленное."))
+        if NetSetup.usesDemo {
+            SettingsCard {
+                SwitchRow(title: t("Демо: как будто нет сети"), isOn: state.demoOffline) { on in
+                    DevicePrefs().setDemoOffline(on)
+                    model.setDemoOffline(on)
+                }
+            }
+            Hint(text: t("Проверьте: без сети запись и сообщение встают в очередь и уходят сами, когда сеть «вернётся»."))
+        }
+    }
+}
+
+/// Одна загрузка: файл, сколько ушло, пауза/продолжить и отмена.
+private struct UploadRow: View {
+    let job: UploadJob
+    let model: AppModel
+
+    private var stateText: String {
+        switch job.state {
+        case .waiting:
+            if job.uploadPath.isEmpty { return t("Ждёт сжатия") }
+            return job.attempts > 0 ? t("Ждёт сети") : t("В очереди")
+        case .uploading:
+            let sent: String = sizeTitle(job.offset)
+            let total: String = sizeTitle(job.size)
+            return tf("%s из %s", sent, total)
+        case .paused: return t("На паузе")
+        case .done: return t("Загружено")
+        case .failed: return t("Не вышло: файл не найден")
+        }
+    }
+
+    var body: some View {
+        let name: String = UploadFiles.name(job.path)
+        let paused: Bool = job.state == .paused || job.state == .failed
+        let toggleLabel: String = paused ? t("Продолжить") : t("Пауза")
+        let showProgress: Bool = job.state == .uploading || job.offset > 0
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Glyph(kind: job.video ? .video : .image, color: Palette.lilac, size: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).textStyle(.bodySmall).lineLimit(1).truncationMode(.middle)
+                    Text(stateText).textStyle(.label, Palette.mist)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                if job.state != .done {
+                    Button {
+                        if paused { model.resumeUpload(job.id) } else { model.pauseUpload(job.id) }
+                    } label: {
+                        Glyph(kind: paused ? .play : .pause, color: Palette.ink, size: 18)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(toggleLabel)
+                    Button {
+                        model.cancelUpload(job.id)
+                    } label: {
+                        Glyph(kind: .close, color: Palette.mist, size: 18)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(t("Отменить загрузку"))
+                }
+            }
+            if showProgress {
+                ThinProgressBar(value: job.progress)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 

@@ -133,6 +133,8 @@ data class Post(
     val reposts: Int = 0,
     /** Где это было: место, отмеченное в записи; null — без места. */
     val place: SharedPlace? = null,
+    /** Ещё не на сервере: ключ отправки в очереди (Outbox); "" — отправлена. */
+    val outboxKey: String = "",
 )
 
 /**
@@ -192,6 +194,8 @@ data class Message(
     val post: PostRef? = null,
     /** Звонок: строка «Видеозвонок · 3:12» или «Пропущенный звонок»; null — не звонок. */
     val call: CallRecord? = null,
+    /** Ещё не дошло до сервера: ждёт сети в очереди отправки. */
+    val pending: Boolean = false,
 )
 
 /**

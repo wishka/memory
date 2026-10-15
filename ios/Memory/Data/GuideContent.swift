@@ -730,6 +730,14 @@ enum GuideContent {
             tip: GuideText(ru: "PRISM, эфиры, звонки, истории и фото на весь экран всегда тёмные — так лучше видно.", en: "PRISM, live streams, calls, stories and full-screen photos are always dark — they look better that way.", hy: "PRISM-ը, եթերները, զանգերը, պատմությունները և լիաէկրան լուսանկարները միշտ մուգ են՝ այդպես ավելի լավ է երևում։"), action: .settings
         ))
         topics.append(GuideTopic(
+            id: "network", title: GuideText(ru: "Данные и сеть", en: "Data and network", hy: "Տվյալներ և ցանց"),
+            steps: [
+                GuideText(ru: "Настройки → «Данные и сеть»: качество фото и видео при отправке — «Стандартное», «Экономия трафика» или «Оригинал по Wi‑Fi».", en: "Settings → “Data and network”: photo and video quality when sending — “Standard”, “Data saver” or “Original on Wi‑Fi”.", hy: "Կարգավորումներ → «Տվյալներ և ցանց»՝ լուսանկարների և տեսանյութերի որակը ուղարկելիս՝ «Ստանդարտ», «Թրաֆիկի խնայում» կամ «Բնօրինակ Wi‑Fi-ով»։"),
+                GuideText(ru: "Там же — загрузки: пауза, продолжить, отменить; и сколько места занимает сохранённое для офлайна.", en: "There you'll also find uploads — pause, resume, cancel — and how much space offline content takes.", hy: "Այնտեղ են նաև վերբեռնումները՝ դադար, շարունակել, չեղարկել, և որքան տեղ է զբաղեցնում անցանցի համար պահպանվածը։"),
+            ],
+            tip: GuideText(ru: "Оборвалась связь — загрузка продолжится с того же места, даже после перезапуска.", en: "Connection dropped? The upload resumes from the same place, even after a restart.", hy: "Կապը կտրվե՞ց։ Վերբեռնումը կշարունակվի նույն տեղից, նույնիսկ վերագործարկումից հետո։"), action: .settings
+        ))
+        topics.append(GuideTopic(
             id: "screen-reader", title: GuideText(ru: "Экранный диктор", en: "Screen reader", hy: "Էկրանի ընթերցիչ"),
             steps: [
                 GuideText(ru: "Memory работает с TalkBack на Android и VoiceOver на iPhone: у кнопок-значков есть названия.", en: "Memory works with TalkBack on Android and VoiceOver on iPhone: icon buttons have names.", hy: "Memory-ն աշխատում է TalkBack-ի (Android) և VoiceOver-ի (iPhone) հետ՝ պատկերակ-կոճակներն ունեն անուններ։"),
@@ -764,6 +772,15 @@ enum GuideContent {
             id: "where-data", title: GuideText(ru: "Где хранятся мои записи?", en: "Where are my posts stored?", hy: "Որտե՞ղ են պահվում իմ գրառումները"),
             steps: [
                 GuideText(ru: "Пока на вашем телефоне — отдельно для каждого аккаунта. Они переживают перезапуск приложения.", en: "For now, on your phone — separately for each account. They survive app restarts.", hy: "Առայժմ՝ ձեր հեռախոսում, յուրաքանչյուր հաշվի համար առանձին։ Դրանք պահպանվում են հավելվածը վերագործարկելուց հետո։"),
+            ],
+            tip: nil, action: nil
+        ))
+        topics.append(GuideTopic(
+            id: "offline", title: GuideText(ru: "Что работает без сети", en: "What works offline", hy: "Ինչ է աշխատում առանց ցանցի"),
+            steps: [
+                GuideText(ru: "Лента, которую вы уже видели, открывается и без сети — сверху полоска «Нет сети».", en: "The feed you've already seen opens offline — a “No network” strip appears at the top.", hy: "Արդեն դիտված լրահոսը բացվում է նաև առանց ցանցի — վերևում «Ցանց չկա» շերտն է։"),
+                GuideText(ru: "Записи, «нравится» и сообщения можно отправлять как обычно: они встанут в очередь и уйдут сами, когда сеть появится.", en: "You can post, like and message as usual: everything queues up and sends itself once you're back online.", hy: "Կարող եք գրառել, հավանել և գրել ինչպես սովորաբար․ ամեն ինչ հերթագրվում է և ինքնուրույն ուղարկվում, երբ ցանցը հայտնվի։"),
+                GuideText(ru: "Пока не ушло — у записи «Ждёт сети», у сообщения 🕓.", en: "Until it's sent, a post shows “Waiting for network” and a message shows 🕓.", hy: "Մինչև ուղարկվելը գրառման մոտ գրված է «Սպասում է ցանցին», հաղորդագրության մոտ՝ 🕓։"),
             ],
             tip: nil, action: nil
         ))

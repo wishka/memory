@@ -54,7 +54,8 @@ enum MediaKind: String, Codable {
 struct Attachment: Identifiable, Equatable, Codable, Hashable {
     let id: String
     let kind: MediaKind
-    let fileName: String
+    /// После загрузки на сервер (очередь отправки) — адрес загрузки «/v1/uploads/…».
+    var fileName: String
     /// Имя для документов: «Договор.pdf».
     var name: String = ""
     var size: Int64 = 0
@@ -214,12 +215,14 @@ struct Post: Identifiable, Equatable, Codable {
     var reposts: Int = 0
     /// Где это было: место, отмеченное в записи; nil — без места.
     var place: SharedPlace? = nil
+    /// Ещё не на сервере: ключ отправки в очереди (Outbox); "" — отправлена.
+    var outboxKey: String = ""
 }
 
 extension Post {
     private enum CodingKeys: String, CodingKey {
         case id, author, text, minutesAgo, artSeed, likes, liked, comments, media, commentList, createdAt,
-             checkIn, poll, editedAt, repostOf, reposts, place
+             checkIn, poll, editedAt, repostOf, reposts, place, outboxKey
     }
 
     /// Чтение с запасом: репосты и место появились позже — старые сохранения читаются без них.
@@ -242,6 +245,7 @@ extension Post {
         repostOf = try c.decodeIfPresent(PostRef.self, forKey: .repostOf)
         reposts = try c.decodeIfPresent(Int.self, forKey: .reposts) ?? 0
         place = try c.decodeIfPresent(SharedPlace.self, forKey: .place)
+        outboxKey = try c.decodeIfPresent(String.self, forKey: .outboxKey) ?? ""
     }
 }
 
@@ -300,7 +304,7 @@ struct ReplyRef: Equatable, Codable {
 struct Message: Identifiable, Equatable, Codable {
     let id: Int64
     let fromMe: Bool
-    let text: String
+    var text: String
     let time: String
     var attachments: [Attachment] = []
     var replyTo: ReplyRef? = nil
@@ -322,10 +326,18 @@ struct Message: Identifiable, Equatable, Codable {
     var post: PostRef? = nil
     /// Звонок: строка «Видеозвонок · 3:12» или «Пропущенный звонок»; nil — не звонок.
     var call: CallRecord? = nil
+    /// Ещё не дошло до сервера: ждёт сети в очереди отправки. Необязательное —
+    /// старые сохранения читаются без него; снаружи — pending.
+    var pendingFlag: Bool? = nil
 
     var secret: Bool {
         get { secretFlag ?? false }
         set { secretFlag = newValue ? true : nil }
+    }
+
+    var pending: Bool {
+        get { pendingFlag ?? false }
+        set { pendingFlag = newValue ? true : nil }
     }
 }
 
