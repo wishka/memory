@@ -72,7 +72,8 @@ enum Invites {
     }
 
     private static func query(_ i: Invite) -> String {
-        [("c", i.code), ("a", i.action.id), ("id", i.targetId), ("n", i.from)]
+        // Имени в ссылке нет — оно в тексте сообщения; без «a» — просто в приложение
+        [("c", i.code), ("a", i.action == .app ? "" : i.action.id), ("id", i.targetId)]
             .filter { !$0.1.isEmpty }
             .map { $0.0 + "=" + formEncode($0.1) }
             .joined(separator: "&")
@@ -110,8 +111,18 @@ enum Invites {
 
     /// Текст сообщения: «Андрей зовёт вас дорисовать общий рисунок «Город» в Memory: ссылка».
     static func message(_ i: Invite, title: String = "") -> String {
-        let what = title.isEmpty ? i.action.title : "\(i.action.title) «\(title)»"
-        return tf("%s зовёт вас %s в Memory", i.from, what) + ": " + webLink(i)
+        let what: String = title.isEmpty ? i.action.title : "\(i.action.title) «\(title)»"
+        let head: String
+        if i.action == .app && !i.from.isEmpty {
+            head = tf("%s зовёт вас в Memory", i.from) + " — " + t("здесь друзья, истории и PRISM")
+        } else if i.action == .app {
+            head = t("Заходите в Memory — здесь друзья, истории и PRISM")
+        } else if !i.from.isEmpty {
+            head = tf("%s зовёт вас %s в Memory", i.from, what)
+        } else {
+            head = tf("Вас зовут %s в Memory", what)
+        }
+        return head + ": " + webLink(i)
     }
 }
 

@@ -210,6 +210,7 @@ final class DemoServer: Transport {
         if needsAuth && device == nil { return HttpResponse(code: 401, body: Data("Нужен вход".utf8)) }
         device?.lastSeen = clock()
         if let mine = accountRoute(r, path, p, device) { return mine }
+        if let people = peopleRoute(r, path, p) { return people }
         if let chats = chatRoute(r, path, p) { return chats }
         if r.method == "GET" && path == "/v1/feed" { return page(posts, r) }
         if r.method == "GET" && p.count == 4 && p[1] == "users" && p[3] == "posts" {
@@ -289,6 +290,47 @@ final class DemoServer: Transport {
             return HttpResponse(code: 204)
         }
         return nil
+    }
+
+    // MARK: - Люди, ключи, личные переписки
+
+    private func peopleRoute(_ r: HttpRequest, _ path: String, _ p: [String]) -> HttpResponse? {
+        let empty: JSONObject = ["items": [JSONObject]()]
+        // Люди: демо-люди уже на телефоне — сервер новых не знает
+        if r.method == "GET" && path == "/v1/users" { return json(empty) }
+        if r.method == "GET" && p.count == 3 && p[1] == "users" {
+            guard let id = Int(p[2]), let u = Demo.person(id) else { return notFound() }
+            return json(userJson(u))
+        }
+        if r.method == "PUT" && path == "/v1/me/key" { return HttpResponse(code: 204) }
+        if r.method == "GET" && path == "/v1/chats" { return json(empty) }
+        // Демо: личная переписка с человеком — его номер
+        if r.method == "POST" && path == "/v1/chats/direct" {
+            guard let body = bodyJson(r), body["user"] != nil else { return HttpResponse(code: 400) }
+            let uid = Json.int(body, "user")
+            var o: JSONObject = [:]
+            o["id"] = uid
+            o["kind"] = "direct"
+            o["title"] = ""
+            o["members"] = [me().id, uid]
+            o["accepted"] = true
+            return json(o)
+        }
+        return nil
+    }
+
+    /// Демо-человек для GET /v1/users/{id}: с ключом демо-собеседника (то же демо-шифрование).
+    private func userJson(_ u: User) -> JSONObject {
+        let key: [UInt8] = ChatCrypto.demoPeer(u.id).publicKey
+        var o: JSONObject = [:]
+        o["id"] = u.id
+        o["name"] = u.name
+        o["handle"] = u.handle
+        o["hue"] = u.hue
+        o["bio"] = u.bio
+        o["city"] = u.city
+        o["publicKey"] = Data(key).base64EncodedString()
+        return o
     }
 
     // MARK: - Группы, «прочитано», запросы
@@ -385,7 +427,7 @@ final class DemoServer: Transport {
 
     private func auth(_ r: HttpRequest, _ path: String) -> HttpResponse {
         switch path {
-        case "/v1/auth/login":
+        case "/v1/auth/login", "/v1/auth/register":
             let body = bodyJson(r) ?? [:]
             if Json.string(body, "login").trimmingCharacters(in: .whitespaces).isEmpty { return HttpResponse(code: 400) }
             // Демо: пароль проверяет телефон (LocalAuth); здесь — любой
@@ -604,6 +646,9 @@ final class DemoServer: Transport {
             var headers = tus
             headers["Upload-Offset"] = String(blob.offset)
             return HttpResponse(code: 204, headers: headers)
+        case "GET":
+            if blob.offset != blob.length { return HttpResponse(code: 409) }
+            return HttpResponse(code: 200, headers: ["Content-Type": "application/octet-stream"], body: blob.bytes())
         case "DELETE":
             if let file = uploads.removeValue(forKey: id)?.file { try? FileManager.default.removeItem(at: file) }
             return HttpResponse(code: 204, headers: tus)

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Что изменилось за один проход Net.pump — модели этого хватает, чтобы обновить экран.
@@ -27,6 +28,9 @@ final class Net {
     let realtime: Realtime
     private let clock: () -> Int64
     private let me: () -> User
+    /// Скачанные чужие файлы (фото и видео записей и сообщений): та же папка,
+    /// где их ищет MediaFiles.resolve («netmedia/…»).
+    var mediaDir: URL { MediaFiles.netDirectory }
 
     /// tokens — где хранить токены входа (SecureStore); nil — только в памяти.
     /// realtime — живой канал; nil — демо (события от демо-сервера).
@@ -112,6 +116,45 @@ final class Net {
 
     /// Встроенный демо-сервер, если работаем с ним (для «Данные и сеть»).
     var demo: DemoServer? { transport as? DemoServer }
+
+    // MARK: - Файлы с сервера
+
+    /// Файл лежит на сервере (а не на этом телефоне).
+    func isRemote(_ path: String) -> Bool { path.contains("/v1/uploads/") }
+
+    /// Где на телефоне будет копия файла с сервера.
+    func mediaFile(_ path: String, ext: String = "") -> URL {
+        let digest = SHA256.hash(data: Data(path.utf8))
+        let hex: String = digest.map { String(format: "%02x", $0) }.joined()
+        let clean: String = String(ext.filter { $0.isLetter || $0.isNumber || $0 == "." }.prefix(6))
+        let name: String = String(hex.prefix(32)) + clean
+        return mediaDir.appendingPathComponent(name)
+    }
+
+    /// Скачанная копия в состоянии: «netmedia/<имя>», без полного пути (MediaFiles.resolve).
+    func mediaRef(_ file: URL) -> String { MediaFiles.netPrefix + file.lastPathComponent }
+
+    /// Скачать файл с сервера (уже скачанный — сразу). key — файл секретной
+    /// переписки: на сервере шифротекст, расшифровывается здесь.
+    @discardableResult
+    func fetchMedia(_ path: String, key: FileKey? = nil, ext: String = "") async throws -> URL {
+        let f = mediaFile(path, ext: ext)
+        let fm = FileManager.default
+        let attrs = try? fm.attributesOfItem(atPath: f.path)
+        let size: Int64 = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        if size > 0 { return f }
+        let bytes = try await api.download(path)
+        let plain: Data
+        if let key {
+            plain = try FileCrypto.decrypt(bytes, key)
+        } else {
+            plain = bytes
+        }
+        try? fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        // Целиком во временный файл и замена: оборванная запись не оставит половину
+        try plain.write(to: f, options: .atomic)
+        return f
+    }
 
     private func codec() -> ApiCodec { ApiCodec(me: me()) }
 

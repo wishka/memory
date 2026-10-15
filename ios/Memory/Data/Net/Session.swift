@@ -14,6 +14,7 @@ final class Session {
     private var _access: String?
     private var _refresh: String?
     private var _deviceId: String?
+    private var _userId: Int
 
     init(store: KeyValueStore?, login: String) {
         self.store = store
@@ -21,6 +22,7 @@ final class Session {
         _access = store?.get(prefix + "access")
         _refresh = store?.get(prefix + "refresh")
         _deviceId = store?.get(prefix + "device")
+        _userId = Int(store?.get(prefix + "user") ?? "") ?? 0
     }
 
     var access: String? {
@@ -41,25 +43,36 @@ final class Session {
         return _deviceId
     }
 
+    /// Свой номер на сервере (ответ входа: user.id); 0 — неизвестен (демо-сервер его не шлёт).
+    var userId: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _userId
+    }
+
     var signedIn: Bool { refresh != nil }
 
-    /// Ответ входа или обновления: {access, refresh, expiresIn, deviceId}.
+    /// Ответ входа или обновления: {access, refresh, expiresIn, deviceId, user}.
     func save(_ o: JSONObject) {
         let access = Json.string(o, "access")
         let refresh = Json.string(o, "refresh")
         let device = Json.string(o, "deviceId")
+        let user: Int = Json.object(o, "user").map { Json.int($0, "id") } ?? 0
         lock.lock()
         _access = access.isEmpty ? nil : access
         if !refresh.isEmpty { _refresh = refresh }
         if !device.isEmpty { _deviceId = device }
+        if user > 0 { _userId = user }
         let a = _access
         let r = _refresh
         let d = _deviceId
+        let u = _userId
         lock.unlock()
         guard let store else { return }
         if let a { store.put(prefix + "access", a) }
         if let r { store.put(prefix + "refresh", r) }
         if let d { store.put(prefix + "device", d) }
+        if u > 0 { store.put(prefix + "user", String(u)) }
     }
 
     func clear() {
@@ -67,6 +80,7 @@ final class Session {
         _access = nil
         _refresh = nil
         _deviceId = nil
+        // Номер на сервере остаётся: он не меняется, а записи с ним уже на телефоне
         lock.unlock()
         guard let store else { return }
         for name in ["access", "refresh", "device"] { store.remove(prefix + name) }

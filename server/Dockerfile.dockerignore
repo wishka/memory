@@ -1,0 +1,8 @@
+# Контекст сборки — корень репозитория; серверу нужны только gradle и server/
+*
+!gradlew
+!gradle/
+!server/
+server/build
+server/.gradle
+server/.env

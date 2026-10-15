@@ -2,6 +2,7 @@ package ru.wishka.memory.data.net
 
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.wishka.memory.data.Directory
 import ru.wishka.memory.data.Message
 import ru.wishka.memory.data.Post
 import ru.wishka.memory.data.StateStore
@@ -79,6 +80,17 @@ class Api(
         session?.save(parse(r))
     }
 
+    /**
+     * Новый аккаунт на сервере (настоящем; демо-серверу не нужен — он
+     * пускает любого). 409 — логин занят: NetError(Conflict).
+     */
+    suspend fun register(login: String, password: String, name: String, device: String, platform: String) {
+        val body = JSONObject().put("login", login).put("password", password).put("name", name)
+            .put("device", JSONObject().put("name", device).put("platform", platform))
+        val r = call(HttpRequest("POST", "/v1/auth/register", body = body.toString().toByteArray(), contentType = JSON))
+        session?.save(parse(r))
+    }
+
     /** Выйти с этого устройства: токены на сервере отзываются. */
     suspend fun signOut() {
         runCatching { call(HttpRequest("POST", "/v1/auth/logout")) }
@@ -109,6 +121,35 @@ class Api(
     } catch (e: NetError) {
         if (e.code == 404) null else throw e
     }
+
+    // ── Люди ─────────────────────────────────────────────────────────
+
+    /** Поиск людей на сервере (от 2 знаков): они же попадают в справочник. */
+    suspend fun searchUsers(query: String): List<User> {
+        val arr = getJson("/v1/users", mapOf("q" to query)).optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { Directory.remember(arr.optJSONObject(it)) }
+    }
+
+    /** Человек по номеру (имя, ключ шифрования). */
+    suspend fun user(id: Int): User? = Directory.remember(getJson("/v1/users/$id"))
+
+    /** Личная переписка с человеком: номер выбирает сервер, у пары она одна. */
+    suspend fun directChat(userId: Int): Int =
+        sendJson("POST", "/v1/chats/direct", JSONObject().put("user", userId), null).getInt("id")
+
+    /** Свой открытый ключ — чтобы собеседники могли писать в секретную переписку. */
+    suspend fun putKey(publicKey: ByteArray) {
+        sendJson("PUT", "/v1/me/key", JSONObject().put("publicKey", java.util.Base64.getEncoder().encodeToString(publicKey)), null)
+    }
+
+    /** Мои переписки на сервере (личные и группы) — JSON как есть. */
+    suspend fun chats(): List<JSONObject> {
+        val arr = getJson("/v1/chats").optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+    }
+
+    /** Скачать загруженный файл (GET /v1/uploads/{id}) — фото чужой записи или сообщения. */
+    suspend fun download(path: String): ByteArray = call(HttpRequest("GET", path, headers = mapOf("Accept" to "*/*"))).body
 
     private suspend fun getJson(path: String, query: Map<String, String> = emptyMap()): JSONObject =
         parse(call(HttpRequest("GET", path, query)))

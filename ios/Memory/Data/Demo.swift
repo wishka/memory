@@ -41,8 +41,10 @@ enum Demo {
     /// Изначальные друзья: Вера, Алина и София.
     static let following: Set<Int> = [2, 4, 6]
 
+    /// Человек по номеру: я, демо-люди или люди с сервера (Directory).
     static func person(_ id: Int) -> User? {
-        id == me.id ? me : people.first { $0.id == id }
+        if id == me.id { return me }
+        return people.first { $0.id == id } ?? Directory.get(id)
     }
 
     static let posts: [Post] = [

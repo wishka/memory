@@ -54,6 +54,8 @@ interface Realtime {
     fun connect(onEvent: (RtEvent) -> Unit)
     fun send(event: RtEvent)
     fun close()
+    /** Подключиться заново сейчас (после входа — с новым токеном). */
+    fun reconnect() {}
 }
 
 /**

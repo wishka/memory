@@ -47,7 +47,7 @@ final class BytesSource: ByteSource {
 enum UploadFiles {
     static func url(_ path: String) -> URL {
         if path.hasPrefix("/") { return URL(fileURLWithPath: path) }
-        return MediaFiles.directory.appendingPathComponent(path)
+        return MediaFiles.resolve(path)
     }
 
     static func source(_ path: String) -> ByteSource? {

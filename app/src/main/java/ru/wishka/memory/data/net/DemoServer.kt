@@ -133,6 +133,20 @@ class DemoServer(
             parts.size == 3 && parts[1] == "devices" && r.method == "DELETE" -> {
                 if (devices.removeAll { it.id == parts[2] && it !== device }) HttpResponse(204) else notFound()
             }
+            // Люди: демо-люди уже на телефоне — сервер новых не знает
+            r.method == "GET" && path == "/v1/users" -> json(JSONObject().put("items", JSONArray()))
+            r.method == "GET" && parts.size == 3 && parts[1] == "users" -> {
+                val u = parts[2].toIntOrNull()?.let { ru.wishka.memory.data.Demo.person(it) } ?: return notFound()
+                json(JSONObject().put("id", u.id).put("name", u.name).put("handle", u.handle).put("hue", u.hue.toDouble()).put("bio", u.bio).put("city", u.city)
+                    .put("publicKey", Base64.getEncoder().encodeToString(ru.wishka.memory.data.ChatCrypto.demoPeer(u.id).publicKey)))
+            }
+            r.method == "PUT" && path == "/v1/me/key" -> HttpResponse(204)
+            r.method == "GET" && path == "/v1/chats" -> json(JSONObject().put("items", JSONArray()))
+            // Демо: личная переписка с человеком — его номер
+            r.method == "POST" && path == "/v1/chats/direct" -> {
+                val uid = bodyJson(r)?.optInt("user") ?: return HttpResponse(400)
+                json(JSONObject().put("id", uid).put("kind", "direct").put("title", "").put("members", JSONArray(listOf(me().id, uid))).put("accepted", true))
+            }
             r.method == "POST" && path == "/v1/chats" -> createChat(r)
             parts.size == 3 && parts[1] == "chats" && r.method == "PATCH" -> {
                 val id = parts[2].toIntOrNull() ?: return notFound()
@@ -203,7 +217,7 @@ class DemoServer(
     }
 
     private fun auth(r: HttpRequest, path: String): HttpResponse = when (path) {
-        "/v1/auth/login" -> {
+        "/v1/auth/login", "/v1/auth/register" -> {
             val body = bodyJson(r) ?: JSONObject()
             if (body.optString("login").isBlank()) HttpResponse(400) else {
                 // Демо: пароль проверяет телефон (LocalAuth); здесь — любой
@@ -366,6 +380,10 @@ class DemoServer(
                 }
                 blob.append(bytes)
                 HttpResponse(204, tus + ("Upload-Offset" to blob.offset.toString()))
+            }
+            "GET" -> {
+                if (blob.offset != blob.length) return HttpResponse(409)
+                HttpResponse(200, mapOf("Content-Type" to "application/octet-stream"), blob.file?.readBytes() ?: blob.memory.toByteArray())
             }
             "DELETE" -> {
                 uploads.remove(id)?.file?.delete()

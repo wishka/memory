@@ -43,6 +43,7 @@ Content saved for offline use — the feed you've viewed, the queue of unsent it
   - OpenStreetMap (United Kingdom): map tile requests on Android;
   - Sentry (Functional Software, Inc., USA): crash reports and usage statistics, **only with your separate consent** in Settings → Privacy;
   - [LiveKit live streaming server: country]: video and audio of live streams and calls, once the server is connected.
+  - Tailscale (USA), if the Memory server is exposed to the internet via Tailscale Funnel: relays the encrypted connection (TLS ends on our server) and cannot see its contents; it sees connection IP addresses.
 - **Government authorities**: only in the cases and in the manner expressly established by the law of the Republic of Armenia.
 
 ## 5. How long we keep data

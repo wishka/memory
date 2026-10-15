@@ -43,7 +43,8 @@ object Demo {
     /** Изначальные друзья: Вера, Алина и София. */
     val following = setOf(2, 4, 6)
 
-    fun person(id: Int): User? = if (id == me.id) me else people.firstOrNull { it.id == id }
+    /** Человек по номеру: я, демо-люди или люди с сервера (Directory). */
+    fun person(id: Int): User? = if (id == me.id) me else people.firstOrNull { it.id == id } ?: Directory.get(id)
 
     val posts = listOf(
         Post(101, vera, "Сегодня небо было как акварель: фиолетовый перетекал в синий " +

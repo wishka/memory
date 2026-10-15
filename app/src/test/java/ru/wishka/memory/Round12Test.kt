@@ -177,8 +177,15 @@ class Round12Test {
         val invite = Invite(code, InviteAction.Drawing, "9701", "Андрей Б")
         val web = Invites.webLink(invite)
         assertTrue(web.startsWith(Invites.WEB))
-        assertEquals(invite, Invites.parse(web))
-        assertEquals(invite, Invites.parse(Invites.appLink(invite)))
+        // Имени в ссылке нет (оно в тексте сообщения) — адрес короткий и без %D0%…
+        assertEquals(invite.copy(from = ""), Invites.parse(web))
+        assertEquals(invite.copy(from = ""), Invites.parse(Invites.appLink(invite)))
+        assertFalse(web.contains("n="))
+        val app = Invite(code, InviteAction.App, from = "Андрей")
+        assertEquals(Invites.WEB + "?c=$code", Invites.webLink(app))
+        assertEquals(InviteAction.App, Invites.parse(Invites.webLink(app))?.action)
+        assertEquals("Андрей зовёт вас в Memory — здесь друзья, истории и PRISM: " + Invites.webLink(app), Invites.message(app))
+        assertFalse(Invites.message(app.copy(from = "")).contains("зовёт вас"))
         // Страница-приглашение кодирует пробел как %20
         assertEquals("Андрей Б", Invites.parse("memory://invite?c=$code&a=book&n=%D0%90%D0%BD%D0%B4%D1%80%D0%B5%D0%B9%20%D0%91")?.from)
         assertNull(Invites.parse("https://example.com/?c=$code"))

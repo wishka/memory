@@ -5,7 +5,8 @@ info:
   description: |
     Контракт сервера Memory. Его уже исполняет встроенный демо-сервер на
     телефоне (Android: data/net/DemoServer.kt, iPhone: Data/Net/DemoServer.swift);
-    настоящий сервер должен отвечать так же. Подробно — docs/API.md.
+    настоящий сервер — server/ (Kotlin, Ktor) — отвечает так же. Подробно —
+    docs/API.md, запуск сервера — docs/SERVER.md.
 
     Общие правила:
     - Все изменения принимают заголовок `Idempotency-Key` (UUID). Повтор с тем же
@@ -169,6 +170,92 @@ paths:
     post:
       summary: Выйти с этого устройства
       responses: { "204": { description: Готово } }
+  /v1/auth/register:
+    post:
+      summary: Новый аккаунт (и сразу вход с этого устройства)
+      description: |
+        Телефон зовёт его сам, если вход ответил 401 (аккаунт заведён на
+        телефоне раньше, чем появился сервер). Демо-сервер отвечает как на вход.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login: { type: string, pattern: "^[a-z0-9._]{3,32}$" }
+                password: { type: string, minLength: 6 }
+                name: { type: string, maxLength: 60 }
+                device:
+                  type: object
+                  properties: { name: { type: string }, platform: { enum: [android, ios, web] } }
+      responses:
+        "201":
+          description: Токены
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "400": { description: Логин или пароль не подходят }
+        "409": { description: Логин занят }
+  /v1/users:
+    get:
+      summary: Поиск людей по логину и имени (от 2 знаков, до 20 человек)
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2 } }
+      responses:
+        "200":
+          description: Люди
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/User" } }
+  /v1/users/{userId}:
+    get:
+      summary: Человек — имя, логин, открытый ключ шифрования
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Человек
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "404": { description: Нет такого }
+  /v1/me/key:
+    put:
+      summary: Свой открытый ключ X25519 (base64) — для секретных переписок
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [publicKey], properties: { publicKey: { type: string } } }
+      responses: { "204": { description: Сохранён } }
+  /v1/chats/direct:
+    post:
+      summary: Личная переписка с человеком (одна на пару; номер выбирает сервер)
+      description: |
+        Для собеседника она — запрос (`accepted: false`), пока он не ответит
+        или не примет: до этого его «прочитано» и «печатает» не пересылаются.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [user], properties: { user: { type: integer } } }
+      responses:
+        "201":
+          description: Создана
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "200":
+          description: Уже была
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
   /v1/devices:
     get:
       summary: Устройства, с которых вошли
@@ -226,6 +313,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Profile" }
   /v1/chats:
+    get:
+      summary: Мои переписки на сервере — личные и группы (сверка после перерыва)
+      responses:
+        "200":
+          description: Переписки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Group" } }
     post:
       summary: Новая группа
       description: Номер выбирает клиент (случайный); занят — 409, клиент выбирает другой.
@@ -355,6 +453,15 @@ paths:
           description: Принято; Upload-Offset — новое смещение
         "409": { description: Смещение не совпало — спросить HEAD и продолжить }
         "415": { description: Нужен Content-Type application/offset+octet-stream }
+    get:
+      summary: Скачать загруженное (любой вошедший; файлы секретных переписок — шифротекст)
+      responses:
+        "200":
+          description: Файл; Content-Type — из filetype в Upload-Metadata
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "409": { description: Ещё не загружен целиком }
     delete:
       summary: Отменить загрузку (расширение termination)
       responses: { "204": { description: Удалена } }
@@ -378,6 +485,26 @@ components:
         refresh: { type: string, description: Токен обновления (одноразовый) }
         expiresIn: { type: integer, description: секунды }
         deviceId: { type: string }
+        user:
+          type: object
+          description: Кто вошёл — свой номер на сервере (демо-сервер не шлёт)
+          properties: { id: { type: integer }, login: { type: string }, name: { type: string } }
+    User:
+      type: object
+      required: [id, name, handle]
+      properties:
+        id: { type: integer, description: "С 100 000 — не пересекается с демо-людьми" }
+        login: { type: string }
+        handle: { type: string }
+        name: { type: string }
+        hue: { type: number }
+        bio: { type: string }
+        city: { type: string }
+        publicKey: { type: string, description: "X25519, base64; пусто — ещё не прислал" }
+    AuthorInfo:
+      type: object
+      description: Кто автор — чтобы телефон знал имя без отдельного запроса
+      properties: { id: { type: integer }, name: { type: string }, handle: { type: string }, hue: { type: number } }
     Profile:
       type: object
       properties:
@@ -397,6 +524,9 @@ components:
         members: { type: array, items: { type: integer } }
         admins: { type: array, items: { type: integer } }
         owner: { type: integer }
+        kind: { enum: [group, direct] }
+        accepted: { type: boolean, description: "Я принял переписку (false — это запрос ко мне)" }
+        user: { $ref: "#/components/schemas/User", description: "Собеседник (у личной)" }
     PostPage:
       type: object
       required: [items, next]
@@ -443,6 +573,7 @@ components:
           type: [object, "null"]
           properties: { lat: { type: number }, lon: { type: number }, title: { type: string } }
         commentsOff: { type: boolean }
+        authorInfo: { $ref: "#/components/schemas/AuthorInfo" }
     Message:
       type: object
       required: [id, fromMe, text, time]
@@ -461,3 +592,4 @@ components:
         authorId: { type: integer, description: "Кто написал (в группах)" }
         delivered: { type: boolean }
         readBy: { type: array, items: { type: integer } }
+        authorInfo: { $ref: "#/components/schemas/AuthorInfo" }
