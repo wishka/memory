@@ -35,6 +35,7 @@ import java.io.File
  *  DATA_DIR      — где лежат загруженные файлы (/data)
  *  DATABASE_URL  — jdbc:postgresql://db:5432/memory; пусто — всё в памяти
  *  DB_USER, DB_PASSWORD
+ *  ADMINS          — логины модераторов через запятую (страница /admin)
  *  FCM_CREDENTIALS — путь к ключу сервисного аккаунта Firebase (JSON); нет файла — без пушей
  */
 fun main() {
@@ -56,7 +57,10 @@ fun main() {
         println("Пуши выключены: нет ${fcm.path} (docs/SERVER.md → «Пуши»)")
         NoPush
     }
-    val core = Core(store, dataDir, pusher = pusher)
+    // Модераторы: логины через запятую (ADMINS=wishka) — им открыта /admin
+    val admins = env["ADMINS"].orEmpty().split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+    if (admins.isNotEmpty()) println("Модерация: /admin — ${admins.joinToString()}")
+    val core = Core(store, dataDir, pusher = pusher, admins = admins)
     println("Memory server: порт $port, файлы — ${dataDir.absolutePath}")
     embeddedServer(Netty, port = port, host = "0.0.0.0") { memory(core) }.start(wait = true)
 }
@@ -82,9 +86,14 @@ fun Application.memory(core: Core) {
             }
             val (userId, until) = session
             val queue = Channel<String>(256)
+            val socket = this
             val peer = object : Hub.Peer {
                 override fun send(text: String) {
                     queue.trySend(text)
+                }
+
+                override fun close() {
+                    socket.launch { socket.close(CloseReason(4401, "signed out")) }
                 }
             }
             core.hub.join(userId, peer)

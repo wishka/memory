@@ -373,7 +373,7 @@ private struct DevicesPage: View {
         let state = model.state
         let others = state.devices.filter { !$0.current }.count
         if state.signedOut {
-            Hint(text: t("Вход на сервер закрыт — возможно, вы вышли с этого телефона на другом. Выйдите и войдите снова: неотправленное сохранится."))
+            Hint(text: t("Вход на сервер закрыт — введите пароль на плашке «Войдите на сервер» в ленте. Неотправленное сохранится."))
         }
         SettingsCard {
             if state.devices.isEmpty {

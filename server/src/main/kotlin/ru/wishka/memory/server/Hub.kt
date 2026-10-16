@@ -11,6 +11,8 @@ class Hub {
     /** Одно соединение: Ktor-сессия (в тестах — список строк). */
     interface Peer {
         fun send(text: String)
+        /** Закрыть соединение (код 4401: вход больше не действует). */
+        fun close() {}
     }
 
     private val peers = ConcurrentHashMap<Int, CopyOnWriteArraySet<Peer>>()
@@ -34,4 +36,12 @@ class Hub {
     }
 
     fun sendAll(userIds: Collection<Int>, text: String) = userIds.distinct().forEach { send(it, text) }
+
+    /**
+     * Закрыть все соединения человека: бан, удаление аккаунта, смена пароля,
+     * выход устройства. Кто ещё вправе — переподключится с новым токеном.
+     */
+    fun kick(userId: Int) {
+        peers.remove(userId)?.forEach { p -> runCatching { p.close() } }
+    }
 }

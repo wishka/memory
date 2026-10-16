@@ -575,7 +575,7 @@ private fun HiddenWordsPage(vm: AppViewModel, state: UiState) {
 private fun DevicesPage(vm: AppViewModel, state: UiState) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (state.signedOut) {
-            Hint(t("Вход на сервер закрыт — возможно, вы вышли с этого телефона на другом. Выйдите и войдите снова: неотправленное сохранится."))
+            Hint(t("Вход на сервер закрыт — введите пароль на плашке «Войдите на сервер» в ленте. Неотправленное сохранится."))
         }
         Card {
             if (state.devices.isEmpty()) {

@@ -15,6 +15,8 @@ data class UserRow(
     val created: Long = 0,
     /** Закрытый профиль: подписка — по заявке, записи и истории — только подписчикам. */
     val closed: Boolean = false,
+    /** Заблокирован модератором: войти нельзя, его не видно. */
+    val banned: Boolean = false,
 )
 
 /** Устройство, с которого вошли; токены хранятся только отпечатками (SHA-256). */
@@ -55,6 +57,25 @@ data class StoryRow(val id: Long, val author: Int, val created: Long, val expire
 
 data class StoryViewRow(val storyId: Long, val userId: Int, val at: Long, val liked: Boolean)
 
+/**
+ * Жалоба. kind — post, comment, story, prism, message, person; target —
+ * номер того, на что жалуются (у сообщений и PRISM — номер телефона, тогда
+ * модератор смотрит preview); author — на кого.
+ */
+data class ReportRow(
+    val id: Long,
+    val reporter: Int,
+    val kind: String,
+    val target: Long,
+    val author: Int,
+    val reason: String,
+    val note: String,
+    val preview: String,
+    val created: Long,
+    /** open — ждёт модератора; dismissed, removed, banned — решено. */
+    val status: String = "open",
+)
+
 /** Сохранённый ответ на запрос с Idempotency-Key: повтор получит его же. */
 data class IdemRow(val status: Int, val body: String)
 
@@ -70,6 +91,7 @@ interface Store {
     fun userByLogin(login: String): UserRow?
     fun searchUsers(query: String, limit: Int): List<UserRow>
     fun updateUser(row: UserRow)
+    fun updatePassword(id: Int, passHash: String, salt: String)
 
     // Устройства
     fun saveDevice(row: DeviceRow)
@@ -142,12 +164,30 @@ interface Store {
     fun addMessage(chatId: Int, author: Int, sentAt: Long, body: String): MessageRow
     /** Новые сверху; before — номер сообщения (следующая страница). */
     fun messages(chatId: Int, before: Long?, limit: Int): List<MessageRow>
+    /** Сообщение по переписке, автору и времени сервера (для жалоб). */
+    fun messageAt(chatId: Int, author: Int, sentAt: Long): MessageRow?
 
     // Загрузки
     fun createUpload(row: UploadRow)
     fun upload(id: String): UploadRow?
     fun setUploadOffset(id: String, offset: Long)
     fun deleteUpload(id: String)
+
+    // Модерация
+    fun createReport(row: ReportRow): ReportRow
+    fun report(id: Long): ReportRow?
+    /** status == null — все; новые сверху. */
+    fun reports(status: String?, limit: Int): List<ReportRow>
+    fun setReportStatus(id: Long, status: String)
+    fun setBlock(blocker: Int, blocked: Int, on: Boolean)
+    /** Кого заблокировал человек. */
+    fun blockedBy(userId: Int): Set<Int>
+    /** Есть ли блокировка в любую сторону. */
+    fun blockedEither(a: Int, b: Int): Boolean
+    fun deletePost(id: Long)
+    fun uploadsOf(owner: Int): List<UploadRow>
+    /** Удалить человека со всем, что его (устройства, записи, подписки, истории…). */
+    fun deleteUser(id: Int)
 
     // Повторы
     fun idem(userId: Int, key: String): IdemRow?

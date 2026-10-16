@@ -62,10 +62,10 @@ class PgStore(url: String, user: String, password: String) : Store {
 
     // ── Строки ───────────────────────────────────────────────────────
 
-    private val userCols = "id, login, name, hue, pass_hash, salt, public_key, profile, profile_updated, created, closed"
+    private val userCols = "id, login, name, hue, pass_hash, salt, public_key, profile, profile_updated, created, closed, banned"
     private fun userOf(r: ResultSet) = UserRow(
         r.getInt(1), r.getString(2), r.getString(3), r.getFloat(4), r.getString(5), r.getString(6),
-        r.getString(7), r.getString(8), r.getLong(9), r.getLong(10), r.getBoolean(11),
+        r.getString(7), r.getString(8), r.getLong(9), r.getLong(10), r.getBoolean(11), r.getBoolean(12),
     )
 
     private val deviceCols = "id, user_id, name, platform, last_seen, refresh_hash, access_hash, access_until, push_token"
@@ -101,10 +101,14 @@ class PgStore(url: String, user: String, password: String) : Store {
         return query("SELECT $userCols FROM users WHERE login LIKE ? OR lower(name) LIKE ? ORDER BY login LIMIT ?", like, like, limit, map = ::userOf)
     }
 
+    override fun updatePassword(id: Int, passHash: String, salt: String) {
+        update("UPDATE users SET pass_hash = ?, salt = ? WHERE id = ?", passHash, salt, id)
+    }
+
     override fun updateUser(row: UserRow) {
         update(
-            "UPDATE users SET name = ?, hue = ?, public_key = ?, profile = ?, profile_updated = ?, closed = ? WHERE id = ?",
-            row.name, row.hue, row.publicKey, row.profile, row.profileUpdated, row.closed, row.id,
+            "UPDATE users SET name = ?, hue = ?, public_key = ?, profile = ?, profile_updated = ?, closed = ?, banned = ? WHERE id = ?",
+            row.name, row.hue, row.publicKey, row.profile, row.profileUpdated, row.closed, row.banned, row.id,
         )
     }
 
@@ -126,6 +130,71 @@ class PgStore(url: String, user: String, password: String) : Store {
     override fun devices(userId: Int) = query("SELECT $deviceCols FROM devices WHERE user_id = ?", userId, map = ::deviceOf)
     override fun deleteDevice(id: String) { update("DELETE FROM devices WHERE id = ?", id) }
     override fun clearPushToken(token: String) { update("UPDATE devices SET push_token = '' WHERE push_token = ?", token) }
+
+    // ── Модерация ────────────────────────────────────────────────────
+
+    private val reportCols = "id, reporter, kind, target, author, reason, note, preview, created, status"
+    private fun reportOf(r: ResultSet) = ReportRow(
+        r.getLong(1), r.getInt(2), r.getString(3), r.getLong(4), r.getInt(5), r.getString(6), r.getString(7), r.getString(8), r.getLong(9), r.getString(10),
+    )
+
+    override fun createReport(row: ReportRow): ReportRow = query(
+        "INSERT INTO reports (reporter, kind, target, author, reason, note, preview, created, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING $reportCols",
+        row.reporter, row.kind, row.target, row.author, row.reason, row.note, row.preview, row.created, row.status, map = ::reportOf,
+    ).first()
+
+    override fun report(id: Long) = query("SELECT $reportCols FROM reports WHERE id = ?", id, map = ::reportOf).firstOrNull()
+
+    override fun reports(status: String?, limit: Int): List<ReportRow> =
+        if (status == null) query("SELECT $reportCols FROM reports ORDER BY id DESC LIMIT ?", limit, map = ::reportOf)
+        else query("SELECT $reportCols FROM reports WHERE status = ? ORDER BY id DESC LIMIT ?", status, limit, map = ::reportOf)
+
+    override fun setReportStatus(id: Long, status: String) { update("UPDATE reports SET status = ? WHERE id = ?", status, id) }
+
+    override fun setBlock(blocker: Int, blocked: Int, on: Boolean) {
+        if (on) update("INSERT INTO blocks (blocker, blocked) SELECT ?, id FROM users WHERE id = ? ON CONFLICT DO NOTHING", blocker, blocked)
+        else update("DELETE FROM blocks WHERE blocker = ? AND blocked = ?", blocker, blocked)
+    }
+
+    override fun blockedBy(userId: Int): Set<Int> = query("SELECT blocked FROM blocks WHERE blocker = ?", userId) { it.getInt(1) }.toSet()
+
+    override fun blockedEither(a: Int, b: Int): Boolean =
+        query("SELECT 1 FROM blocks WHERE (blocker = ? AND blocked = ?) OR (blocker = ? AND blocked = ?) LIMIT 1", a, b, b, a) { true }.isNotEmpty()
+
+    override fun deletePost(id: Long) { update("DELETE FROM posts WHERE id = ?", id) }
+
+    override fun uploadsOf(owner: Int) =
+        query("SELECT id, owner, length, \"offset\", meta, created FROM uploads WHERE owner = ?", owner, map = ::uploadOf)
+
+    override fun deleteUser(id: Int) {
+        // Остальное (устройства, записи, комментарии, подписки, истории, участие в переписках) — ON DELETE CASCADE
+        val steps = listOf(
+            // Счётчики «нравится» — без этого человека
+            "UPDATE posts SET likes = likes - 1 WHERE id IN (SELECT post_id FROM likes WHERE user_id = ?) AND likes > 0",
+            "UPDATE comments SET likes = likes - 1 WHERE id IN (SELECT comment_id FROM comment_likes WHERE user_id = ?) AND likes > 0",
+            "DELETE FROM messages WHERE author = ?",
+            "DELETE FROM reports WHERE reporter = ? OR author = ?",
+            // Свои группы без других участников — удалить; остальные — следующему (сначала админам)
+            "DELETE FROM chats c WHERE c.owner = ? AND NOT EXISTS (SELECT 1 FROM members m WHERE m.chat_id = c.id AND m.user_id <> c.owner)",
+            """UPDATE chats c SET owner = (SELECT m.user_id FROM members m WHERE m.chat_id = c.id AND m.user_id <> c.owner
+                   ORDER BY m.admin DESC, m.user_id LIMIT 1) WHERE c.owner = ?""",
+            "UPDATE members m SET admin = TRUE FROM chats c WHERE c.id = m.chat_id AND c.owner = m.user_id AND NOT m.admin",
+            "DELETE FROM idem WHERE user_id = ?",
+            "DELETE FROM users WHERE id = ?",
+        )
+        tx { c ->
+            for (sql in steps) c.prepareStatement(sql).use { st ->
+                val n = sql.count { it == '?' }
+                for (i in 1..n) st.setInt(i, id)
+                st.executeUpdate()
+            }
+        }
+    }
+
+    override fun messageAt(chatId: Int, author: Int, sentAt: Long): MessageRow? = query(
+        "SELECT id, chat_id, author, sent_at, body FROM messages WHERE chat_id = ? AND author = ? AND sent_at = ? LIMIT 1",
+        chatId, author, sentAt, map = ::messageOf,
+    ).firstOrNull()
 
     // ── Подписки ─────────────────────────────────────────────────────
 
@@ -379,7 +448,7 @@ class PgStore(url: String, user: String, password: String) : Store {
     fun wipe() {
         tx { c ->
             c.createStatement().use { st ->
-                st.execute("TRUNCATE close_friends, story_views, stories, comment_likes, comments, follows, idem, uploads, messages, members, chats, likes, posts, devices, users RESTART IDENTITY")
+                st.execute("TRUNCATE reports, blocks, close_friends, story_views, stories, comment_likes, comments, follows, idem, uploads, messages, members, chats, likes, posts, devices, users RESTART IDENTITY")
                 st.execute("ALTER SEQUENCE user_seq RESTART WITH 100001")
                 st.execute("ALTER SEQUENCE post_seq RESTART WITH 10000001")
                 st.execute("ALTER SEQUENCE comment_seq RESTART WITH 10000001")

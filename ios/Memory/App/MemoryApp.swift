@@ -106,10 +106,16 @@ struct RootView: View {
                     account: AccountActions(
                         logout: { auth.logout() },
                         changePassword: { current, new, repeated in
-                            await auth.changePassword(current, new, repeated)
+                            // Сначала проверка на телефоне, потом сервер, потом — телефон
+                            if let error = await auth.checkPasswordChange(current, new, repeated) { return error }
+                            if let error = await model.changeServerPassword(current, new) { return error }
+                            return await auth.changePassword(current, new, repeated)
                         },
                         deleteAccount: { password in
                             let login = auth.account?.username
+                            // Пароль — на телефоне; потом аккаунт удаляется на сервере, и только потом здесь
+                            if !(await auth.checkPassword(password)) { return t("Пароль не подходит") }
+                            if let error = await model.deleteOnServer(password) { return error }
                             let error = await auth.deleteAccount(password)
                             if error == nil, let login {
                                 saveTask?.cancel()
@@ -163,6 +169,8 @@ struct RootView: View {
                 // Ключ сквозного шифрования — в Связке ключей телефона
                 model.attachKeys(SecureStore())
                 model.setAccount(username: account.username, displayName: account.displayName, info: account.info)
+                // Вход на сервер с плашки: пароль проверяется на телефоне
+                model.passwordCheck = auth.passwordChecker(account.username)
                 let saved = store.load(account.username)
                 if let saved {
                     model.restore(saved)

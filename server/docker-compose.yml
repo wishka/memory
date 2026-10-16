@@ -41,6 +41,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       JAVA_OPTS: ${JAVA_OPTS:--Xmx384m}
       FCM_CREDENTIALS: /run/secrets/firebase.json
+      # Модераторы (логины через запятую): https://<адрес>/admin
+      ADMINS: ${ADMINS:-}
     volumes:
       - files:/data
       # Ключ Firebase для пушей: server/secrets/firebase.json (не в git)

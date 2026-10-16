@@ -221,7 +221,25 @@ final class Api {
         }
     }
 
-    /// Мои переписки на сервере (личные и группы) — JSON как есть.
+    /// Удалить аккаунт на сервере со всем, что в нём (нужен пароль).
+    func deleteMe(_ password: String) async throws {
+        let body: JSONObject = ["password": password]
+        _ = try await sendJson("DELETE", "/v1/me", body, key: nil)
+    }
+
+    /// Сменить пароль на сервере; остальные устройства выходят.
+    func changePassword(current: String, new: String) async throws {
+        let body: JSONObject = ["current": current, "new": new]
+        _ = try await sendJson("PUT", "/v1/me/password", body, key: nil)
+    }
+
+    /// Кого я заблокировал (номера на сервере).
+    func blocked() async throws -> [Int] {
+        let o = try await getJson("/v1/me/blocked")
+        return Json.ints(o, "ids")
+    }
+
+        /// Мои переписки на сервере (личные и группы) — JSON как есть.
     func chats() async throws -> [JSONObject] {
         let o = try await getJson("/v1/chats")
         return Json.objects(o, "items")

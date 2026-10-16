@@ -18,6 +18,9 @@ class MemoryStore : Store {
     private val storyRows = LinkedHashMap<Long, StoryRow>()
     private val views = LinkedHashMap<Pair<Long, Int>, StoryViewRow>()
     private val close = HashMap<Int, Set<Int>>()
+    private val reportRows = LinkedHashMap<Long, ReportRow>()
+    private val blocks = HashSet<Pair<Int, Int>>()
+    private var reportSeq = 1L
     // Номера сервера — с 10 000 001, как у записей: у телефона свои, меньше
     private var commentSeq = 10_000_001L
     private var storySeq = 10_000_001L
@@ -41,6 +44,10 @@ class MemoryStore : Store {
     }
 
     override fun updateUser(row: UserRow) = synchronized(lock) { users[row.id] = row }
+    override fun updatePassword(id: Int, passHash: String, salt: String) = synchronized(lock) {
+        users[id]?.let { users[id] = it.copy(passHash = passHash, salt = salt) }
+        Unit
+    }
 
     override fun saveDevice(row: DeviceRow) = synchronized(lock) { devices[row.id] = row }
     override fun device(id: String) = synchronized(lock) { devices[id] }
@@ -169,6 +176,77 @@ class MemoryStore : Store {
     override fun closeFriends(owner: Int) = synchronized(lock) { close[owner].orEmpty() }
     override fun setCloseFriends(owner: Int, ids: Collection<Int>) = synchronized(lock) { close[owner] = ids.toSet() }
 
+    override fun createReport(row: ReportRow): ReportRow = synchronized(lock) {
+        val r = row.copy(id = reportSeq++)
+        reportRows[r.id] = r
+        r
+    }
+
+    override fun report(id: Long) = synchronized(lock) { reportRows[id] }
+
+    override fun reports(status: String?, limit: Int) = synchronized(lock) {
+        reportRows.values.filter { status == null || it.status == status }.sortedByDescending { it.id }.take(limit)
+    }
+
+    override fun setReportStatus(id: Long, status: String) = synchronized(lock) { reportRows[id]?.let { reportRows[id] = it.copy(status = status) }; Unit }
+
+    override fun setBlock(blocker: Int, blocked: Int, on: Boolean) = synchronized(lock) {
+        if (on) blocks += blocker to blocked else blocks -= blocker to blocked
+        Unit
+    }
+
+    override fun blockedBy(userId: Int) = synchronized(lock) { blocks.filter { it.first == userId }.map { it.second }.toSet() }
+    override fun blockedEither(a: Int, b: Int) = synchronized(lock) { (a to b) in blocks || (b to a) in blocks }
+
+    override fun deletePost(id: Long) = synchronized(lock) {
+        posts.remove(id)
+        likes.removeAll { it.first == id }
+        val gone = commentRows.values.filter { it.postId == id }.map { it.id }.toSet()
+        commentRows.keys.removeAll(gone)
+        commentLikes.removeAll { it.first in gone }
+        Unit
+    }
+
+    override fun uploadsOf(owner: Int) = synchronized(lock) { uploads.values.filter { it.owner == owner } }
+
+    override fun deleteUser(id: Int) = synchronized(lock) {
+        users.remove(id)
+        messages.removeAll { it.author == id }
+        reportRows.values.removeAll { it.reporter == id || it.author == id }
+        // Свои группы — следующему участнику (сначала админам); пустые — удалить
+        chats.values.filter { it.owner == id }.forEach { c ->
+            val heir = members.filter { it.chatId == c.id && it.userId != id }.sortedWith(compareByDescending<MemberRow> { it.admin }.thenBy { it.userId }).firstOrNull()
+            if (heir == null) chats.remove(c.id) else {
+                chats[c.id] = c.copy(owner = heir.userId)
+                members.replaceAll { if (it === heir) it.copy(admin = true) else it }
+            }
+        }
+        // «Нравится» этого человека уходят — счётчики пересчитать
+        val likedPosts = likes.filter { it.second == id }.map { it.first }.toSet()
+        val likedComments = commentLikes.filter { it.second == id }.map { it.first }.toSet()
+        devices.values.removeAll { it.userId == id }
+        posts.values.filter { it.author == id }.map { it.id }.forEach { pid ->
+            posts.remove(pid)
+            likes.removeAll { it.first == pid }
+            commentRows.values.removeAll { it.postId == pid }
+        }
+        likes.removeAll { it.second == id }
+        likedPosts.forEach { pid -> posts[pid]?.let { posts[pid] = it.copy(likes = likes.count { l -> l.first == pid }) } }
+        commentRows.values.removeAll { it.author == id }
+        commentLikes.removeAll { it.second == id }
+        likedComments.forEach { cid -> commentRows[cid]?.let { commentRows[cid] = it.copy(likes = commentLikes.count { l -> l.first == cid }) } }
+        follows.keys.removeAll { it.first == id || it.second == id }
+        storyRows.values.filter { it.author == id }.map { it.id }.forEach { sid -> storyRows.remove(sid); views.keys.removeAll { it.first == sid } }
+        views.keys.removeAll { it.second == id }
+        close.remove(id)
+        close.keys.toList().forEach { k -> close[k] = close[k].orEmpty() - id }
+        members.removeAll { it.userId == id }
+        uploads.values.removeAll { it.owner == id }
+        blocks.removeAll { it.first == id || it.second == id }
+        idem.keys.removeAll { it.first == id }
+        Unit
+    }
+
     override fun createChat(row: ChatRow, members: List<MemberRow>): Boolean = synchronized(lock) {
         if (chats.containsKey(row.id)) return false
         chats[row.id] = row
@@ -207,6 +285,10 @@ class MemoryStore : Store {
 
     override fun messages(chatId: Int, before: Long?, limit: Int): List<MessageRow> = synchronized(lock) {
         messages.filter { it.chatId == chatId && (before == null || it.id < before) }.sortedByDescending { it.id }.take(limit)
+    }
+
+    override fun messageAt(chatId: Int, author: Int, sentAt: Long) = synchronized(lock) {
+        messages.firstOrNull { it.chatId == chatId && it.author == author && it.sentAt == sentAt }
     }
 
     override fun createUpload(row: UploadRow) = synchronized(lock) { uploads[row.id] = row }
