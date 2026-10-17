@@ -1,5 +1,6 @@
 package ru.wishka.memory.ui.groups
 
+import kotlinx.coroutines.delay
 import ru.wishka.memory.ui.components.label
 import ru.wishka.memory.i18n.tf
 import androidx.compose.foundation.clickable
@@ -27,6 +28,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +76,13 @@ fun GroupsScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues
     }
     val mine = found.filter { it.joined }
     val others = found.filterNot { it.joined }
+    // С сервером: группы, которых ещё нет на телефоне, ищутся там (пауза — пока печатают)
+    LaunchedEffect(needle) {
+        if (needle.length >= 2) {
+            delay(400)
+            vm.searchCommunities(needle)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

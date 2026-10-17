@@ -96,6 +96,8 @@ class Net(
         val part = File(mediaDir, f.name + ".part")
         part.writeBytes(plain)
         if (!part.renameTo(f)) { f.writeBytes(plain); part.delete() }
+        // Своё сообщество с этим фото уйдёт на сервер со ссылкой, без повторной загрузки
+        if (key == null) rememberRemote(f.path, path)
         return f
     }
 
@@ -141,6 +143,46 @@ class Net(
         queueMedia(key, listOfNotNull(story.media))
         outbox.enqueue(OutboxOp(key, OpKind.CreateStory, story.id, codec().storyJson(story).toString()))
         return key
+    }
+
+    /** Запись в сообществе — как своя запись, но в его ленту. */
+    fun queueGroupPost(communityId: Int, post: Post): String {
+        val key = post.outboxKey.ifEmpty { newKey() }
+        queueMedia(key, post.media)
+        val payload = JSONObject().put("community", communityId).put("post", codec().postJson(post.copy(outboxKey = "")))
+        outbox.enqueue(OutboxOp(key, OpKind.CreateGroupPost, post.id, payload.toString()))
+        return key
+    }
+
+    /** Свой PRISM: видео и обложка — в загрузки, ролик — в очередь. */
+    fun queuePrism(prism: ru.wishka.memory.data.Prism): String {
+        val key = newKey()
+        queueMedia(key, listOfNotNull(prism.video, prism.cover))
+        outbox.enqueue(OutboxOp(key, OpKind.CreatePrism, prism.id, codec().prismJson(prism).toString()))
+        return key
+    }
+
+    /** Фото сообщества: заставка и фото товаров. */
+    private fun communityMedia(g: ru.wishka.memory.data.Group): List<Attachment> =
+        listOfNotNull(g.cover) + g.shop.flatMap { it.photos }
+
+    /**
+     * Своё сообщество — на сервер целиком. Фото, которые уже там (скачаны
+     * оттуда или отправлены раньше), второй раз не загружаются.
+     */
+    fun queueCommunity(g: ru.wishka.memory.data.Group): String {
+        val key = newKey()
+        queueMedia(key, communityMedia(g).filter { remoteFor(it.path) == null })
+        outbox.enqueue(OutboxOp(key, OpKind.SaveCommunity, g.id.toLong(), codec().groupJson(g.copy(posts = emptyList())).toString()))
+        return key
+    }
+
+    /** Файл на телефоне — копия файла на сервере (скачан или отправлен): его адрес там. */
+    fun remoteFor(local: String): String? =
+        if (isRemote(local)) local else runCatching { cache.get(REMOTE + local)?.value }.getOrNull()
+
+    private fun rememberRemote(local: String, remote: String) {
+        if (local.isNotEmpty() && !isRemote(local)) runCatching { cache.put(REMOTE + local, remote, clock()) }
     }
 
     /** Новая запись: вложения — в загрузки, сама запись — в очередь (уйдёт после них). */
@@ -208,6 +250,29 @@ class Net(
                 media?.let { body.put("media", c.attachmentJson(it)) }
                 api.send("POST", "/v1/stories", body, op.key)
             }
+            OpKind.CreateGroupPost -> {
+                val p = JSONObject(op.payload)
+                val post = c.postOf(p.getJSONObject("post"))
+                api.send("POST", "/v1/communities/${p.getInt("community")}/posts", c.postJson(post.copy(media = withRemote(post.media, remote))), op.key)
+            }
+            OpKind.CreatePrism -> {
+                val prism = c.prismOf(JSONObject(op.payload))
+                val body = JSONObject().put("caption", prism.caption).put("music", prism.music).put("seed", prism.seed).put("durationMs", prism.durationMs)
+                prism.video?.let { body.put("video", c.attachmentJson(withRemote(listOf(it), remote).first())) }
+                prism.cover?.let { body.put("cover", c.attachmentJson(withRemote(listOf(it), remote).first())) }
+                api.send("POST", "/v1/prisms", body, op.key)
+            }
+            OpKind.SaveCommunity -> {
+                val g = c.groupOf(JSONObject(op.payload))
+                // Путь на сервере: только что загружено, уже было там — или фото не отправляем
+                fun fix(a: Attachment): Attachment? = (remote[a.id] ?: remoteFor(a.path))?.let { a.copy(path = it) }
+                val sent = g.copy(cover = g.cover?.let(::fix), shop = g.shop.map { pr -> pr.copy(photos = pr.photos.mapNotNull(::fix)) })
+                val answer = api.send("PATCH", "/v1/communities/${op.target}", api.communityBody(sent), op.key)
+                // Свои файлы теперь и на сервере — запомнить их адреса
+                val byId = communityMedia(g).associateBy { it.id }
+                for (a in communityMedia(sent)) byId[a.id]?.let { rememberRemote(it.path, a.path) }
+                answer
+            }
             OpKind.Call -> {
                 val p = JSONObject(op.payload)
                 api.send(p.getString("method"), p.getString("path"), p.optJSONObject("body"), op.key)
@@ -254,7 +319,7 @@ class Net(
      * подхватит номер при следующем открытии (takeServerIds).
      */
     private fun rememberServerId(op: OutboxOp, answer: JSONObject?) {
-        if (op.kind != OpKind.CreatePost && op.kind != OpKind.CreateStory) return
+        if (op.kind != OpKind.CreatePost && op.kind != OpKind.CreateStory && op.kind != OpKind.CreateGroupPost && op.kind != OpKind.CreatePrism) return
         val id = answer?.optLong("id") ?: return
         if (id <= 0) return
         val o = JSONObject().put("kind", op.kind.id).put("local", op.target).put("server", id).put("key", op.key)
@@ -264,11 +329,48 @@ class Net(
     /** Отправленные записи и истории: (вид, номер на телефоне, номер сервера, ключ очереди). Забираются один раз. */
     fun takeServerIds(): List<SentId> {
         val keys = runCatching { cache.keys(SENT) }.getOrDefault(emptyList())
-        return keys.mapNotNull { k ->
+        val all = keys.mapNotNull { k ->
             val o = cache.get(k)?.value?.let { runCatching { JSONObject(it) }.getOrNull() }
             cache.remove(k)
             o?.let { SentId(OpKind.of(it.optString("kind")) ?: return@let null, it.optLong("local"), it.optLong("server"), it.optString("key")) }
         }
+        // Удалили на телефоне, пока оно уходило: дошло — удалить и на сервере
+        val (dropped, kept) = all.partition { cache.get(DROP + it.key) != null }
+        for (d in dropped) {
+            runCatching { cache.remove(DROP + d.key) }
+            val path = if (d.kind == OpKind.CreateStory) "/v1/stories/${d.serverId}" else "/v1/posts/${d.serverId}"
+            queueCall("DELETE", path)
+        }
+        return kept
+    }
+
+    /**
+     * Удалили то, что ещё не ушло (запись, PRISM): ждёт в очереди — снять
+     * вместе с загрузками; уже уходит — удалить на сервере, когда придёт номер.
+     */
+    fun discard(key: String) {
+        if (key.isEmpty()) return
+        // Метка — всегда: действие могло уже уходить прямо сейчас
+        runCatching { cache.put(DROP + key, "1", clock()) }
+        if (outbox.get(key) != null) {
+            outbox.remove(key)
+            uploads.all().filter { it.owner == key }.forEach { uploads.remove(it.id) }
+        }
+    }
+
+    /** Правка ещё не ушедшей записи: в очереди — уже новый текст и вложения. */
+    fun updateQueuedPost(key: String, post: Post) {
+        val op = outbox.get(key) ?: return
+        val json = codec().postJson(post.copy(outboxKey = ""))
+        val payload = when (op.kind) {
+            OpKind.CreatePost -> json
+            OpKind.CreateGroupPost -> JSONObject(op.payload).put("post", json)
+            else -> return
+        }
+        outbox.replacePayload(key, payload.toString())
+        // Убранные при правке фото больше не загружаем (их файлы уже удалены)
+        val keep = post.media.map { it.id }.toSet()
+        uploads.all().filter { it.owner == key && it.attachmentId !in keep }.forEach { uploads.remove(it.id) }
     }
 
     /**
@@ -294,6 +396,12 @@ class Net(
     companion object {
         /** Ключи кэша: номер сервера у отправленного. */
         const val SENT = "sent:"
+
+        /** Ключи кэша: адрес на сервере у файла на телефоне. */
+        const val REMOTE = "remote:"
+
+        /** Ключи кэша: удалено на телефоне, пока уходило. */
+        const val DROP = "drop:"
 
         /** Демо: встроенный сервер и кэш в памяти — для тестов и пока нет аккаунта. */
         fun demo(clock: () -> Long, me: () -> User, cache: OfflineCache = MemoryCache(), chunkSize: Int = TusClient.DEFAULT_CHUNK, tokens: KeyValueStore? = null, login: String = "demo"): Net =

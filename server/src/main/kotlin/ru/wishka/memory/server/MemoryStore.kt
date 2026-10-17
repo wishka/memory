@@ -60,17 +60,76 @@ class MemoryStore : Store {
         devices.values.filter { it.pushToken == token }.forEach { devices[it.id] = it.copy(pushToken = "") }
     }
 
-    override fun createPost(author: Int, created: Long, body: String): PostRow = synchronized(lock) {
-        val row = PostRow(++postSeq, author, created, body, 0, false)
+    override fun createPost(author: Int, created: Long, body: String, community: Int, kind: String): PostRow = synchronized(lock) {
+        val row = PostRow(++postSeq, author, created, body, 0, false, community, kind)
         posts[row.id] = row
         row
     }
+
+    override fun updatePostBody(id: Long, body: String) = synchronized(lock) { posts[id]?.let { posts[id] = it.copy(body = body) }; Unit }
+
+    /** Личная запись (не в сообществе и не PRISM). */
+    private val PostRow.plain: Boolean get() = community == 0 && kind == "post"
+
+    override fun communityPosts(community: Int, beforeCreated: Long?, beforeId: Long?, limit: Int) = synchronized(lock) {
+        posts.values.filter { it.community == community && it.kind == "post" && before(it, beforeCreated, beforeId) }.sortedWith(newest).take(limit)
+    }
+
+    override fun prisms(beforeCreated: Long?, beforeId: Long?, limit: Int) = synchronized(lock) {
+        posts.values.filter { it.kind == "prism" && before(it, beforeCreated, beforeId) }.sortedWith(newest).take(limit)
+    }
+
+    private val communityRows = LinkedHashMap<Int, CommunityRow>()
+    private val communityMembers = LinkedHashMap<Pair<Int, Int>, Long>()
+    private val highlightRows = HashMap<Int, String>()
+    private var communitySeq = 50_000_000
+
+    override fun createCommunity(owner: Int, name: String, topic: String, created: Long, body: String) = synchronized(lock) {
+        val row = CommunityRow(++communitySeq, owner, name, topic, created, body)
+        communityRows[row.id] = row
+        communityMembers[row.id to owner] = created
+        row
+    }
+
+    override fun community(id: Int) = synchronized(lock) { communityRows[id] }
+
+    override fun updateCommunity(id: Int, name: String, topic: String, body: String) = synchronized(lock) {
+        communityRows[id]?.let { communityRows[id] = it.copy(name = name, topic = topic, body = body) }
+        Unit
+    }
+
+    override fun deleteCommunity(id: Int) = synchronized(lock) {
+        communityRows.remove(id)
+        communityMembers.keys.removeAll { it.first == id }
+        posts.values.filter { it.community == id }.map { it.id }.forEach(::deletePost)
+    }
+
+    override fun communities(query: String?, topic: String?, limit: Int) = synchronized(lock) {
+        val q = query?.lowercase()
+        communityRows.values.filter { (q == null || it.name.lowercase().contains(q)) && (topic == null || it.topic == topic) }
+            .sortedWith(compareByDescending<CommunityRow> { c -> communityMembers.keys.count { it.first == c.id } }.thenByDescending { it.id })
+            .take(limit)
+    }
+
+    override fun setMember(community: Int, userId: Int, on: Boolean, at: Long) = synchronized(lock) {
+        if (on) communityMembers.putIfAbsent(community to userId, at) else communityMembers.remove(community to userId)
+        Unit
+    }
+
+    override fun isMember(community: Int, userId: Int) = synchronized(lock) { (community to userId) in communityMembers }
+    override fun memberCount(community: Int) = synchronized(lock) { communityMembers.keys.count { it.first == community } }
+    override fun communitiesOf(userId: Int) = synchronized(lock) {
+        communityMembers.keys.filter { it.second == userId }.mapNotNull { communityRows[it.first] }
+    }
+
+    override fun highlights(owner: Int) = synchronized(lock) { highlightRows[owner] ?: "[]" }
+    override fun setHighlights(owner: Int, body: String) = synchronized(lock) { highlightRows[owner] = body }
 
     override fun post(id: Long) = synchronized(lock) { posts[id] }
 
     override fun posts(author: Int?, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow> = synchronized(lock) {
         posts.values
-            .filter { author == null || it.author == author }
+            .filter { it.plain && (author == null || it.author == author) }
             .filter { beforeCreated == null || it.created < beforeCreated || (it.created == beforeCreated && it.id < (beforeId ?: Long.MAX_VALUE)) }
             .sortedWith(compareByDescending<PostRow> { it.created }.thenByDescending { it.id })
             .take(limit)
@@ -96,12 +155,12 @@ class MemoryStore : Store {
 
     override fun postsBy(authors: Collection<Int>, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow> = synchronized(lock) {
         val set = authors.toSet()
-        posts.values.filter { it.author in set && before(it, beforeCreated, beforeId) }.sortedWith(newest).take(limit)
+        posts.values.filter { it.plain && it.author in set && before(it, beforeCreated, beforeId) }.sortedWith(newest).take(limit)
     }
 
     override fun explore(exclude: Collection<Int>, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow> = synchronized(lock) {
         val set = exclude.toSet()
-        posts.values.filter { it.author !in set && users[it.author]?.closed == false && before(it, beforeCreated, beforeId) }
+        posts.values.filter { it.plain && it.author !in set && users[it.author]?.closed == false && before(it, beforeCreated, beforeId) }
             .sortedWith(newest).take(limit)
     }
 
@@ -211,6 +270,9 @@ class MemoryStore : Store {
 
     override fun deleteUser(id: Int) = synchronized(lock) {
         users.remove(id)
+        communityRows.values.filter { it.owner == id }.map { it.id }.forEach(::deleteCommunity)
+        communityMembers.keys.removeAll { it.second == id }
+        highlightRows.remove(id)
         messages.removeAll { it.author == id }
         reportRows.values.removeAll { it.reporter == id || it.author == id }
         // Свои группы — следующему участнику (сначала админам); пустые — удалить

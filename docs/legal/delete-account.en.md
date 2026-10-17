@@ -12,6 +12,6 @@ Write to [privacy@domain] from the email address or phone number linked to your 
 
 ## What is deleted and what remains
 
-Your profile, posts, comments, PRISM, messages, stickers, photos, shelf entries, showcase products and consents are deleted. Messages you sent to other people remain with the recipients. Information that the law requires us to keep longer is kept for the period set by law and then deleted.
+Your profile, posts, comments, PRISM, messages, stickers, photos, shelf entries, showcase products, groups you created (with all posts in them), Highlights and consents are deleted. Messages you sent to other people remain with the recipients. Information that the law requires us to keep longer is kept for the period set by law and then deleted.
 
 Operator: [Name: LLC "…" / sole proprietor …], Republic of Armenia.

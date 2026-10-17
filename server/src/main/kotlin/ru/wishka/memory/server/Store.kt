@@ -34,7 +34,24 @@ data class DeviceRow(
 )
 
 /** Запись: body — JSON записи в формате API (без автора и счётчиков — их сервер подставляет сам). */
-data class PostRow(val id: Long, val author: Int, val created: Long, val body: String, val likes: Int, val commentsOff: Boolean)
+/**
+ * community — номер сообщества (0 — личная запись); kind — "post" или
+ * "prism" (короткое видео). Ленты, «Интересное» и страница человека —
+ * только личные записи; у сообществ и PRISM — свои списки.
+ */
+data class PostRow(
+    val id: Long,
+    val author: Int,
+    val created: Long,
+    val body: String,
+    val likes: Int,
+    val commentsOff: Boolean,
+    val community: Int = 0,
+    val kind: String = "post",
+)
+
+/** Сообщество (группа с записями и витриной): body — JSON группы, как у приложения. */
+data class CommunityRow(val id: Int, val owner: Int, val name: String, val topic: String, val created: Long, val body: String)
 
 data class ChatRow(val id: Int, val kind: String, val title: String, val owner: Int, val created: Long) {
     val direct: Boolean get() = kind == "direct"
@@ -104,7 +121,12 @@ interface Store {
     fun clearPushToken(token: String)
 
     // Записи
-    fun createPost(author: Int, created: Long, body: String): PostRow
+    fun createPost(author: Int, created: Long, body: String, community: Int = 0, kind: String = "post"): PostRow
+    fun updatePostBody(id: Long, body: String)
+    /** Записи сообщества, новые сверху. */
+    fun communityPosts(community: Int, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
+    /** PRISM всех, новые сверху. */
+    fun prisms(beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
     fun post(id: Long): PostRow?
     /** Новые сверху; после (createdAt, id) — следующая страница. author == null — все. */
     fun posts(author: Int?, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
@@ -172,6 +194,23 @@ interface Store {
     fun upload(id: String): UploadRow?
     fun setUploadOffset(id: String, offset: Long)
     fun deleteUpload(id: String)
+
+    // Сообщества
+    fun createCommunity(owner: Int, name: String, topic: String, created: Long, body: String): CommunityRow
+    fun community(id: Int): CommunityRow?
+    fun updateCommunity(id: Int, name: String, topic: String, body: String)
+    /** Удалить сообщество с его записями. */
+    fun deleteCommunity(id: Int)
+    /** Поиск по названию (q == null — все); больше участников — выше. */
+    fun communities(query: String?, topic: String?, limit: Int): List<CommunityRow>
+    fun setMember(community: Int, userId: Int, on: Boolean, at: Long)
+    fun isMember(community: Int, userId: Int): Boolean
+    fun memberCount(community: Int): Int
+    fun communitiesOf(userId: Int): List<CommunityRow>
+
+    // «Актуальное»: подборки своих историй (JSON-список), живут, пока не удалят
+    fun highlights(owner: Int): String
+    fun setHighlights(owner: Int, body: String)
 
     // Модерация
     fun createReport(row: ReportRow): ReportRow

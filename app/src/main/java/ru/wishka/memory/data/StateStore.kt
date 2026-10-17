@@ -64,6 +64,11 @@ class StateStore(private val context: Context) {
         fun storyJson(s: Story): JSONObject = story(s)
         fun storyOf(o: JSONObject): Story = story(o)
         fun attachmentOf(o: JSONObject): Attachment = attachment(o)
+        fun groupJson(g: Group): JSONObject = group(g)
+        fun groupOf(o: JSONObject): Group = group(o)
+        fun prismJson(p: Prism): JSONObject = prism(p)
+        fun prismOf(o: JSONObject): Prism = prism(o.also { Directory.remember(it.optJSONObject("authorInfo")) })
+        fun highlightOf(o: JSONObject): Highlight = highlight(o)
         fun privacyJson(p: Privacy): JSONObject = privacy(p)
         fun privacyOf(o: JSONObject): Privacy = privacy(o)
 
@@ -704,7 +709,7 @@ class StateStore(private val context: Context) {
             .put("durationMs", p.durationMs).put("saved", p.saved)
             .put("video", p.video?.let { attachment(it) } ?: JSONObject.NULL)
             .put("cover", p.cover?.let { attachment(it) } ?: JSONObject.NULL)
-            .put("createdAt", p.createdAt)
+            .put("createdAt", p.createdAt).put("outboxKey", p.outboxKey)
             .put("commentList", JSONArray(p.commentList.map { comment(it) }))
 
         private fun prism(o: JSONObject) = Prism(
@@ -715,6 +720,7 @@ class StateStore(private val context: Context) {
             video = o.optJSONObject("video")?.let { attachment(it) },
             cover = o.optJSONObject("cover")?.let { attachment(it) },
             createdAt = o.optLong("createdAt"),
+            outboxKey = o.optString("outboxKey"),
         )
 
         private fun JSONArray?.ints(): List<Int> =

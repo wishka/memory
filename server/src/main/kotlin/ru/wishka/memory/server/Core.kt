@@ -340,20 +340,22 @@ class Core(
             }
             p.size == 4 && p[1] == "posts" && p[3] == "comments" -> {
                 val post = p[2].toLongOrNull()?.let(store::post) ?: return error(404, "Нет такой записи")
-                if (!canSee(me, post.author)) return error(403, "Закрытый профиль")
+                if (!canSeePost(me, post)) return error(403, "Закрытый профиль")
                 if (r.method == "POST") idempotent(me, r) { addComment(me, post, r) } else commentPage(me, post, r)
             }
             p.size == 3 && p[1] == "comments" && r.method == "DELETE" -> {
                 val c = p[2].toLongOrNull()?.let(store::comment) ?: return error(404, "Нет такого комментария")
                 val post = store.post(c.postId)
-                if (c.author != me && post?.author != me) return error(403, "Не ваш комментарий")
+                // Удалить может автор комментария, автор записи и владелец сообщества
+                val owner = post?.community?.takeIf { it != 0 }?.let(store::community)?.owner
+                if (c.author != me && post?.author != me && owner != me) return error(403, "Не ваш комментарий")
                 store.deleteComment(c.id)
                 empty()
             }
             p.size == 4 && p[1] == "comments" && p[3] == "like" -> {
                 val c = p[2].toLongOrNull()?.let(store::comment) ?: return error(404, "Нет такого комментария")
                 val post = store.post(c.postId) ?: return error(404, "Нет такой записи")
-                if (!canSee(me, post.author)) return error(403, "Закрытый профиль")
+                if (!canSeePost(me, post)) return error(403, "Закрытый профиль")
                 when (r.method) {
                     "PUT" -> store.setCommentLike(c.id, me, true)
                     "DELETE" -> store.setCommentLike(c.id, me, false)
@@ -384,12 +386,87 @@ class Core(
                 if (post.author != me) return error(403, "Не ваша запись")
                 val body = bodyJson(r) ?: return error(400, "Нужен JSON")
                 if (body.has("commentsOff")) store.setCommentsOff(post.id, body.optBoolean("commentsOff"))
+                if (body.has("text")) {
+                    val text = body.optString("text")
+                    if (text.length > MAX_TEXT) return error(400, "Текст длиннее $MAX_TEXT знаков")
+                    val o = runCatching { JSONObject(post.body) }.getOrDefault(JSONObject())
+                    // У PRISM текст — подпись (caption)
+                    o.put(if (post.kind == "prism") "caption" else "text", text).put("editedAt", clock())
+                    // keep — номера вложений, что остались (убрать можно, добавить — нет)
+                    val keep = body.optJSONArray("keep")
+                    val media = o.optJSONArray("media")
+                    if (keep != null && media != null) {
+                        val ids = (0 until keep.length()).map { keep.optString(it) }.toSet()
+                        val kept = JSONArray()
+                        for (i in 0 until media.length()) {
+                            val a = media.optJSONObject(i) ?: continue
+                            if (a.optString("id") in ids) kept.put(a)
+                            else purgeMedia(JSONObject().put("media", JSONArray().put(a)).toString())
+                        }
+                        o.put("media", kept)
+                    }
+                    store.updatePostBody(post.id, o.toString())
+                }
                 empty()
+            }
+            p.size == 3 && p[1] == "posts" && r.method == "DELETE" -> {
+                val post = p[2].toLongOrNull()?.let(store::post) ?: return error(404, "Нет такой записи")
+                // Свою — автор; в сообществе — ещё и его владелец
+                val owner = post.community.takeIf { it != 0 }?.let(store::community)?.owner
+                if (post.author != me && owner != me) return error(403, "Не ваша запись")
+                purgeMedia(post.body)
+                store.deletePost(post.id)
+                empty()
+            }
+            path == "/v1/prisms" && r.method == "GET" -> prismPage(me, r)
+            path == "/v1/prisms" && r.method == "POST" -> idempotent(me, r) { createPrism(me, r) }
+            path == "/v1/communities" && r.method == "GET" -> {
+                val q = r.query["q"]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+                val topic = r.query["topic"]?.takeIf { it.isNotEmpty() }
+                json(JSONObject().put("items", JSONArray(store.communities(q, topic, 60).filter { communityVisible(me, it) }.take(40).map { communityJson(it, me) })))
+            }
+            path == "/v1/communities" && r.method == "POST" -> idempotent(me, r) { createCommunity(me, r) }
+            path == "/v1/me/communities" && r.method == "GET" ->
+                json(JSONObject().put("items", JSONArray(store.communitiesOf(me).filter { communityVisible(me, it) }.map { communityJson(it, me) })))
+            p.size == 3 && p[1] == "communities" -> {
+                val c = p[2].toIntOrNull()?.let(store::community)?.takeIf { communityVisible(me, it) } ?: return error(404, "Нет такой группы")
+                when (r.method) {
+                    "GET" -> json(communityJson(c, me))
+                    "PATCH" -> updateCommunity(me, c, r)
+                    "DELETE" -> {
+                        if (c.owner != me) return error(403, "Не ваша группа")
+                        purgeCommunity(c)
+                        empty()
+                    }
+                    else -> error(405, "GET, PATCH или DELETE")
+                }
+            }
+            p.size == 4 && p[1] == "communities" && p[3] == "join" -> {
+                val c = p[2].toIntOrNull()?.let(store::community)?.takeIf { communityVisible(me, it) } ?: return error(404, "Нет такой группы")
+                when (r.method) {
+                    "PUT" -> store.setMember(c.id, me, true, clock())
+                    "DELETE" -> {
+                        if (c.owner == me) return error(400, "Создатель не может выйти — только удалить группу")
+                        store.setMember(c.id, me, false, clock())
+                    }
+                    else -> return error(405, "PUT или DELETE")
+                }
+                json(communityJson(c, me))
+            }
+            p.size == 4 && p[1] == "communities" && p[3] == "posts" -> {
+                val c = p[2].toIntOrNull()?.let(store::community)?.takeIf { communityVisible(me, it) } ?: return error(404, "Нет такой группы")
+                if (r.method == "POST") idempotent(me, r) { createPost(me, r, c) } else communityPage(me, c, r)
+            }
+            path == "/v1/me/highlights" && r.method == "PUT" -> saveHighlights(me, r)
+            p.size == 4 && p[1] == "users" && p[3] == "highlights" && r.method == "GET" -> {
+                val owner = p[2].toIntOrNull() ?: return error(404, "Нет")
+                if (!canSee(me, owner)) return error(403, "Закрытый профиль")
+                highlightsOf(me, owner)
             }
             p.size == 4 && p[1] == "posts" && p[3] == "like" -> {
                 val id = p[2].toLongOrNull() ?: return error(404, "Нет")
                 val post = store.post(id) ?: return error(404, "Нет такой записи")
-                if (!canSee(me, post.author)) return error(403, "Закрытый профиль")
+                if (!canSeePost(me, post)) return error(403, "Закрытый профиль")
                 when (r.method) {
                     "PUT" -> store.setLike(id, me, true)
                     "DELETE" -> store.setLike(id, me, false)
@@ -528,15 +605,232 @@ class Core(
         return out
     }
 
-    private fun createPost(me: Int, r: Req): Resp {
+    private fun createPost(me: Int, r: Req, community: CommunityRow? = null): Resp {
+        if (community != null) {
+            if (!store.isMember(community.id, me)) return error(403, "Сначала вступите в группу")
+            val onlyOwner = runCatching { JSONObject(community.body).optBoolean("onlyOwnerPosts") }.getOrDefault(false)
+            if (onlyOwner && community.owner != me) return error(403, "Писать в группу может только создатель")
+        }
         val body = bodyJson(r) ?: return error(400, "Нужен JSON")
         if (body.optString("text").length > MAX_TEXT) return error(400, "Текст длиннее $MAX_TEXT знаков")
         val media = cleanMedia(me, body.optJSONArray("media"), 10) ?: return error(422, "Загрузка не закончена")
         listOf("id", "author", "authorInfo", "likes", "liked", "comments", "commentList", "createdAt", "outboxKey", "commentsOff", "minutesAgo").forEach(body::remove)
         body.put("media", media)
         if (!body.has("text")) body.put("text", "")
-        val row = store.createPost(me, clock(), body.toString())
+        body.remove("editedAt")
+        body.remove("community")
+        val row = store.createPost(me, clock(), body.toString(), community = community?.id ?: 0)
         return json(postJson(row, false, me), 201)
+    }
+
+    /**
+     * Видна ли запись: личная — как автор (canSee); в сообществе — всем,
+     * кроме заблокированных и при бане автора (сообщества открытые).
+     */
+    private fun canSeePost(viewer: Int, post: PostRow): Boolean {
+        if (post.community == 0) return canSee(viewer, post.author)
+        if (post.author == viewer) return true
+        val c = store.community(post.community) ?: return false
+        if (!communityVisible(viewer, c)) return false
+        return store.user(post.author)?.banned == false && !store.blockedEither(viewer, post.author)
+    }
+
+    // ── Сообщества ───────────────────────────────────────────────────
+
+    /** Сообщество видно, если создатель не забанен и не заблокирован (в любую сторону). */
+    private fun communityVisible(viewer: Int, c: CommunityRow): Boolean =
+        c.owner == viewer || (store.user(c.owner)?.banned == false && !store.blockedEither(viewer, c.owner))
+
+    private fun communityJson(c: CommunityRow, me: Int): JSONObject {
+        val o = runCatching { JSONObject(c.body) }.getOrDefault(JSONObject())
+        o.put("id", c.id).put("name", c.name).put("topic", c.topic).put("ownerId", c.owner)
+            .put("members", store.memberCount(c.id)).put("joined", store.isMember(c.id, me)).put("mine", c.owner == me)
+            .put("muted", false).put("posts", JSONArray()).put("createdAt", c.created)
+        if (!o.has("description")) o.put("description", "")
+        authorInfo(c.owner)?.let { o.put("ownerInfo", it) }
+        return o
+    }
+
+    /**
+     * Тело сообщества — только известные поля: описание, заставка
+     * (seed или загруженное фото), сведения, витрина, фон (без своего
+     * фото — его файл живёт на телефоне), цвет, правила записей.
+     * null — загрузка ещё не закончена или не своя.
+     */
+    private fun cleanCommunity(me: Int, b: JSONObject, communityId: Int): JSONObject? {
+        val o = JSONObject().put("description", b.optString("description").take(1000)).put("seed", b.optInt("seed"))
+            .put("onlyOwnerPosts", b.optBoolean("onlyOwnerPosts")).put("accent", b.optString("accent").take(20))
+        val cover = b.optJSONObject("cover")
+        if (cover != null) {
+            val m = cleanMedia(me, JSONArray().put(cover), 1) ?: return null
+            o.put("cover", if (m.length() > 0) m.getJSONObject(0) else JSONObject.NULL)
+        } else o.put("cover", JSONObject.NULL)
+        val info = b.optJSONObject("info") ?: JSONObject()
+        o.put("info", JSONObject().apply {
+            for (k in listOf("about", "website", "phone", "email", "address", "hours")) put(k, info.optString(k).take(if (k == "about") 2000 else 200))
+        })
+        val shop = JSONArray()
+        val items = b.optJSONArray("shop") ?: JSONArray()
+        for (i in 0 until minOf(items.length(), 100)) {
+            val pr = items.optJSONObject(i) ?: continue
+            val photos = cleanMedia(me, pr.optJSONArray("photos"), 10) ?: return null
+            shop.put(JSONObject().put("id", pr.optLong("id")).put("title", pr.optString("title").take(120)).put("price", pr.optLong("price"))
+                .put("description", pr.optString("description").take(2000)).put("photos", photos).put("category", pr.optString("category").take(60))
+                .put("inStock", pr.optBoolean("inStock", true)).put("url", pr.optString("url").take(500)).put("seed", pr.optInt("seed")))
+        }
+        o.put("shop", shop)
+        val bd = b.optJSONObject("backdrop")
+        o.put("backdrop", if (bd != null && bd.optString("style") != "photo") JSONObject().put("style", bd.optString("style").take(20)).put("dim", bd.optDouble("dim", 0.35)) else JSONObject.NULL)
+        // Закрепить можно только запись этой группы
+        val pin = if (b.isNull("pinnedPostId")) 0L else b.optLong("pinnedPostId")
+        o.put("pinnedPostId", if (pin > 0 && communityId != 0 && store.post(pin)?.community == communityId) pin else JSONObject.NULL)
+        return o
+    }
+
+    private fun createCommunity(me: Int, r: Req): Resp {
+        val b = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val name = b.optString("name").trim().take(MAX_TITLE)
+        if (name.isEmpty()) return error(400, "Нужно название")
+        if (store.communitiesOf(me).count { it.owner == me } >= 50) return error(429, "Не больше 50 своих групп")
+        val body = cleanCommunity(me, b, 0) ?: return error(422, "Загрузка не закончена")
+        val row = store.createCommunity(me, name, b.optString("topic").take(40), clock(), body.toString())
+        return json(communityJson(row, me), 201)
+    }
+
+    /** PATCH — тело целиком (как его видит владелец), название и тема — если есть. */
+    private fun updateCommunity(me: Int, c: CommunityRow, r: Req): Resp {
+        if (c.owner != me) return error(403, "Не ваша группа")
+        val b = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val name = b.optString("name").trim().take(MAX_TITLE).ifEmpty { c.name }
+        val topic = if (b.has("topic")) b.optString("topic").take(40) else c.topic
+        val body = cleanCommunity(me, b, c.id) ?: return error(422, "Загрузка не закончена")
+        // Файлы, которых больше нет в группе (старая заставка, фото товаров), — удалить
+        val before = mediaPaths(c.body)
+        store.updateCommunity(c.id, name, topic, body.toString())
+        (before - mediaPaths(body.toString())).forEach(::dropUpload)
+        return json(communityJson(store.community(c.id) ?: c, me))
+    }
+
+    /** Загрузки в теле сообщества: заставка и фото товаров. */
+    private fun mediaPaths(body: String): Set<String> {
+        val o = runCatching { JSONObject(body) }.getOrNull() ?: return emptySet()
+        val out = HashSet<String>()
+        o.optJSONObject("cover")?.optString("path")?.let(out::add)
+        val shop = o.optJSONArray("shop") ?: JSONArray()
+        for (i in 0 until shop.length()) {
+            val ph = shop.optJSONObject(i)?.optJSONArray("photos") ?: continue
+            for (j in 0 until ph.length()) ph.optJSONObject(j)?.optString("path")?.let(out::add)
+        }
+        return out.filter { it.contains("/v1/uploads/") }.toSet()
+    }
+
+    private fun dropUpload(path: String) {
+        val id = path.substringAfterLast('/')
+        store.deleteUpload(id)
+        fileOf(id).delete()
+    }
+
+    /** Удалить сообщество: записи, их файлы и файлы самой группы. */
+    private fun purgeCommunity(c: CommunityRow) {
+        var after: PostRow? = null
+        while (true) {
+            val chunk = store.communityPosts(c.id, after?.created, after?.id, 200)
+            chunk.forEach { purgeMedia(it.body) }
+            if (chunk.size < 200) break
+            after = chunk.last()
+        }
+        mediaPaths(c.body).forEach(::dropUpload)
+        store.deleteCommunity(c.id)
+    }
+
+    private fun communityPage(me: Int, c: CommunityRow, r: Req): Resp {
+        val limit = (r.query["limit"]?.toIntOrNull() ?: 20).coerceIn(1, 100)
+        val after = r.query["cursor"]?.let(::decodeCursor)
+        val rows = store.communityPosts(c.id, after?.first, after?.second, limit + 1)
+        val page = rows.take(limit)
+        val chunk = page.filter { canSeePost(me, it) }
+        val liked = store.likedBy(me, chunk.map { it.id })
+        val counts = store.commentCounts(chunk.map { it.id })
+        val next = if (rows.size > limit) page.last().let { encodeCursor(it.created, it.id) } else null
+        val items = JSONArray(chunk.map { postJson(it, it.id in liked, me, counts[it.id] ?: 0).put("community", c.id) })
+        return json(JSONObject().put("items", items).put("next", next ?: JSONObject.NULL))
+    }
+
+    // ── PRISM ────────────────────────────────────────────────────────
+
+    private fun prismJson(row: PostRow, liked: Boolean, viewer: Int, comments: Int = 0): JSONObject {
+        val o = postJson(row, liked, viewer, comments)
+        o.remove("outboxKey"); o.remove("minutesAgo")
+        if (!o.has("caption")) o.put("caption", "")
+        o.put("saved", false)
+        return o
+    }
+
+    private fun createPrism(me: Int, r: Req): Resp {
+        val b = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val video = b.optJSONObject("video") ?: return error(400, "Нужно видео")
+        val v = cleanMedia(me, JSONArray().put(video), 1) ?: return error(422, "Загрузка не закончена")
+        if (v.length() == 0 || !v.getJSONObject(0).optString("path").contains("/v1/uploads/")) return error(400, "Видео — загрузкой")
+        val cover = b.optJSONObject("cover")?.let { cleanMedia(me, JSONArray().put(it), 1) ?: return error(422, "Загрузка не закончена") }
+        val caption = b.optString("caption")
+        if (caption.length > MAX_TEXT) return error(400, "Подпись длиннее $MAX_TEXT знаков")
+        val clean = JSONObject().put("caption", caption).put("music", b.optString("music").take(120))
+            .put("seed", b.optInt("seed")).put("durationMs", b.optInt("durationMs", 9_000).coerceIn(0, 10 * 60_000))
+            .put("video", v.getJSONObject(0))
+            .put("cover", if (cover != null && cover.length() > 0) cover.getJSONObject(0) else JSONObject.NULL)
+        val row = store.createPost(me, clock(), clean.toString(), kind = "prism")
+        return json(prismJson(row, false, me), 201)
+    }
+
+    private fun prismPage(me: Int, r: Req): Resp {
+        val limit = (r.query["limit"]?.toIntOrNull() ?: 20).coerceIn(1, 100)
+        val after = r.query["cursor"]?.let(::decodeCursor)
+        val rows = store.prisms(after?.first, after?.second, limit + 1)
+        val page = rows.take(limit)
+        val chunk = page.filter { canSee(me, it.author) }
+        val liked = store.likedBy(me, chunk.map { it.id })
+        val counts = store.commentCounts(chunk.map { it.id })
+        val next = if (rows.size > limit) page.last().let { encodeCursor(it.created, it.id) } else null
+        val items = JSONArray(chunk.map { prismJson(it, it.id in liked, me, counts[it.id] ?: 0) })
+        return json(JSONObject().put("items", items).put("next", next ?: JSONObject.NULL))
+    }
+
+    // ── «Актуальное» ─────────────────────────────────────────────────
+
+    /** Подборки своих историй: только свои истории, не больше 50 подборок по 100. */
+    private fun saveHighlights(me: Int, r: Req): Resp {
+        val arr = bodyJson(r)?.optJSONArray("items") ?: return error(400, "Нужен items")
+        val out = JSONArray()
+        for (i in 0 until minOf(arr.length(), 50)) {
+            val h = arr.optJSONObject(i) ?: continue
+            val ids = h.optJSONArray("stories") ?: JSONArray()
+            val mine = (0 until ids.length()).map { ids.optLong(it) }.distinct()
+                .filter { id -> store.story(id)?.author == me }.take(100)
+            if (mine.isEmpty()) continue
+            val cover = h.optLong("cover").takeIf { it in mine } ?: mine.first()
+            out.put(JSONObject().put("id", h.optLong("id")).put("title", h.optString("title").take(40)).put("stories", JSONArray(mine)).put("cover", cover))
+        }
+        store.setHighlights(me, out.toString())
+        return empty()
+    }
+
+    /** «Актуальное» человека: истории внутри — целиком, даже старше суток. */
+    private fun highlightsOf(me: Int, owner: Int): Resp {
+        val arr = runCatching { JSONArray(store.highlights(owner)) }.getOrDefault(JSONArray())
+        val close = owner == me || me in store.closeFriends(owner)
+        val items = JSONArray()
+        for (i in 0 until arr.length()) {
+            val h = arr.optJSONObject(i) ?: continue
+            val ids = h.optJSONArray("stories") ?: JSONArray()
+            val rows = (0 until ids.length()).mapNotNull { store.story(ids.optLong(it)) }
+                .filter { it.author == owner && (!it.closeFriends || close) }
+            if (rows.isEmpty()) continue
+            val cover = h.optLong("cover").takeIf { c -> rows.any { it.id == c } } ?: rows.first().id
+            items.put(JSONObject().put("id", h.optLong("id")).put("owner", owner).put("title", h.optString("title"))
+                .put("stories", JSONArray(rows.map { it.id })).put("cover", cover)
+                .put("storyList", JSONArray(rows.map { storyJson(it, me, true) })))
+        }
+        return json(JSONObject().put("items", items))
     }
 
     // ── Переписки ────────────────────────────────────────────────────
@@ -874,7 +1168,8 @@ class Core(
         // автор «со слов», и заблокировать его по такой жалобе модератор не сможет
         var author = 0
         when (kind) {
-            "post" -> store.post(target)?.let { author = it.author }
+            "post" -> store.post(target)?.takeIf { it.kind == "post" }?.let { author = it.author }
+            "prism" -> store.post(target)?.takeIf { it.kind == "prism" }?.let { author = it.author }
             "comment" -> store.comment(target)?.let { author = it.author }
             "story" -> store.story(target)?.let { author = it.author }
             "person" -> author = target.toInt()
@@ -907,6 +1202,7 @@ class Core(
             // Что сейчас на сервере — текст записи или комментария, если они ещё есть
             val current = when (rep.kind) {
                 "post" -> store.post(rep.target)?.body?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }
+                "prism" -> store.post(rep.target)?.body?.let { runCatching { JSONObject(it).optString("caption") }.getOrNull() }
                 "comment" -> store.comment(rep.target)?.body?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }
                 "story" -> store.story(rep.target)?.body?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }
                 else -> null
@@ -929,7 +1225,7 @@ class Core(
             "remove", "ban" -> {
                 if (action == "ban" && rep.status == "open-unverified") return error(400, "Автор не подтверждён — заблокировать нельзя")
                 when (rep.kind) {
-                    "post" -> store.post(rep.target)?.let { purgeMedia(it.body); store.deletePost(it.id) }
+                    "post", "prism" -> store.post(rep.target)?.let { purgeMedia(it.body); store.deletePost(it.id) }
                     "comment" -> store.comment(rep.target)?.let { purgeMedia(it.body); store.deleteComment(it.id) }
                     "story" -> store.story(rep.target)?.let { purgeMedia(it.body); store.deleteStory(it.id) }
                 }
@@ -954,6 +1250,8 @@ class Core(
         val paths = ArrayList<String>()
         o.optJSONArray("media")?.let { a -> for (i in 0 until a.length()) a.optJSONObject(i)?.optString("path")?.let(paths::add) }
         o.optJSONObject("media")?.optString("path")?.let(paths::add)
+        o.optJSONObject("video")?.optString("path")?.let(paths::add)
+        o.optJSONObject("cover")?.optString("path")?.let(paths::add)
         o.optJSONObject("sticker")?.optString("path")?.let(paths::add)
         paths.filter { it.contains("/v1/uploads/") }.map { it.substringAfterLast('/') }.forEach { id ->
             store.deleteUpload(id)
@@ -970,6 +1268,8 @@ class Core(
             failed("pw:$me")
             return error(403, "Пароль не подходит")
         }
+        // Свои сообщества — с записями участников и их файлами
+        store.communitiesOf(me).filter { it.owner == me }.forEach(::purgeCommunity)
         val files = store.uploadsOf(me).map { it.id }
         store.deleteUser(me)
         // Файлы — после базы: не вышло стереть из базы — файлы целы

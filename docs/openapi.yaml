@@ -411,14 +411,26 @@ paths:
       responses: { "204": { description: Готово } }
   /v1/posts/{postId}:
     patch:
-      summary: Изменить свою запись (сейчас — включить/выключить комментарии)
+      summary: Изменить свою запись — комментарии, текст (у PRISM — подпись), какие вложения остались
       parameters:
         - { name: postId, in: path, required: true, schema: { type: integer, format: int64 } }
       requestBody:
         content:
           application/json:
-            schema: { type: object, properties: { commentsOff: { type: boolean } } }
+            schema:
+              type: object
+              properties:
+                commentsOff: { type: boolean }
+                text: { type: string, maxLength: 2000, description: "Новый текст; ставит editedAt" }
+                keep: { type: array, items: { type: string }, description: "Номера вложений (attachment.id), что остаются; убранные файлы удаляются" }
       responses: { "204": { description: Готово } }
+    delete:
+      summary: Удалить запись — свою или (в своём сообществе) любую; файлы удаляются
+      parameters:
+        - { name: postId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "204": { description: Удалена }
+        "403": { description: Не ваша }
   /v1/uploads:
     options:
       summary: Возможности tus
@@ -732,6 +744,115 @@ paths:
           application/json:
             schema: { type: object, properties: { action: { enum: [dismiss, remove, ban] } } }
       responses: { "204": { description: "dismiss — оставить; remove — удалить содержимое; ban — удалить и заблокировать автора (войти не сможет)" } }
+  /v1/communities:
+    get:
+      summary: Сообщества — поиск по названию или самые большие (до 40)
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: topic, in: query, schema: { type: string } }
+      responses: { "200": { description: "{items: [Community]}" } }
+    post:
+      summary: Новое сообщество (создатель — сразу участник; не больше 50 своих)
+      parameters: [{ $ref: "#/components/parameters/idempotency" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Community" } } }
+      responses:
+        "201": { description: "Community — номер сообщества с 50 000 001" }
+        "422": { description: Загрузка заставки или фото товара не закончена (или не своя) }
+  /v1/me/communities:
+    get:
+      summary: Сообщества, где я состою (и свои)
+      responses: { "200": { description: "{items: [Community]}" } }
+  /v1/communities/{communityId}:
+    parameters:
+      - { name: communityId, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Сообщество (создатель заблокирован или забанен — 404)
+      responses: { "200": { description: Community } }
+    patch:
+      summary: Изменить своё сообщество — тело целиком (чего нет — сбрасывается); старые файлы удаляются
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/Community" } } }
+      responses: { "200": { description: Community }, "403": { description: Не создатель } }
+    delete:
+      summary: Удалить своё сообщество вместе с записями и файлами
+      responses: { "204": { description: Удалено } }
+  /v1/communities/{communityId}/join:
+    parameters:
+      - { name: communityId, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Вступить
+      responses: { "200": { description: Community } }
+    delete:
+      summary: Выйти (создатель выйти не может — только удалить)
+      responses: { "200": { description: Community }, "400": { description: Создатель } }
+  /v1/communities/{communityId}/posts:
+    parameters:
+      - { name: communityId, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Записи сообщества (видят все — сообщества открытые); у записи есть community
+      parameters: [{ $ref: "#/components/parameters/limit" }, { $ref: "#/components/parameters/cursor" }]
+      responses: { "200": { description: "{items: [Post], next}" } }
+    post:
+      summary: Запись в сообществе — только участникам (onlyOwnerPosts — только создателю)
+      parameters: [{ $ref: "#/components/parameters/idempotency" }]
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/Post" } } }
+      responses: { "201": { description: Post }, "403": { description: Не участник или пишет только создатель } }
+  /v1/prisms:
+    get:
+      summary: PRISM всех (закрытые профили — только подписчикам), новые сверху
+      parameters: [{ $ref: "#/components/parameters/limit" }, { $ref: "#/components/parameters/cursor" }]
+      responses: { "200": { description: "{items: [Prism], next}" } }
+    post:
+      summary: Новый PRISM; «нравится», комментарии, правка и удаление — как у записей (/v1/posts/{id}/…)
+      parameters: [{ $ref: "#/components/parameters/idempotency" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [video]
+              properties:
+                video: { $ref: "#/components/schemas/Attachment" }
+                cover: { $ref: "#/components/schemas/Attachment" }
+                caption: { type: string, maxLength: 2000 }
+                music: { type: string, maxLength: 120 }
+                seed: { type: integer }
+                durationMs: { type: integer }
+      responses:
+        "201": { description: "Prism: id, author, caption, music, video, cover, likes, liked, comments, commentList, createdAt" }
+        "400": { description: Нет видео (или видео не загрузкой) }
+  /v1/me/highlights:
+    put:
+      summary: Своё «Актуальное» целиком — только свои истории (до 50 подборок по 100)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: integer, format: int64 }
+                      title: { type: string, maxLength: 40 }
+                      stories: { type: array, items: { type: integer, format: int64 } }
+                      cover: { type: integer, format: int64 }
+      responses: { "204": { description: Сохранено } }
+  /v1/users/{userId}/highlights:
+    get:
+      summary: «Актуальное» человека; истории внутри (storyList) — даже старше суток, «для близких» — только близким
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: "{items: [{id, owner, title, stories, cover, storyList: [Story]}]}" }
+        "403": { description: Закрытый профиль }
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
@@ -744,6 +865,27 @@ components:
       schema: { type: string, format: uuid }
       description: Один и тот же при каждом повторе одного действия
   schemas:
+    Community:
+      type: object
+      description: Сообщество — как группа в приложении (Group); posts всегда пустой, записи — /v1/communities/{id}/posts
+      properties:
+        id: { type: integer }
+        name: { type: string, maxLength: 60 }
+        topic: { type: string }
+        description: { type: string, maxLength: 1000 }
+        seed: { type: integer }
+        cover: { $ref: "#/components/schemas/Attachment" }
+        info: { type: object, properties: { about: { type: string }, website: { type: string }, phone: { type: string }, email: { type: string }, address: { type: string }, hours: { type: string } } }
+        shop: { type: array, items: { type: object, description: "Товар: id, title, price, description, photos, category, inStock, url, seed" } }
+        backdrop: { type: object, description: "Фон: style и dim (своё фото не хранится)" }
+        accent: { type: string }
+        onlyOwnerPosts: { type: boolean }
+        pinnedPostId: { type: integer, format: int64, nullable: true, description: "Только запись этого сообщества" }
+        ownerId: { type: integer, readOnly: true }
+        ownerInfo: { type: object, readOnly: true }
+        members: { type: integer, readOnly: true }
+        joined: { type: boolean, readOnly: true }
+        mine: { type: boolean, readOnly: true }
     Tokens:
       type: object
       required: [access, refresh, expiresIn, deviceId]

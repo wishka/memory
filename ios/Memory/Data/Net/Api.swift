@@ -239,7 +239,92 @@ final class Api {
         return Json.ints(o, "ids")
     }
 
-        /// Мои переписки на сервере (личные и группы) — JSON как есть.
+        // MARK: - Сообщества, PRISM, «Актуальное»
+
+    /// Сообщество с сервера: создатель — в справочник, номер — как на телефоне.
+    private func group(_ o: JSONObject) -> MemoryGroup? {
+        Directory.remember(Json.object(o, "ownerInfo"))
+        guard var g = codec().groupOf(o) else { return nil }
+        g.ownerId = Directory.local(g.ownerId)
+        return g
+    }
+
+    private func groups(_ o: JSONObject) -> [MemoryGroup] {
+        Json.objects(o, "items").compactMap { group($0) }
+    }
+
+    /// Поиск сообществ (q пусто — самые большие).
+    func communities(_ q: String? = nil) async throws -> [MemoryGroup] {
+        let trimmed = (q ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let query: [String: String] = trimmed.isEmpty ? [:] : ["q": q ?? ""]
+        let o = try await getJson("/v1/communities", query)
+        return groups(o)
+    }
+
+    /// Сообщества, где я состою (и свои).
+    func myCommunities() async throws -> [MemoryGroup] {
+        let o = try await getJson("/v1/me/communities")
+        return groups(o)
+    }
+
+    func community(_ id: Int) async throws -> MemoryGroup {
+        let o = try await getJson("/v1/communities/\(id)")
+        guard let g = group(o) else { throw NetError(.badData, message: "Не сообщество") }
+        return g
+    }
+
+    /// Новое сообщество; ответ — оно же с номером сервера.
+    func createCommunity(_ g: MemoryGroup, key: String) async throws -> MemoryGroup {
+        let o = try await sendJson("POST", "/v1/communities", communityBody(g), key: key)
+        guard let saved = group(o) else { throw NetError(.badData, message: "Не сообщество") }
+        return saved
+    }
+
+    /// Тело сообщества для сервера: без записей и того, что считает сервер.
+    func communityBody(_ g: MemoryGroup) -> JSONObject {
+        var o = codec().groupJson(g)
+        for k in ["posts", "members", "joined", "mine", "muted", "ownerId", "id"] { o.removeValue(forKey: k) }
+        return o
+    }
+
+    func communityPosts(_ id: Int, _ cursor: String?, limit: Int = Api.page) async throws -> Page<Post> {
+        let o = try await getJson("/v1/communities/\(id)/posts", query(cursor, limit))
+        return posts(o)
+    }
+
+    /// PRISM всех, новые сверху.
+    func prisms(_ cursor: String?, limit: Int = Api.page) async throws -> Page<Prism> {
+        let o = try await getJson("/v1/prisms", query(cursor, limit))
+        let c = codec()
+        let items: [Prism] = Json.objects(o, "items").compactMap { c.prismOf($0) }
+        return Page(items: items, next: nextCursor(o))
+    }
+
+    /// «Актуальное» человека и истории в нём (даже старше суток). Номера
+    /// подборок чужих людей — отрицательные: свои подборки на телефоне
+    /// нумеруются с 1, так они не пересекутся.
+    func highlights(_ userId: Int, own: Bool = false) async throws -> (highlights: [Highlight], stories: [Story]) {
+        let o = try await getJson("/v1/users/\(userId)/highlights")
+        let c = codec()
+        var hs: [Highlight] = []
+        var order: [Int64] = []
+        var stories: [Int64: Story] = [:]
+        for (i, item) in Json.objects(o, "items").enumerated() {
+            let h = c.highlightOf(item)
+            let base: Int64 = Int64(userId) * 1000 + Int64(i) + 1
+            let id: Int64 = own ? h.id : -base
+            hs.append(Highlight(id: id, ownerId: Directory.local(h.ownerId), title: h.title, storyIds: h.storyIds, coverId: h.coverId))
+            for so in Json.objects(item, "storyList") {
+                let st = c.storyOf(so)
+                if stories[st.id] == nil { order.append(st.id) }
+                stories[st.id] = st
+            }
+        }
+        let list: [Story] = order.compactMap { stories[$0] }
+        return (highlights: hs, stories: list)
+    }
+
+    /// Мои переписки на сервере (личные и группы) — JSON как есть.
     func chats() async throws -> [JSONObject] {
         let o = try await getJson("/v1/chats")
         return Json.objects(o, "items")
@@ -598,6 +683,160 @@ struct ApiCodec {
         c.replyTo = reply.isEmpty ? nil : reply
         c.sticker = Json.object(o, "sticker").flatMap { attachmentOf($0) }
         return c
+    }
+
+    // MARK: Сообщества
+
+    func backdropJson(_ b: Backdrop) -> JSONObject {
+        ["style": b.style, "photo": b.photo, "dim": b.dim]
+    }
+
+    func backdropOf(_ o: JSONObject) -> Backdrop {
+        var b = Backdrop()
+        b.style = Json.string(o, "style", BackdropStyle.cosmos.id)
+        b.photo = Json.string(o, "photo")
+        b.dim = Json.double(o, "dim", 0.35)
+        return b
+    }
+
+    func productJson(_ p: Product) -> JSONObject {
+        var o: JSONObject = [:]
+        o["id"] = p.id
+        o["title"] = p.title
+        o["price"] = p.price
+        o["description"] = p.description
+        o["photos"] = p.photos.map { attachmentJson($0) }
+        o["category"] = p.category
+        o["inStock"] = p.inStock
+        o["url"] = p.url
+        o["seed"] = p.seed
+        return o
+    }
+
+    func productOf(_ o: JSONObject) -> Product {
+        var p = Product(id: Json.long(o, "id"), title: Json.string(o, "title"))
+        p.price = Json.long(o, "price")
+        p.description = Json.string(o, "description")
+        p.photos = Json.objects(o, "photos").compactMap { attachmentOf($0) }
+        p.category = Json.string(o, "category")
+        p.inStock = Json.bool(o, "inStock", true)
+        p.url = Json.string(o, "url")
+        p.seed = Json.int(o, "seed")
+        return p
+    }
+
+    private func infoJson(_ i: GroupInfo) -> JSONObject {
+        var o: JSONObject = [:]
+        o["about"] = i.about
+        o["website"] = i.website
+        o["phone"] = i.phone
+        o["email"] = i.email
+        o["address"] = i.address
+        o["hours"] = i.hours
+        return o
+    }
+
+    private func infoOf(_ o: JSONObject) -> GroupInfo {
+        var i = GroupInfo()
+        i.about = Json.string(o, "about")
+        i.website = Json.string(o, "website")
+        i.phone = Json.string(o, "phone")
+        i.email = Json.string(o, "email")
+        i.address = Json.string(o, "address")
+        i.hours = Json.string(o, "hours")
+        return i
+    }
+
+    /// Сообщество (группа) — тем же JSON, что у Android (StateStore.Codec.group).
+    func groupJson(_ g: MemoryGroup) -> JSONObject {
+        var o: JSONObject = [:]
+        o["id"] = g.id
+        o["name"] = g.name
+        o["description"] = g.description
+        o["topic"] = g.topic
+        o["members"] = g.members
+        o["seed"] = g.seed
+        o["joined"] = g.joined
+        o["mine"] = g.mine
+        o["muted"] = g.muted
+        o["cover"] = g.cover.map { attachmentJson($0) as Any } ?? NSNull()
+        o["pinnedPostId"] = g.pinnedPostId.map { $0 as Any } ?? NSNull()
+        o["onlyOwnerPosts"] = g.onlyOwnerPosts
+        o["ownerId"] = g.ownerId
+        o["info"] = infoJson(g.info)
+        o["shop"] = g.shop.map { productJson($0) }
+        o["backdrop"] = g.backdrop.map { backdropJson($0) as Any } ?? NSNull()
+        o["accent"] = g.accent
+        o["posts"] = g.posts.map { postJson($0) }
+        return o
+    }
+
+    func groupOf(_ o: JSONObject) -> MemoryGroup? {
+        guard o["id"] != nil, o["name"] is String else { return nil }
+        var g = MemoryGroup(id: Json.int(o, "id"), name: Json.string(o, "name"), description: Json.string(o, "description"),
+                            topic: Json.string(o, "topic"), members: Json.int(o, "members"), seed: Json.int(o, "seed"))
+        g.joined = Json.bool(o, "joined")
+        g.mine = Json.bool(o, "mine")
+        g.posts = Json.objects(o, "posts").compactMap { postOf($0) }
+        // «Без звука» и «пишет только создатель» — необязательные: нет — nil, как в сохранении
+        if Json.bool(o, "muted") { g.muted = true }
+        g.cover = Json.object(o, "cover").flatMap { attachmentOf($0) }
+        g.pinnedPostId = Json.isNull(o, "pinnedPostId") ? nil : Json.long(o, "pinnedPostId")
+        if Json.bool(o, "onlyOwnerPosts") { g.onlyOwnerPosts = true }
+        g.ownerId = Json.int(o, "ownerId")
+        g.info = Json.object(o, "info").map { infoOf($0) } ?? GroupInfo()
+        g.shop = Json.objects(o, "shop").map { productOf($0) }
+        g.backdrop = Json.object(o, "backdrop").map { backdropOf($0) }
+        g.accent = Json.string(o, "accent")
+        return g
+    }
+
+    // MARK: PRISM и «Актуальное»
+
+    func prismJson(_ p: Prism) -> JSONObject {
+        var o: JSONObject = [:]
+        o["id"] = p.id
+        o["author"] = p.author.id
+        o["caption"] = p.caption
+        o["music"] = p.music
+        o["seed"] = p.seed
+        o["likes"] = p.likes
+        o["comments"] = p.comments
+        o["liked"] = p.liked
+        o["durationMs"] = Int64(p.durationMs)
+        o["saved"] = p.saved
+        o["video"] = p.video.map { attachmentJson($0) as Any } ?? NSNull()
+        o["cover"] = p.cover.map { attachmentJson($0) as Any } ?? NSNull()
+        o["createdAt"] = Json.ms(p.createdAt)
+        o["commentList"] = p.commentList.map { commentJson($0) }
+        o["outboxKey"] = p.outboxKey
+        return o
+    }
+
+    /// PRISM с сервера: автор — в справочник (authorInfo).
+    func prismOf(_ o: JSONObject) -> Prism? {
+        guard o["id"] != nil, o["author"] != nil, o["caption"] is String else { return nil }
+        Directory.remember(Json.object(o, "authorInfo"))
+        var p = Prism(id: Json.long(o, "id"), author: person(Json.int(o, "author")), caption: Json.string(o, "caption"),
+                      music: Json.string(o, "music"), seed: Json.int(o, "seed"), likes: Json.int(o, "likes"),
+                      comments: Json.int(o, "comments"))
+        p.liked = Json.bool(o, "liked")
+        p.durationMs = Json.double(o, "durationMs", 9_000)
+        p.saved = Json.bool(o, "saved")
+        p.commentList = Json.objects(o, "commentList").compactMap { commentOf($0) }
+        p.video = Json.object(o, "video").flatMap { attachmentOf($0) }
+        p.cover = Json.object(o, "cover").flatMap { attachmentOf($0) }
+        p.createdAt = Json.date(Json.long(o, "createdAt"))
+        p.outboxKey = Json.string(o, "outboxKey")
+        return p
+    }
+
+    /// Подборка «Актуального»: id, owner, title, stories, cover — как у Android.
+    func highlightOf(_ o: JSONObject) -> Highlight {
+        let stories: [Int64] = (o["stories"] as? [Any] ?? []).compactMap { ($0 as? NSNumber)?.int64Value }
+        let cover = Json.long(o, "cover")
+        return Highlight(id: Json.long(o, "id"), ownerId: Json.int(o, "owner"), title: Json.string(o, "title"),
+                         storyIds: stories, coverId: cover == 0 ? nil : cover)
     }
 
     // MARK: Истории
