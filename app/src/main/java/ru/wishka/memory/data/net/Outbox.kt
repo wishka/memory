@@ -9,6 +9,12 @@ enum class OpKind(val id: String) {
     SendMessage("message"),
     /** История: payload — Story в JSON, вложение — после загрузки. */
     CreateStory("story"),
+    /** Запись в сообществе: payload — {community, post}; вложения — после загрузки. */
+    CreateGroupPost("group-post"),
+    /** PRISM: payload — Prism в JSON; видео и обложка — после загрузки. */
+    CreatePrism("prism"),
+    /** Своё сообщество целиком (PATCH): payload — Group в JSON; target — его номер. */
+    SaveCommunity("community"),
     /** Любой запрос: группы, «прочитано», профиль. payload — {method, path, body, coalesce}. */
     Call("call");
 
@@ -65,7 +71,7 @@ class Outbox(private val cache: OfflineCache, private val clock: () -> Long) {
 
     fun all(): List<OutboxOp> = cache.keys(CacheKeys.OP).mapNotNull { k ->
         cache.get(k)?.let { runCatching { OutboxOp.of(JSONObject(it.value)) }.getOrNull() }
-    }
+    }.sortedBy { it.createdAt }
 
     val count: Int get() = cache.keys(CacheKeys.OP).size
 
@@ -81,6 +87,11 @@ class Outbox(private val cache: OfflineCache, private val clock: () -> Long) {
     }
 
     fun remove(key: String) = cache.remove(cacheKey(key))
+
+    /** Ещё не ушедшее действие — с новым содержимым (правка записи до отправки). */
+    fun replacePayload(key: String, payload: String) {
+        get(key)?.let { save(it.copy(payload = payload)) }
+    }
 
     private fun coalesceOf(op: OutboxOp): String? =
         if (op.kind != OpKind.Call) null else runCatching { JSONObject(op.payload).optString("coalesce").ifEmpty { null } }.getOrNull()
@@ -108,10 +119,13 @@ class Outbox(private val cache: OfflineCache, private val clock: () -> Long) {
         var sent = 0
         var waiting = 0
         var failed = 0
-        val blockedChats = HashSet<Long>()
+        // По порядку: сообщения одной переписки и сохранения одного сообщества
+        // (сообщество уходит целиком — старое не должно обогнать новое)
+        val blocked = HashSet<String>()
         for (op in all()) {
-            val chatOrdered = op.kind == OpKind.SendMessage
-            if (chatOrdered && op.target in blockedChats) { waiting++; continue }
+            val chatOrdered = op.kind == OpKind.SendMessage || op.kind == OpKind.SaveCommunity
+            val lane = op.kind.id + ":" + op.target
+            if (chatOrdered && lane in blocked) { waiting++; continue }
             if (failedDeps(op)) {
                 remove(op.key)
                 failed++
@@ -120,7 +134,7 @@ class Outbox(private val cache: OfflineCache, private val clock: () -> Long) {
             }
             if (op.nextAt > now || !ready(op)) {
                 waiting++
-                if (chatOrdered) blockedChats += op.target
+                if (chatOrdered) blocked += lane
                 continue
             }
             try {
@@ -139,7 +153,7 @@ class Outbox(private val cache: OfflineCache, private val clock: () -> Long) {
                 if (err.retryable) {
                     save(op.copy(attempts = op.attempts + 1, nextAt = now + Backoff.delayMs(op.attempts, retryAfterMs = err.retryAfterMs), error = err.kind.name))
                     waiting++
-                    if (chatOrdered) blockedChats += op.target
+                    if (chatOrdered) blocked += lane
                     if (err.kind == NetError.Kind.Offline) {
                         return FlushResult(sent, count, failed, offline = true)
                     }

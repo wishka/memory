@@ -290,6 +290,73 @@ class Api(
         return c.messageOf(sendJson("POST", "/v1/chats/$chatId/messages", c.messageJson(message), key))
     }
 
+    // ── Сообщества, PRISM, «Актуальное» ──────────────────────────────
+
+    /** Сообщество с сервера: создатель — в справочник, номер — как на телефоне. */
+    private fun group(o: JSONObject): ru.wishka.memory.data.Group {
+        Directory.remember(o.optJSONObject("ownerInfo"))
+        val g = codec().groupOf(o)
+        return g.copy(ownerId = Directory.local(g.ownerId))
+    }
+
+    private fun groups(o: JSONObject): List<ru.wishka.memory.data.Group> {
+        val arr = o.optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { group(it) }.getOrNull() } }
+    }
+
+    /** Поиск сообществ (q == null — самые большие). */
+    suspend fun communities(q: String? = null): List<ru.wishka.memory.data.Group> =
+        groups(getJson("/v1/communities", if (q.isNullOrBlank()) emptyMap() else mapOf("q" to q)))
+
+    /** Сообщества, где я состою (и свои). */
+    suspend fun myCommunities(): List<ru.wishka.memory.data.Group> = groups(getJson("/v1/me/communities"))
+
+    suspend fun community(id: Int): ru.wishka.memory.data.Group = group(getJson("/v1/communities/$id"))
+
+    /** Новое сообщество; ответ — оно же с номером сервера. */
+    suspend fun createCommunity(g: ru.wishka.memory.data.Group, key: String): ru.wishka.memory.data.Group {
+        val body = communityBody(g)
+        return group(sendJson("POST", "/v1/communities", body, key))
+    }
+
+    /** Тело сообщества для сервера: без записей и того, что считает сервер. */
+    fun communityBody(g: ru.wishka.memory.data.Group): JSONObject = codec().groupJson(g).apply {
+        listOf("posts", "members", "joined", "mine", "muted", "ownerId", "id").forEach { remove(it) }
+    }
+
+    suspend fun communityPosts(id: Int, cursor: String?, limit: Int = PAGE): Page<Post> =
+        posts(getJson("/v1/communities/$id/posts", query(cursor, limit)))
+
+    /** PRISM всех, новые сверху. */
+    suspend fun prisms(cursor: String?, limit: Int = PAGE): Page<ru.wishka.memory.data.Prism> {
+        val o = getJson("/v1/prisms", query(cursor, limit))
+        val c = codec()
+        val arr = o.optJSONArray("items") ?: JSONArray()
+        val items = (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { c.prismOf(it) }.getOrNull() } }
+        return Page(items, o.optString("next").ifEmpty { null }.takeUnless { o.isNull("next") })
+    }
+
+    /**
+     * «Актуальное» человека и истории в нём (даже старше суток). Номера
+     * подборок чужих людей — отрицательные: свои подборки на телефоне
+     * нумеруются с 1, так они не пересекутся.
+     */
+    suspend fun highlights(userId: Int, own: Boolean = false): Pair<List<ru.wishka.memory.data.Highlight>, List<ru.wishka.memory.data.Story>> {
+        val arr = getJson("/v1/users/$userId/highlights").optJSONArray("items") ?: JSONArray()
+        val c = codec()
+        val hs = ArrayList<ru.wishka.memory.data.Highlight>()
+        val stories = LinkedHashMap<Long, ru.wishka.memory.data.Story>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val h = runCatching { c.highlightOf(o) }.getOrNull() ?: continue
+            val id = if (own) h.id else -(userId.toLong() * 1000 + i + 1)
+            hs += h.copy(id = id, ownerId = Directory.local(h.ownerId))
+            val list = o.optJSONArray("storyList") ?: JSONArray()
+            for (j in 0 until list.length()) list.optJSONObject(j)?.let { so -> runCatching { c.storyOf(so) }.getOrNull()?.let { stories[it.id] = it } }
+        }
+        return hs to stories.values.toList()
+    }
+
     companion object {
         const val PAGE = 20
         const val JSON = "application/json; charset=utf-8"

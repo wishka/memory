@@ -302,6 +302,8 @@ struct UiState: Equatable {
     var explorePaging = FeedPaging()
     /// Настоящий сервер (а не встроенный демо): есть плашка «Войдите на сервер», удаление там.
     var serverMode: Bool = false
+    /// Записи людей с сервера на их страницах (по номеру человека).
+    var personPosts: [Int: [Post]] = [:]
     /// Загрузки фото и видео: что идёт, что ждёт, что на паузе.
     var uploads: [UploadJob] = []
     /// Сколько действий ждут отправки.
@@ -402,7 +404,12 @@ struct UiState: Equatable {
     var openPerson: User? { openPersonId.flatMap { Demo.person($0) } }
     var openGroup: MemoryGroup? { groups.first { $0.id == openGroupId } }
     var myGroups: [MemoryGroup] { groups.filter { $0.joined } }
-    func postsOf(_ userId: Int) -> [Post] { posts.filter { $0.author.id == userId } }
+    func postsOf(_ userId: Int) -> [Post] {
+        let own: [Post] = posts.filter { $0.author.id == userId }
+        let ids = Set(own.map(\.id))
+        let more: [Post] = (personPosts[userId] ?? []).filter { !ids.contains($0.id) }
+        return own + more
+    }
     var openChat: Chat? { chats.first { $0.id == openChatId } }
     /// Счётчик на вкладке «Чаты»: переписки без звука и запросы на переписку не считаются.
     var unreadTotal: Int { chats.filter { !$0.muted && !$0.request }.reduce(0) { $0 + $1.unread } }
@@ -510,7 +517,11 @@ struct UiState: Equatable {
             if let post = g.posts.first(where: { $0.id == id }) { return post }
         }
         if let post = olderFeed.first(where: { $0.id == id }) { return post }
-        return explore.first { $0.id == id }
+        if let post = explore.first(where: { $0.id == id }) { return post }
+        for list in personPosts.values {
+            if let post = list.first(where: { $0.id == id }) { return post }
+        }
+        return nil
     }
 
     /// «Интересное» без заблокированных, без друзей и без того, что уже в ленте.
@@ -663,6 +674,13 @@ final class AppModel {
     // MARK: - Навигация
 
     func selectTab(_ tab: AppTab) {
+        if serverMode && demoReplies {
+            if tab == .prism {
+                Task { @MainActor [weak self] in try? await self?.syncPrisms() }
+            } else if tab == .groups {
+                Task { @MainActor [weak self] in try? await self?.syncCommunities() }
+            }
+        }
         state.openChatId = tab == .chats ? state.openChatId : nil
         state.openGroupId = tab == .groups ? state.openGroupId : nil
         state.groupSettingsOpen = false
@@ -908,6 +926,43 @@ final class AppModel {
         }
         state.personSection = nil
         state.openPersonId = userId
+        if serverMode && demoReplies && isServerPerson(userId) {
+            Task { @MainActor [weak self] in await self?.loadPerson(userId) }
+        }
+    }
+
+    /// Страница человека с сервера: его записи и «Актуальное».
+    @MainActor func loadPerson(_ userId: Int) async {
+        let n = net
+        if let hs = try? await n.api.highlights(userId) {
+            var s = state
+            let known = Set(s.stories.map(\.id))
+            let others: [Highlight] = s.highlights.filter { $0.ownerId != userId }
+            s.highlights = others + hs.highlights
+            s.stories += hs.stories.filter { !known.contains($0.id) }
+            state = s
+            await fetchStoryMedia(hs.stories)
+        }
+        guard let page = try? await n.api.userPosts(userId, nil, limit: 30) else { return }
+        state.personPosts[userId] = withLocalMedia(page.items)
+        peopleChanged()
+    }
+
+    /// Фото и видео историй с сервера — скачать и показывать копию.
+    @MainActor private func fetchStoryMedia(_ stories: [Story]) async {
+        let n = net
+        for st in stories {
+            guard let a = st.media, n.isRemote(a.fileName) else { continue }
+            guard let f = try? await n.fetchMedia(a.fileName, ext: AppModel.mediaExt(a)) else { continue }
+            let ref = n.mediaRef(f)
+            let storyId = st.id
+            state.stories = state.stories.map { x -> Story in
+                guard x.id == storyId else { return x }
+                var y = x
+                y.media?.fileName = ref
+                return y
+            }
+        }
     }
 
     func closePerson() {
@@ -1177,8 +1232,20 @@ final class AppModel {
         edited.media = kept
         edited.editedAt = clock()
         Telemetry.track(.postEdited)
+        // На сервере — текст и какие вложения остались (по их номерам)
+        if !post.outboxKey.isEmpty {
+            // Ещё в очереди — уйдёт уже исправленной
+            net.updateQueuedPost(post.outboxKey, edited)
+        } else if isServerPost(postId) {
+            var body: JSONObject = [:]
+            body["text"] = clean
+            body["keep"] = kept.map(\.id)
+            net.queueCall("PATCH", "/v1/posts/\(postId)", body: body, coalesce: "edit:\(postId)")
+            kickNet()
+        }
         var s = state
         s.posts = s.posts.map { $0.id == postId ? edited : $0 }
+        s.olderFeed = s.olderFeed.map { $0.id == postId ? edited : $0 }
         s.groups = s.groups.map { group in
             guard group.posts.contains(where: { $0.id == postId }) else { return group }
             var g = group
@@ -1399,10 +1466,12 @@ final class AppModel {
     /// Удалить свою историю — и из «Актуального». Файл удаляет экран.
     func deleteStory(_ storyId: Int64) {
         let me = state.me.id
-        if serverStoryIds.contains(storyId) {
+        let onServer = serverMode && storyId >= Self.serverIdBase
+        if serverStoryIds.contains(storyId) || onServer {
             net.queueCall("DELETE", "/v1/stories/\(storyId)")
             kickNet()
         }
+        let before: [Highlight] = state.highlights.filter { $0.ownerId == me }
         var s = state
         s.stories.removeAll { $0.id == storyId && $0.authorId == me }
         s.highlights = s.highlights.map { h -> Highlight in
@@ -1413,6 +1482,10 @@ final class AppModel {
             return x
         }.filter { $0.ownerId != me || !$0.storyIds.isEmpty }
         state = s
+        let after: [Highlight] = state.highlights.filter { $0.ownerId == me }
+        let left = Set(after.map(\.id))
+        for h in before where !left.contains(h.id) { deletedHighlights.insert(h.id) }
+        if after != before { pushHighlights() }
         guard let v = state.storyViewer else { return }
         let list = storiesOf(v.author)
         if list.isEmpty {
@@ -1462,7 +1535,13 @@ final class AppModel {
         let others = list.filter { $0.story.authorId != me && !blocked.contains($0.story.authorId) }
         let seen: [Int64] = others.filter(\.seen).map(\.story.id)
         var s = state
-        let kept: [Story] = s.stories.filter { $0.authorId == me || !isServerPerson($0.authorId) }
+        // Истории из «Актуального» остаются, даже если старше суток
+        let inHighlights: Set<Int64> = Set(s.highlights.flatMap(\.storyIds))
+        let fresh: Set<Int64> = Set(others.map(\.story.id))
+        let kept: [Story] = s.stories.filter { st in
+            if st.authorId == me || !isServerPerson(st.authorId) { return true }
+            return inHighlights.contains(st.id) && !fresh.contains(st.id)
+        }
         let refreshed: [Story] = kept.map { st -> Story in
             guard let srv = mine[st.id] else { return st }
             var x = st
@@ -1473,18 +1552,67 @@ final class AppModel {
         s.seenStories.formUnion(seen)
         state = s
         peopleChanged()
-        for item in others {
-            guard let a = item.story.media, n.isRemote(a.fileName) else { continue }
-            guard let f = try? await n.fetchMedia(a.fileName, ext: AppModel.mediaExt(a)) else { continue }
-            let ref = n.mediaRef(f)
-            let storyId = item.story.id
-            state.stories = state.stories.map { st -> Story in
-                guard st.id == storyId else { return st }
-                var x = st
-                x.media?.fileName = ref
-                return x
+        await fetchStoryMedia(others.map(\.story))
+    }
+
+    /// Своё «Актуальное» — на новый телефон: если здесь подборок нет, а
+    /// на сервере есть, они и их истории приходят оттуда.
+    @MainActor func syncMyHighlights() async throws {
+        let n = net
+        let serverId = n.session.userId
+        if !serverMode || serverId <= 0 { return }
+        let hs = try await n.api.highlights(serverId, own: true)
+        var s = state
+        let me = s.me.id
+        let mine = Set(s.highlights.filter { $0.ownerId == me }.map(\.id))
+        let known = Set(s.stories.map(\.id))
+        let deleted = deletedHighlights
+        s.highlights += hs.highlights.filter { !mine.contains($0.id) && !deleted.contains($0.id) }
+        s.stories += hs.stories.filter { !known.contains($0.id) }
+        state = s
+        // Новые свои номера — после пришедших, чтобы не совпали
+        if let top = hs.highlights.map(\.id).max() { nextId = max(nextId, top + 1) }
+        highlightsPulled = true
+        await fetchStoryMedia(hs.stories)
+    }
+
+    /// Своё «Актуальное» с сервера уже забрали: теперь можно отправлять своё
+    /// (иначе пустой список здесь стёр бы его там).
+    @ObservationIgnored private var highlightsPulled = false
+
+    /// «Актуальное» — на сервер (целиком, важно последнее): только истории,
+    /// которые уже там; ещё не ушедшие догонят после (adoptServerIds).
+    private func pushHighlights() {
+        if !serverMode || !net.session.signedIn { return }
+        // Сначала — что уже на сервере (иначе пустой список здесь стёр бы его там)
+        if !highlightsPulled {
+            if !demoReplies { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.syncMyHighlights()
+                } catch {
+                    return
+                }
+                self.pushHighlights()
             }
+            return
         }
+        let me = state.me.id
+        var items: [JSONObject] = []
+        for h in state.highlights where h.ownerId == me {
+            let ids: [Int64] = h.storyIds.filter { $0 >= Self.serverIdBase }
+            if ids.isEmpty { continue }
+            var o: JSONObject = [:]
+            o["id"] = h.id
+            o["title"] = h.title
+            o["stories"] = ids
+            o["cover"] = h.coverId
+            items.append(o)
+        }
+        let body: JSONObject = ["items": items]
+        net.queueCall("PUT", "/v1/me/highlights", body: body, coalesce: "highlights")
+        kickNet()
     }
 
     /// Новая подборка «Актуального» из своих историй. Ответ — её номер или nil.
@@ -1499,6 +1627,7 @@ final class AppModel {
         let clean = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Stories.maxTitle))
         let h = Highlight(id: newId(), ownerId: s.me.id, title: clean.isEmpty ? t("Актуальное") : clean, storyIds: mine)
         state.highlights.append(h)
+        pushHighlights()
         return h.id
     }
 
@@ -1531,7 +1660,12 @@ final class AppModel {
     func deleteHighlight(_ id: Int64) {
         let me = state.me.id
         state.highlights.removeAll { $0.id == id && $0.ownerId == me }
+        deletedHighlights.insert(id)
+        pushHighlights()
     }
+
+    /// Свои подборки, удалённые здесь: с сервера их обратно не забираем.
+    @ObservationIgnored private var deletedHighlights = Set<Int64>()
 
     /// Изменить свою подборку; опустевшая — убирается.
     private func updateHighlight(_ id: Int64, _ change: (inout Highlight) -> Void) {
@@ -1541,6 +1675,9 @@ final class AppModel {
             if x.id == id && x.ownerId == me { change(&x) }
             return x
         }.filter { $0.ownerId != me || !$0.storyIds.isEmpty }
+        // Опустела и ушла — тоже удалена
+        if !state.highlights.contains(where: { $0.id == id && $0.ownerId == me }) { deletedHighlights.insert(id) }
+        pushHighlights()
     }
 
     /// Демо-истории друзей: у кого нет свежей — появляется; у друзей без
@@ -2279,6 +2416,12 @@ final class AppModel {
     /// Номера сервера — с 10 000 000: номера телефона (newId) меньше.
     static let serverIdBase: Int64 = 10_000_000
 
+    /// Номера сообществ сервера — больше 50 000 000 (у демо-групп номера маленькие).
+    static let communityIdBase: Int = 50_000_000
+
+    /// Сообщество на сервере.
+    private func isServerGroup(_ groupId: Int) -> Bool { serverMode && groupId > Self.communityIdBase }
+
     /// Комментарий уже на сервере (номер сервера), а не только что написан здесь.
     private func isServerComment(_ commentId: Int64) -> Bool { commentId >= Self.serverIdBase }
 
@@ -2613,6 +2756,16 @@ final class AppModel {
                 return p
             }
         }
+        let inPerson = state.personPosts.values.contains { l in l.contains { $0.id == postId } }
+        if inPerson {
+            state.personPosts = state.personPosts.mapValues { list in
+                list.map { post in
+                    var p = post
+                    if p.id == postId { change(&p) }
+                    return p
+                }
+            }
+        }
         state.groups = state.groups.map { group in
             var g = group
             g.posts = g.posts.map { post in
@@ -2633,6 +2786,7 @@ final class AppModel {
     func openPrismComments(_ prismId: Int64) {
         state.commentsPostId = nil
         state.commentsPrismId = prismId
+        loadPrismComments(prismId)
     }
 
     func closeComments() {
@@ -2743,8 +2897,19 @@ final class AppModel {
         let following: Set<Int> = Set(followingPeople.map(\.id))
         let sent: Set<Int> = Set(sentPeople.map(\.id))
         let incoming: [Int] = incomingPeople.map(\.id)
-        let blockedRaw: [Int] = (try? await n.api.blocked()) ?? []
-        let blockedOnServer: Set<Int> = Set(blockedRaw.map { Directory.local($0) })
+        // Не пришёл список — чёрный список не трогаем
+        let blockedRaw: [Int]? = try? await n.api.blocked()
+        var blockedOnServer: Set<Int>? = blockedRaw.map { raw in Set(raw.map { Directory.local($0) }) }
+        // Блокировки, что ещё в очереди, — важнее ответа сервера (он о них пока не знает)
+        if blockedOnServer != nil {
+            for (id, on) in pendingBlocks() {
+                if on {
+                    blockedOnServer?.insert(id)
+                } else {
+                    blockedOnServer?.remove(id)
+                }
+            }
+        }
         var s = state
         let keepFollowing: Set<Int> = s.following.filter { !isServerPerson($0) }
         let keepSent: Set<Int> = s.sentRequests.filter { !isServerPerson($0) }
@@ -2755,10 +2920,26 @@ final class AppModel {
         s.sentRequests = keepSent.union(sent)
         s.followRequests = keepIncoming + newIncoming
         // Чёрный список людей с сервера — как на сервере (разблокировали на другом телефоне — и здесь)
-        let keepBlocked: Set<Int> = s.blocked.filter { !isServerPerson($0) }
-        s.blocked = keepBlocked.union(blockedOnServer)
+        if let blockedOnServer {
+            let keepBlocked: Set<Int> = s.blocked.filter { !isServerPerson($0) }
+            s.blocked = keepBlocked.union(blockedOnServer)
+        }
         state = s
         peopleChanged()
+    }
+
+    /// Блокировки в очереди: номер человека → true (заблокировать) или false (разблокировать).
+    /// Позднее действие важнее раннего.
+    private func pendingBlocks() -> [Int: Bool] {
+        var out: [Int: Bool] = [:]
+        for op in net.outbox.all() where op.kind == .call {
+            guard let o = Json.parse(op.payload) else { continue }
+            let c = Json.string(o, "coalesce")
+            if !c.hasPrefix("block:") { continue }
+            guard let id = Int(c.dropFirst(6)) else { continue }
+            out[id] = Json.string(o, "method") == "PUT"
+        }
+        return out
     }
 
     /// Таймеры демо-ответа на заявки: один на человека.
@@ -3700,6 +3881,9 @@ final class AppModel {
             try? await syncChats()
             try? await syncFollows()
             try? await syncStories()
+            if (try? await syncMyHighlights()) != nil { pushHighlights() }
+            try? await syncCommunities()
+            try? await syncPrisms()
             await refreshExplore()
         }
         if let token = pushToken { setPushToken(token) }
@@ -3888,6 +4072,28 @@ final class AppModel {
                 return x
             }
         }
+        let stalePrisms = state.prisms.contains { !$0.outboxKey.isEmpty && !keys.contains($0.outboxKey) }
+        if stalePrisms {
+            state.prisms = state.prisms.map { (p: Prism) -> Prism in
+                guard !p.outboxKey.isEmpty, !keys.contains(p.outboxKey) else { return p }
+                var x = p
+                x.outboxKey = ""
+                return x
+            }
+        }
+        let staleGroups = state.groups.contains { g in g.posts.contains { !$0.outboxKey.isEmpty && !keys.contains($0.outboxKey) } }
+        if staleGroups {
+            state.groups = state.groups.map { (g: MemoryGroup) -> MemoryGroup in
+                var x = g
+                x.posts = g.posts.map { (p: Post) -> Post in
+                    guard !p.outboxKey.isEmpty, !keys.contains(p.outboxKey) else { return p }
+                    var y = p
+                    y.outboxKey = ""
+                    return y
+                }
+                return x
+            }
+        }
         let staleChats = state.chats.contains { c in !chatsWithOps.contains(c.id) && c.messages.contains(where: \.pending) }
         if staleChats {
             state.chats = state.chats.map { (c: Chat) -> Chat in
@@ -3983,6 +4189,8 @@ final class AppModel {
         feedPager = net.feedPager()
         explorePager = net.explorePager()
         serverStoryIds.removeAll()
+        highlightsPulled = false
+        deletedHighlights.removeAll()
         state.serverMode = false
         connectRealtime()
     }
@@ -4011,6 +4219,42 @@ final class AppModel {
         }
     }
 
+    /// Скачанная копия файла с сервера, если она уже есть; нет — как было.
+    private func downloadedCopy(_ a: Attachment) -> Attachment {
+        let n = net
+        if !n.isRemote(a.fileName) { return a }
+        let f = n.mediaFile(a.fileName, ext: AppModel.mediaExt(a))
+        let attrs = try? FileManager.default.attributesOfItem(atPath: f.path)
+        let size: Int64 = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        if size <= 0 { return a }
+        var x = a
+        x.fileName = n.mediaRef(f)
+        return x
+    }
+
+    private func downloadedCopy(_ p: Post) -> Post {
+        let n = net
+        if !p.media.contains(where: { n.isRemote($0.fileName) }) { return p }
+        var x = p
+        x.media = p.media.map { downloadedCopy($0) }
+        return x
+    }
+
+    /// Записи групп и страниц людей: скачанные файлы — вместо адресов на сервере.
+    private func swapDownloaded() {
+        let n = net
+        var s = state
+        s.groups = s.groups.map { g -> MemoryGroup in
+            let remote = g.posts.contains { p in p.media.contains { n.isRemote($0.fileName) } }
+            if !remote { return g }
+            var x = g
+            x.posts = g.posts.map { downloadedCopy($0) }
+            return x
+        }
+        s.personPosts = s.personPosts.mapValues { list in list.map { downloadedCopy($0) } }
+        state = s
+    }
+
     private func localCopy(_ a: Attachment) -> Attachment {
         let n = net
         if !n.isRemote(a.fileName) { return a }
@@ -4037,6 +4281,7 @@ final class AppModel {
             if ok && n === self.net {
                 self.publishFeed()
                 self.publishExplore()
+                self.swapDownloaded()
             }
             // Не вышло (нет сети) — попробуем при следующем показе ленты
             if !ok { self.fetchingMedia.remove(path) }
@@ -4135,9 +4380,10 @@ final class AppModel {
             let op = item.op
             switch op.kind {
             case .createPost: clearOutboxKey(op.key)
+            case .createGroupPost: clearGroupPostKey(op.key)
             case .sendMessage: markSent(op, answer: item.answer)
-            // Номер сервера у записи и истории — в adoptServerIds ниже
-            case .createStory, .like, .unlike, .call: break
+            // Номер сервера у записи, истории и PRISM — в adoptServerIds ниже
+            case .createStory, .createPrism, .saveCommunity, .like, .unlike, .call: break
             }
         }
         for job in r.uploads where job.state == .done {
@@ -4151,7 +4397,12 @@ final class AppModel {
             case .sendMessage:
                 markDelivered(op)
                 state.netNotice = t("Сообщение не отправлено: вложение не нашлось.")
-            case .createStory, .like, .unlike, .call: break
+            case .createGroupPost:
+                clearGroupPostKey(op.key)
+                state.netNotice = t("Запись не отправлена: файл не нашёлся. Она осталась только на этом телефоне.")
+            case .createPrism:
+                state.netNotice = t("PRISM не отправлен: видео не нашлось. Он остался только на этом телефоне.")
+            case .createStory, .saveCommunity, .like, .unlike, .call: break
             }
         }
         let status: NetStatus
@@ -4189,9 +4440,16 @@ final class AppModel {
         if sent.isEmpty || !serverMode { return }
         var posts: [Int64: Int64] = [:]
         var stories: [Int64: Int64] = [:]
+        var groupPosts: [Int64: Int64] = [:]
+        var prisms: [Int64: Int64] = [:]
         for item in sent {
-            if item.kind == .createPost { posts[item.localId] = item.serverId }
-            if item.kind == .createStory { stories[item.localId] = item.serverId }
+            switch item.kind {
+            case .createPost: posts[item.localId] = item.serverId
+            case .createStory: stories[item.localId] = item.serverId
+            case .createGroupPost: groupPosts[item.localId] = item.serverId
+            case .createPrism: prisms[item.localId] = item.serverId
+            default: break
+            }
         }
         serverStoryIds.formUnion(stories.values)
         let me = state.me.id
@@ -4206,7 +4464,65 @@ final class AppModel {
             guard st.authorId == me, let id = stories[st.id] else { return st }
             return Self.renumbered(st, id)
         }
+        // В «Актуальном» — тоже номер сервера
+        if !stories.isEmpty {
+            s.highlights = s.highlights.map { h -> Highlight in
+                guard h.ownerId == me else { return h }
+                var x = h
+                x.storyIds = h.storyIds.map { stories[$0] ?? $0 }
+                x.coverId = stories[h.coverId] ?? h.coverId
+                return x
+            }
+        }
+        if !groupPosts.isEmpty {
+            s.groups = s.groups.map { g -> MemoryGroup in
+                var x = g
+                let renumbered: [Post] = g.posts.map { p -> Post in
+                    guard p.author.id == me, let id = groupPosts[p.id] else { return p }
+                    var y = Self.renumbered(p, id)
+                    y.outboxKey = ""
+                    return y
+                }
+                x.posts = Self.distinct(renumbered)
+                return x
+            }
+        }
+        if !prisms.isEmpty {
+            let renumbered: [Prism] = s.prisms.map { p -> Prism in
+                guard p.author.id == me, let id = prisms[p.id] else { return p }
+                var x = Self.renumbered(p, id)
+                x.outboxKey = ""
+                return x
+            }
+            var seenPrisms = Set<Int64>()
+            s.prisms = renumbered.filter { seenPrisms.insert($0.id).inserted }
+            if let start = s.prismStartId, let id = prisms[start] { s.prismStartId = id }
+        }
         state = s
+        let serverStories = Set(stories.values)
+        let touched = state.highlights.contains { h in h.ownerId == me && h.storyIds.contains { serverStories.contains($0) } }
+        if touched { pushHighlights() }
+    }
+
+    /// Без повторов по номеру (первая остаётся).
+    private static func distinct(_ posts: [Post]) -> [Post] {
+        var seen = Set<Int64>()
+        return posts.filter { seen.insert($0.id).inserted }
+    }
+
+    /// Тот же PRISM с другим номером.
+    private static func renumbered(_ p: Prism, _ id: Int64) -> Prism {
+        var x = Prism(id: id, author: p.author, caption: p.caption, music: p.music, seed: p.seed,
+                      likes: p.likes, comments: p.comments)
+        x.liked = p.liked
+        x.durationMs = p.durationMs
+        x.saved = p.saved
+        x.commentList = p.commentList
+        x.video = p.video
+        x.cover = p.cover
+        x.createdAt = p.createdAt
+        x.outboxKey = p.outboxKey
+        return x
     }
 
     /// Та же запись с другим номером (номер — let).
@@ -4240,6 +4556,22 @@ final class AppModel {
         x.closeFriends = st.closeFriends
         x.views = st.views
         return x
+    }
+
+    /// Запись в сообществе ушла (или уже не уйдёт) — больше не «отправляется».
+    private func clearGroupPostKey(_ key: String) {
+        let has = state.groups.contains { g in g.posts.contains { $0.outboxKey == key } }
+        if !has { return }
+        state.groups = state.groups.map { g -> MemoryGroup in
+            var x = g
+            x.posts = g.posts.map { p -> Post in
+                guard p.outboxKey == key else { return p }
+                var y = p
+                y.outboxKey = ""
+                return y
+            }
+            return x
+        }
     }
 
     private func clearOutboxKey(_ key: String) {
@@ -4359,6 +4691,7 @@ final class AppModel {
         if let op = net.outbox.get(job.owner) {
             net.outbox.remove(op.key)
             if op.kind == .createPost { clearOutboxKey(op.key) }
+            if op.kind == .createGroupPost { clearGroupPostKey(op.key) }
             if op.kind == .sendMessage { markDelivered(op) }
         }
         refreshNetCounters()
@@ -4384,12 +4717,95 @@ final class AppModel {
         updatePrism(prismId) { p in
             p.commentList = p.commentList.map { Self.flipLike($0, commentId) }
         }
+        if !isServerPost(prismId) || !isServerComment(commentId) { return }
+        let comment = findPrismIn(prismId)?.commentList.first { $0.id == commentId }
+        guard let liked = comment?.liked else { return }
+        net.queueCall(liked ? "PUT" : "DELETE", "/v1/comments/\(commentId)/like", coalesce: "clike:\(commentId)")
+        kickNet()
     }
+
+    private func findPrismIn(_ id: Int64) -> Prism? { state.prisms.first { $0.id == id } }
 
     func togglePrismLike(_ prismId: Int64) {
         updatePrism(prismId) { p in
             p.likes += p.liked ? -1 : 1
             p.liked.toggle()
+        }
+        if isServerPost(prismId), let p = findPrismIn(prismId) { net.queueLike(prismId, liked: p.liked) }
+        kickNet()
+    }
+
+    /// Когда PRISM с сервера сверялись в последний раз (мс).
+    @ObservationIgnored private var prismsSyncedAt: Int64 = 0
+
+    /// PRISM с сервера: новые ролики — когда скачано видео (и обложка);
+    /// удалённые на сервере — уходят. Свои ещё не отправленные — остаются.
+    @MainActor func syncPrisms() async throws {
+        let now = nowMs()
+        if !serverMode || now - prismsSyncedAt < 30_000 { return }
+        prismsSyncedAt = now
+        let n = net
+        let page = try await n.api.prisms(nil, limit: 30)
+        let blocked = state.blocked
+        let fresh: [Prism] = page.items.filter { !blocked.contains($0.author.id) }
+        var ids: [Int64: Prism] = [:]
+        for p in fresh { ids[p.id] = p }
+        let me = state.me.id
+        // Удалённым считаем только то, что должно было попасть в эту страницу (не старее её конца);
+        // сохранённые в закладки и свои — остаются
+        let times: [Int64] = page.items.map { Json.ms($0.createdAt) }
+        let oldest: Int64 = page.next == nil ? Int64.min : (times.min() ?? Int64.min)
+        let kept: [Prism] = state.prisms.filter { p in
+            if !isServerPost(p.id) || ids[p.id] != nil { return true }
+            return p.author.id == me || p.saved || Json.ms(p.createdAt) < oldest
+        }
+        state.prisms = kept.map { p -> Prism in
+            guard let f = ids[p.id] else { return p }
+            var x = p
+            x.likes = f.likes
+            x.liked = f.liked
+            x.comments = f.comments
+            x.caption = f.caption
+            return x
+        }
+        peopleChanged()
+        for p in fresh {
+            if state.prisms.contains(where: { $0.id == p.id }) { continue }
+            guard let local = await downloadedPrism(p, n) else { continue }
+            if state.prisms.contains(where: { $0.id == p.id }) { continue }
+            let all: [Prism] = state.prisms + [local]
+            state.prisms = all.sorted { Json.ms($0.createdAt) > Json.ms($1.createdAt) }
+        }
+    }
+
+    /// PRISM с сервера со скачанными видео и обложкой; видео не скачалось — nil.
+    @MainActor private func downloadedPrism(_ p: Prism, _ n: Net) async -> Prism? {
+        guard let video = p.video else { return nil }
+        guard let vf = try? await n.fetchMedia(video.fileName, ext: AppModel.mediaExt(video)) else { return nil }
+        var local = p
+        local.video?.fileName = n.mediaRef(vf)
+        local.cover = nil
+        if let c = p.cover, let cf = try? await n.fetchMedia(c.fileName, ext: AppModel.mediaExt(c)) {
+            var x = c
+            x.fileName = n.mediaRef(cf)
+            local.cover = x
+        }
+        return local
+    }
+
+    /// Комментарии к PRISM с сервера — при открытии обсуждения.
+    private func loadPrismComments(_ prismId: Int64) {
+        if !isServerPost(prismId) { return }
+        let n = net
+        Task { @MainActor [weak self] in
+            guard let list = try? await n.api.comments(prismId), let self else { return }
+            let meId = self.state.me.id
+            self.updatePrism(prismId) { p in
+                let pending: [Comment] = p.commentList.filter { !self.isServerComment($0.id) && $0.author.id == meId }
+                p.commentList = list + pending
+                p.comments = list.count + pending.count
+            }
+            self.peopleChanged()
         }
     }
 
@@ -4406,15 +4822,39 @@ final class AppModel {
             p.comments += 1
             p.commentList.append(comment)
         }
+        if !isServerPost(prismId) { return }
+        let n = net
+        Task { @MainActor [weak self] in
+            let saved: Comment
+            do {
+                saved = try await n.api.addComment(prismId, comment, key: n.newKey())
+            } catch {
+                self?.updatePrism(prismId) { p in
+                    p.comments = max(0, p.comments - 1)
+                    p.commentList.removeAll { $0.id == comment.id }
+                }
+                self?.state.notice = t("Комментарий не отправлен — проверьте сеть")
+                return
+            }
+            self?.updatePrism(prismId) { p in
+                p.commentList = p.commentList.map { $0.id == comment.id ? saved : $0 }
+            }
+        }
     }
 
     func deletePrismComment(_ prismId: Int64, _ commentId: Int64) {
         let meId = state.me.id
+        guard let prism = findPrismIn(prismId) else { return }
+        // Свой — всегда; под своим роликом — любой
+        let mineToo = prism.author.id == meId
+        let allowed = prism.commentList.contains { $0.id == commentId && ($0.author.id == meId || mineToo) }
+        if !allowed { return }
         updatePrism(prismId) { p in
-            guard p.commentList.contains(where: { $0.id == commentId && $0.author.id == meId }) else { return }
             p.commentList.removeAll { $0.id == commentId }
             p.comments = max(0, p.comments - 1)
         }
+        if isServerPost(prismId) && isServerComment(commentId) { net.queueCall("DELETE", "/v1/comments/\(commentId)") }
+        kickNet()
     }
 
     /// Открыть вкладку PRISM на нужном ролике — из «Сохранённого».
@@ -4445,12 +4885,32 @@ final class AppModel {
         state.creatingPrism = false
         selectTab(.prism)
         state.prismStartId = id
+        // С сервером — в очередь: видео загрузится, ролик уйдёт и получит номер сервера
+        if serverMode {
+            let key = net.queuePrism(prism)
+            updatePrism(id) { $0.outboxKey = key }
+            refreshNetCounters()
+            kickNet()
+        }
     }
 
     /// Удалить свой ролик. Файлы удаляет экран — модель о файлах не знает.
     func deletePrism(_ prismId: Int64) {
         let meId = state.me.id
+        if let own = findPrismIn(prismId), own.author.id == meId { dropOnServer(prismId, own.outboxKey) }
         state.prisms.removeAll { $0.id == prismId && $0.author.id == meId }
+    }
+
+    /// Удалить на сервере: ещё не ушедшее — снять из очереди (а если как раз
+    /// уходит — удалить, когда придёт номер); ушедшее — DELETE.
+    private func dropOnServer(_ postId: Int64, _ outboxKey: String) {
+        if !outboxKey.isEmpty {
+            net.discard(outboxKey)
+        } else if isServerPost(postId) {
+            net.queueCall("DELETE", "/v1/posts/\(postId)")
+        }
+        refreshNetCounters()
+        kickNet()
     }
 
     func consumePrismStart() {
@@ -4495,6 +4955,9 @@ final class AppModel {
     /// Удалить свою запись из ленты. Файлы удаляет экран.
     func deletePost(_ postId: Int64) {
         let meId = state.me.id
+        if let own = state.posts.first(where: { $0.id == postId && $0.author.id == meId }) {
+            dropOnServer(postId, own.outboxKey)
+        }
         state.posts.removeAll { $0.id == postId && $0.author.id == meId }
         state.profilePins.removeAll { $0 == postId }
     }
@@ -4573,6 +5036,9 @@ final class AppModel {
 
     /// Группа поверх вкладки; из раздела профиля «назад» вернёт в него.
     func openGroup(_ groupId: Int) {
+        if isServerGroup(groupId) && demoReplies {
+            Task { @MainActor [weak self] in await self?.loadCommunity(groupId) }
+        }
         if !(state.tab == .profile && state.profileSection != nil) {
             state.tab = .groups
         }
@@ -4631,6 +5097,10 @@ final class AppModel {
     /// Удалить запись в группе: свою — всегда, любую — в своей группе. Файлы удаляет экран.
     func deleteGroupPost(_ groupId: Int, _ postId: Int64) {
         let meId = state.me.id
+        let g0 = state.groups.first { $0.id == groupId }
+        if let g0, let p0 = g0.posts.first(where: { $0.id == postId }), p0.author.id == meId || g0.mine {
+            dropOnServer(postId, p0.outboxKey)
+        }
         state.groups = state.groups.map { group in
             var g = group
             if g.id == groupId, let post = g.posts.first(where: { $0.id == postId }), post.author.id == meId || g.mine {
@@ -4642,11 +5112,168 @@ final class AppModel {
     }
 
     private func updateOwnGroup(_ groupId: Int, _ change: (inout MemoryGroup) -> Void) {
+        let before = state.groups.first { $0.id == groupId }
         state.groups = state.groups.map { group in
             var g = group
             if g.id == groupId && g.mine { change(&g) }
             return g
         }
+        // Своё сообщество на сервере — целиком, с фото (уже загруженные — ссылкой)
+        guard let after = state.groups.first(where: { $0.id == groupId }) else { return }
+        if isServerGroup(groupId) && after.mine && after != before {
+            net.queueCommunity(after)
+            refreshNetCounters()
+            kickNet()
+        }
+    }
+
+    // MARK: Сообщества на сервере
+
+    /// Группа с сервера поверх той, что на телефоне: записи и «без звука» —
+    /// здешние; фото — здешний файл, если он есть, иначе скачанная копия.
+    private func mergeServerGroup(_ local: MemoryGroup?, _ srv: MemoryGroup) -> MemoryGroup {
+        var known: [String: Attachment] = [:]
+        if let c = local?.cover { known[c.id] = c }
+        for pr in local?.shop ?? [] {
+            for a in pr.photos { known[a.id] = a }
+        }
+        func pick(_ a: Attachment) -> Attachment {
+            if let k = known[a.id], !k.fileName.isEmpty, !net.isRemote(k.fileName),
+               FileManager.default.fileExists(atPath: MediaFiles.url(k).path) {
+                return k
+            }
+            return downloadedCopy(a)
+        }
+        var g = srv
+        g.posts = local?.posts ?? []
+        g.muted = local?.muted ?? false
+        g.cover = srv.cover.map { pick($0) }
+        g.shop = srv.shop.map { pr -> Product in
+            var x = pr
+            x.photos = pr.photos.map { pick($0) }
+            return x
+        }
+        // Своё фото фона на сервер не уходит — у себя оно остаётся
+        let ownPhoto = local?.mine == true && !(local?.backdrop?.photo ?? "").isEmpty
+        if ownPhoto && srv.backdrop == nil { g.backdrop = local?.backdrop }
+        return g
+    }
+
+    /// Фото групп, которых ещё нет на телефоне, — скачать и показать.
+    @MainActor private func fetchGroupMedia(_ groupIds: [Int]) async {
+        let n = net
+        for id in groupIds {
+            guard let g = state.groups.first(where: { $0.id == id }) else { continue }
+            let cover: [Attachment] = g.cover.map { [$0] } ?? []
+            let all: [Attachment] = cover + g.shop.flatMap { $0.photos }
+            let remote: [Attachment] = all.filter { n.isRemote($0.fileName) }
+            for a in remote {
+                guard let f = try? await n.fetchMedia(a.fileName, ext: AppModel.mediaExt(a)) else { continue }
+                let path = a.fileName
+                let ref = n.mediaRef(f)
+                func fix(_ x: Attachment) -> Attachment {
+                    guard x.fileName == path else { return x }
+                    var y = x
+                    y.fileName = ref
+                    return y
+                }
+                state.groups = state.groups.map { cur -> MemoryGroup in
+                    guard cur.id == id else { return cur }
+                    var x = cur
+                    x.cover = cur.cover.map { fix($0) }
+                    x.shop = cur.shop.map { pr -> Product in
+                        var y = pr
+                        y.photos = pr.photos.map { fix($0) }
+                        return y
+                    }
+                    return x
+                }
+            }
+        }
+    }
+
+    /// Когда сообщества сверялись в последний раз (мс).
+    @ObservationIgnored private var communitiesSyncedAt: Int64 = 0
+
+    /// Сообщества с сервера: мои (где состою) и самые большие. Мои, которых
+    /// сервер больше не знает (удалили, заблокировали создателя), — уходят.
+    @MainActor func syncCommunities() async throws {
+        let now = nowMs()
+        if !serverMode || now - communitiesSyncedAt < 30_000 { return }
+        communitiesSyncedAt = now
+        let n = net
+        let mine: [MemoryGroup] = try await n.api.myCommunities()
+        let popular: [MemoryGroup] = (try? await n.api.communities()) ?? []
+        var order: [Int] = []
+        var byId: [Int: MemoryGroup] = [:]
+        for g in mine + popular where byId[g.id] == nil {
+            byId[g.id] = g
+            order.append(g.id)
+        }
+        var s = state
+        var local: [Int: MemoryGroup] = [:]
+        for g in s.groups { local[g.id] = g }
+        let merged: [MemoryGroup] = order.compactMap { id in byId[id].map { mergeServerGroup(local[id], $0) } }
+        let base = Self.communityIdBase
+        let rest: [MemoryGroup] = s.groups.filter { g in byId[g.id] == nil && !(g.id > base && g.joined) }
+        s.groups = merged + rest
+        if let open = s.openGroupId, !s.groups.contains(where: { $0.id == open }) { s.openGroupId = nil }
+        state = s
+        peopleChanged()
+        await fetchGroupMedia(order)
+    }
+
+    /// Поиск сообществ на сервере — найденные добавляются в список групп.
+    func searchCommunities(_ query: String) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !serverMode || !demoReplies || q.count < 2 { return }
+        let n = net
+        Task { @MainActor [weak self] in
+            guard let found = try? await n.api.communities(q), let self else { return }
+            let known = Set(self.state.groups.map(\.id))
+            let add: [MemoryGroup] = found.filter { !known.contains($0.id) }.map { self.mergeServerGroup(nil, $0) }
+            self.state.groups += add
+            await self.fetchGroupMedia(found.map(\.id))
+        }
+    }
+
+    /// Открыли сообщество: свежие сведения и записи (свои ещё не ушедшие — сверху).
+    @MainActor func loadCommunity(_ id: Int) async {
+        let n = net
+        let srv: MemoryGroup
+        do {
+            srv = try await n.api.community(id)
+        } catch {
+            // Группы больше нет (удалили или создатель недоступен)
+            if NetError.of(error).code == 404 { dropGroup(id) }
+            return
+        }
+        let page = try? await n.api.communityPosts(id, nil, limit: 50)
+        let blocked = state.blocked
+        let posts: [Post]? = page.map { withLocalMedia($0.items.filter { !blocked.contains($0.author.id) }) }
+        state.groups = state.groups.map { cur -> MemoryGroup in
+            guard cur.id == id else { return cur }
+            var merged = mergeServerGroup(cur, srv)
+            if let posts {
+                // Свои ещё не ушедшие — сверху; уже ушедшие пришли с сервера
+                let pending: [Post] = cur.posts.filter { !$0.outboxKey.isEmpty && n.outbox.get($0.outboxKey) != nil }
+                merged.posts = Self.distinct(pending + posts)
+            }
+            return merged
+        }
+        peopleChanged()
+        await fetchGroupMedia([id])
+    }
+
+    /// Группы больше нет на сервере — убрать и закрыть.
+    private func dropGroup(_ id: Int) {
+        var s = state
+        s.groups.removeAll { $0.id == id }
+        if s.openGroupId == id {
+            s.openGroupId = nil
+            s.groupSettingsOpen = false
+        }
+        state = s
     }
 
     // MARK: Витрина, сведения и оформление группы
@@ -4812,6 +5439,11 @@ final class AppModel {
             }
             return g
         }
+        guard let g = state.groups.first(where: { $0.id == groupId }) else { return }
+        if isServerGroup(groupId) && !g.mine {
+            net.queueCall(g.joined ? "PUT" : "DELETE", "/v1/communities/\(groupId)/join", coalesce: "join:\(groupId)")
+            kickNet()
+        }
     }
 
     /// Отключить или включить уведомления группы.
@@ -4832,8 +5464,14 @@ final class AppModel {
         if state.groups.contains(where: { $0.name.lowercased() == title.lowercased() }) {
             return tf("Группа «%s» уже есть", title)
         }
-        let id = (state.groups.map(\.id).max() ?? 0) + 1
         let cleanTopic = topic.trimmingCharacters(in: .whitespaces)
+        // С сервером: группа создаётся там (нужна сеть) и приходит с его номером
+        if serverMode {
+            createCommunity(title, description, cleanTopic)
+            return nil
+        }
+        let base = Self.communityIdBase
+        let id = (state.groups.map(\.id).filter { $0 <= base }.max() ?? 0) + 1
         let group = MemoryGroup(
             id: id, name: title,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -4845,7 +5483,37 @@ final class AppModel {
         return nil
     }
 
+    /// Сообщество на сервере: создаётся там и открывается с его номером.
+    private func createCommunity(_ title: String, _ description: String, _ topic: String) {
+        let about = String(description.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+        let seed = 100 + Int.random(in: 0..<900)
+        let theme: String = topic.isEmpty ? (groupTopics.last ?? "Другое") : topic
+        let draft = MemoryGroup(id: 0, name: title, description: about, topic: theme, members: 1, seed: seed, joined: true, mine: true)
+        let n = net
+        Task { @MainActor [weak self] in
+            let g: MemoryGroup
+            do {
+                g = try await n.api.createCommunity(draft, key: n.newKey())
+            } catch {
+                let offline = NetError.of(error).kind == .offline
+                self?.state.notice = offline ? t("Группа не создана — нет сети") : t("Группа не создана — попробуйте позже")
+                return
+            }
+            guard let self else { return }
+            let merged = self.mergeServerGroup(nil, g)
+            self.state.groups = [merged] + self.state.groups.filter { $0.id != g.id }
+            self.openGroup(g.id)
+        }
+    }
+
     func deleteGroup(_ groupId: Int) {
+        if let g = state.groups.first(where: { $0.id == groupId && $0.mine }), isServerGroup(groupId) {
+            // Записи, что ещё не ушли, — не нужны: группы больше нет
+            for p in g.posts where !p.outboxKey.isEmpty { net.discard(p.outboxKey) }
+            net.queueCall("DELETE", "/v1/communities/\(groupId)")
+            refreshNetCounters()
+            kickNet()
+        }
         state.groups.removeAll { $0.id == groupId && $0.mine }
         state.openGroupId = nil
         state.groupSettingsOpen = false
@@ -4857,18 +5525,23 @@ final class AppModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let built = poll.flatMap { $0.build(newId()) }
         if trimmed.isEmpty && media.isEmpty && built == nil { return }
-        let me = state.me
+        guard let g0 = state.groups.first(where: { $0.id == groupId }) else { return }
+        if !g0.joined || (g0.onlyOwnerPosts && !g0.mine) { return }
+        var post = Post(id: newId(), author: state.me, text: trimmed, minutesAgo: 0,
+                        media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), poll: built)
+        // Сообщество на сервере — через очередь, как своя запись
+        let server = isServerGroup(groupId)
+        if server { post.outboxKey = net.queueGroupPost(groupId, post) }
         state.groups = state.groups.map { group in
             var g = group
-            if g.id == groupId && g.joined && (!g.onlyOwnerPosts || g.mine) {
-                g.posts.insert(Post(
-                    id: newId(), author: me, text: trimmed, minutesAgo: 0,
-                    media: Array(media.prefix(Self.maxMedia)), createdAt: clock(), poll: built
-                ), at: 0)
-            }
+            if g.id == groupId { g.posts.insert(post, at: 0) }
             return g
         }
         media.filter(\.isGif).forEach(rememberGif)
+        if server {
+            refreshNetCounters()
+            kickNet()
+        }
     }
 
     // MARK: - Опросы
@@ -4999,6 +5672,12 @@ final class AppModel {
             var g = group
             if g.id == groupId { g.posts = g.posts.map { Self.toggled($0, postId) } }
             return g
+        }
+        let group = state.groups.first { $0.id == groupId }
+        guard let p = group?.posts.first(where: { $0.id == postId }) else { return }
+        if isServerPost(postId) && p.outboxKey.isEmpty {
+            net.queueLike(postId, liked: p.liked)
+            kickNet()
         }
     }
 

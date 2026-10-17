@@ -390,6 +390,8 @@ data class UiState(
     val peopleVersion: Int = 0,
     /** «Интересное» под лентой друзей: записи людей, на которых вы не подписаны (с сервера). */
     val explore: List<Post> = emptyList(),
+    /** Записи людей с сервера — подгружаются, когда открыта их страница. */
+    val personPosts: Map<Int, List<Post>> = emptyMap(),
     val explorePaging: FeedPaging = FeedPaging(),
     /** Приложение работает с настоящим сервером (не встроенным демо). */
     val serverMode: Boolean = false,
@@ -468,7 +470,11 @@ data class UiState(
     val openPerson: User? get() = openPersonId?.let { Demo.person(it) }
     val openGroup: Group? get() = groups.firstOrNull { it.id == openGroupId }
     val myGroups: List<Group> get() = groups.filter { it.joined }
-    fun postsOf(userId: Int): List<Post> = posts.filter { it.author.id == userId }
+    fun postsOf(userId: Int): List<Post> {
+        val own = posts.filter { it.author.id == userId }
+        val ids = own.map { it.id }.toHashSet()
+        return own + personPosts[userId].orEmpty().filter { it.id !in ids }
+    }
     val openChat: Chat? get() = chats.firstOrNull { it.id == openChatId }
     /** Счётчик на вкладке «Чаты»: переписки без звука не считаются. */
     val unreadTotal: Int get() = chats.filterNot { it.muted || it.request }.sumOf { it.unread }
@@ -561,6 +567,7 @@ data class UiState(
     fun findPost(id: Long): Post? =
         posts.firstOrNull { it.id == id } ?: groups.firstNotNullOfOrNull { g -> g.posts.firstOrNull { it.id == id } }
             ?: olderFeed.firstOrNull { it.id == id } ?: explore.firstOrNull { it.id == id }
+            ?: personPosts.values.firstNotNullOfOrNull { l -> l.firstOrNull { it.id == id } }
 
     /** «Интересное» без заблокированных и без тех, кто уже в ленте. */
     val exploreVisible: List<Post>
@@ -593,6 +600,11 @@ class AppViewModel(
     // ==================== НАВИГАЦИЯ ====================
 
     fun selectTab(tab: Tab) {
+        if (serverMode && demoReplies) when (tab) {
+            Tab.Prism -> viewModelScope.launch { runCatching { syncPrisms() } }
+            Tab.Groups -> viewModelScope.launch { runCatching { syncCommunities() } }
+            else -> Unit
+        }
         _state.update {
             it.copy(
                 tab = tab,
@@ -840,6 +852,36 @@ class AppViewModel(
             if (it.openChatId != null) it.copy(openPersonId = userId, personSection = null, returnToChatId = it.openChatId, openChatId = null)
             else it.copy(openPersonId = userId, personSection = null)
         }
+        if (serverMode && demoReplies && isServerPerson(userId)) viewModelScope.launch { runCatching { loadPerson(userId) } }
+    }
+
+    /** Страница человека с сервера: его записи и «Актуальное». */
+    suspend fun loadPerson(userId: Int) {
+        val hs = runCatching { net.api.highlights(userId) }.getOrNull()
+        if (hs != null) {
+            val (list, stories) = hs
+            _state.update { s ->
+                val known = s.stories.map { it.id }.toHashSet()
+                s.copy(
+                    highlights = s.highlights.filter { it.ownerId != userId } + list,
+                    stories = s.stories + stories.filter { it.id !in known },
+                )
+            }
+            fetchStoryMedia(stories)
+        }
+        val page = runCatching { net.api.userPosts(userId, null, 30) }.getOrNull() ?: return
+        _state.update { s -> s.copy(personPosts = s.personPosts + (userId to withLocalMedia(page.items))) }
+        peopleChanged()
+    }
+
+    /** Фото и видео историй с сервера — скачать и показывать копию. */
+    private suspend fun fetchStoryMedia(stories: List<Story>) {
+        for (st in stories) {
+            val a = st.media ?: continue
+            if (!net.isRemote(a.path)) continue
+            val f = runCatching { net.fetchMedia(a.path, ext = mediaExt(a)) }.getOrNull() ?: continue
+            _state.update { s -> s.copy(stories = s.stories.map { if (it.id == st.id) it.copy(media = a.copy(path = f.path)) else it }) }
+        }
     }
 
     fun closePerson() {
@@ -1045,6 +1087,7 @@ class AppViewModel(
                 groups = s.groups.map { g -> g.copy(posts = g.posts.upd()) },
                 olderFeed = s.olderFeed.upd(),
                 explore = s.explore.upd(),
+                personPosts = if (s.personPosts.values.none { l -> l.any { it.id == postId } }) s.personPosts else s.personPosts.mapValues { it.value.upd() },
             )
         }
     }
@@ -1057,6 +1100,9 @@ class AppViewModel(
 
     /** Комментарий уже на сервере (у ещё не отправленного — номер телефона, он меньше). */
     private fun isServerComment(commentId: Long): Boolean = commentId >= SERVER_ID_BASE
+
+    /** Сообщество на сервере (у демо-групп номера маленькие). */
+    private fun isServerGroup(groupId: Int): Boolean = serverMode && groupId > COMMUNITY_ID_BASE
 
     fun toggleLike(postId: Long) {
         updatePost(postId) { it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1) }
@@ -1319,6 +1365,7 @@ class AppViewModel(
 
     fun openPrismComments(prismId: Long) {
         _state.update { it.copy(commentsPrismId = prismId, commentsPostId = null) }
+        loadPrismComments(prismId)
     }
 
     fun closeComments() {
@@ -1423,7 +1470,15 @@ class AppViewModel(
         val following = net.api.following().map { it.id }.toSet()
         val sent = net.api.sentRequests().map { it.id }.toSet()
         val incoming = net.api.followRequests().map { it.id }
-        val blockedOnServer = runCatching { net.api.blocked() }.getOrDefault(emptyList()).map(Directory::local).toSet()
+        // Блокировки, что ещё в очереди, — важнее ответа сервера (он о них пока не знает)
+        val pendingBlocks = runCatching {
+            net.outbox.all().filter { it.kind == OpKind.Call }.mapNotNull { runCatching { org.json.JSONObject(it.payload) }.getOrNull() }
+                .filter { it.optString("coalesce").startsWith("block:") }
+                .mapNotNull { o -> o.optString("coalesce").removePrefix("block:").toIntOrNull()?.let { it to (o.optString("method") == "PUT") } }.toMap()
+        }.getOrDefault(emptyMap())
+        // Не ответил — список блокировок не трогаем (иначе пустой ответ «разблокировал» бы всех)
+        val blockedOnServer = runCatching { net.api.blocked() }.getOrNull()?.map(Directory::local)?.toSet()
+            ?.plus(pendingBlocks.filterValues { it }.keys)?.minus(pendingBlocks.filterValues { !it }.keys)
         _state.update { s ->
             fun Set<Int>.local() = filter { !isServerPerson(it) }.toSet()
             s.copy(
@@ -1431,7 +1486,7 @@ class AppViewModel(
                 sentRequests = s.sentRequests.local() + sent,
                 followRequests = s.followRequests.filter { !isServerPerson(it) } + incoming.filter { it !in s.blocked },
                 // С сервера — целиком (разблокировали на другом телефоне — и здесь); демо-люди — как были
-                blocked = s.blocked.filter { !isServerPerson(it) }.toSet() + blockedOnServer,
+                blocked = if (blockedOnServer == null) s.blocked else s.blocked.filter { !isServerPerson(it) }.toSet() + blockedOnServer,
             )
         }
         peopleChanged()
@@ -1755,10 +1810,11 @@ class AppViewModel(
     /** Удалить свою историю — и из «Актуального». Файл удаляет экран. */
     fun deleteStory(storyId: Long) {
         val me = _state.value.me.id
-        if (storyId in serverStoryIds) {
+        if (storyId in serverStoryIds || (serverMode && storyId >= SERVER_ID_BASE)) {
             runCatching { net.queueCall("DELETE", "/v1/stories/$storyId") }
             kickNet()
         }
+        val before = _state.value.highlights.filter { it.ownerId == me }
         _state.update { s ->
             s.copy(
                 stories = s.stories.filterNot { it.id == storyId && it.authorId == me },
@@ -1766,6 +1822,9 @@ class AppViewModel(
                     .filter { it.ownerId != me || it.storyIds.isNotEmpty() },
             )
         }
+        val after = _state.value.highlights.filter { it.ownerId == me }
+        deletedHighlights += before.map { it.id } - after.map { it.id }.toSet()
+        if (after != before) pushHighlights()
         val v = _state.value.storyViewer ?: return
         if (storiesOf(v.author).isEmpty()) closeStories()
         else if (v.index >= storiesOf(v.author).size) _state.update { it.copy(storyViewer = v.copy(index = storiesOf(v.author).lastIndex)) }
@@ -1802,17 +1861,63 @@ class AppViewModel(
         val others = list.filter { it.first.authorId != me && it.first.authorId !in _state.value.blocked }
         val seen = others.filter { it.second }.map { it.first.id }
         _state.update { s ->
-            val kept = s.stories.filter { it.authorId == me || !isServerPerson(it.authorId) }
+            // Истории из «Актуального» остаются, даже если старше суток
+            val inHighlights = s.highlights.flatMap { it.storyIds }.toHashSet()
+            val fresh = others.map { it.first.id }.toHashSet()
+            val kept = s.stories.filter { it.authorId == me || !isServerPerson(it.authorId) || (it.id in inHighlights && it.id !in fresh) }
                 .map { st -> mine[st.id]?.let { srv -> st.copy(views = srv.views) } ?: st }
             s.copy(stories = kept + others.map { it.first }, seenStories = s.seenStories + seen)
         }
         peopleChanged()
-        for ((st, _) in others) {
-            val a = st.media ?: continue
-            if (!net.isRemote(a.path)) continue
-            val f = runCatching { net.fetchMedia(a.path, ext = mediaExt(a)) }.getOrNull() ?: continue
-            _state.update { s -> s.copy(stories = s.stories.map { if (it.id == st.id) it.copy(media = a.copy(path = f.path)) else it }) }
+        fetchStoryMedia(others.map { it.first })
+    }
+
+    /** Своё «Актуальное» с сервера уже сверено в этот раз (до этого — на сервер не пишем). */
+    private var highlightsPulled = false
+
+    /** Подборки, удалённые здесь: с сервера (где они ещё есть) обратно не берём. */
+    private val deletedHighlights = HashSet<Long>()
+
+    /**
+     * Своё «Актуальное» с сервера: подборки, которых здесь нет (новый
+     * телефон, сделаны на другом), добавляются вместе с историями. Пока это
+     * не прошло, телефон не перезаписывает «Актуальное» на сервере.
+     */
+    suspend fun syncMyHighlights() {
+        if (!serverMode || net.session.userId <= 0) return
+        val (list, stories) = net.api.highlights(net.session.userId, own = true)
+        _state.update { s ->
+            val mine = s.highlights.filter { it.ownerId == s.me.id }.map { it.id }.toHashSet()
+            val known = s.stories.map { it.id }.toHashSet()
+            s.copy(highlights = s.highlights + list.filter { it.id !in mine && it.id !in deletedHighlights }, stories = s.stories + stories.filter { it.id !in known })
         }
+        // Новые подборки здесь — с номерами после пришедших (иначе номера совпали бы)
+        list.maxOfOrNull { it.id }?.let { if (it >= nextId) nextId = it + 1 }
+        highlightsPulled = true
+        fetchStoryMedia(stories)
+    }
+
+    /**
+     * «Актуальное» — на сервер (целиком, важно последнее): только истории,
+     * которые уже там; ещё не ушедшие догонят после (adoptServerIds).
+     */
+    private fun pushHighlights() {
+        if (!serverMode || !net.session.signedIn) return
+        // Сначала — что уже на сервере (иначе пустой список здесь стёр бы его там)
+        if (!highlightsPulled) {
+            if (!demoReplies) return
+            viewModelScope.launch { if (runCatching { syncMyHighlights() }.isSuccess) pushHighlights() }
+            return
+        }
+        val s = _state.value
+        val items = org.json.JSONArray()
+        for (h in s.highlights.filter { it.ownerId == s.me.id }) {
+            val ids = h.storyIds.filter { it >= SERVER_ID_BASE }
+            if (ids.isEmpty()) continue
+            items.put(org.json.JSONObject().put("id", h.id).put("title", h.title).put("stories", org.json.JSONArray(ids)).put("cover", h.coverId))
+        }
+        runCatching { net.queueCall("PUT", "/v1/me/highlights", org.json.JSONObject().put("items", items), coalesce = "highlights") }
+        kickNet()
     }
 
     /** Новая подборка «Актуального» из своих историй. Ответ — её номер или null. */
@@ -1822,6 +1927,7 @@ class AppViewModel(
         if (mine.isEmpty()) return null
         val h = Highlight(nextId++, s.me.id, title.trim().take(Stories.MAX_TITLE).ifEmpty { t("Актуальное") }, mine)
         _state.update { it.copy(highlights = it.highlights + h) }
+        pushHighlights()
         return h.id
     }
 
@@ -1836,6 +1942,8 @@ class AppViewModel(
     fun deleteHighlight(id: Long) {
         val me = _state.value.me.id
         _state.update { s -> s.copy(highlights = s.highlights.filterNot { it.id == id && it.ownerId == me }) }
+        deletedHighlights += id
+        pushHighlights()
     }
 
     private fun updateHighlight(id: Long, change: (Highlight) -> Highlight) {
@@ -1843,6 +1951,9 @@ class AppViewModel(
         _state.update { s ->
             s.copy(highlights = s.highlights.map { if (it.id == id && it.ownerId == me) change(it) else it }.filter { it.ownerId != me || it.storyIds.isNotEmpty() })
         }
+        // Опустела и ушла — тоже удалена
+        if (_state.value.highlights.none { it.id == id && it.ownerId == me }) deletedHighlights += id
+        pushHighlights()
     }
 
     /**
@@ -2343,6 +2454,10 @@ class AppViewModel(
             runCatching { syncChats() }
             runCatching { syncFollows() }
             runCatching { syncStories() }
+            // «Актуальное»: сначала с сервера, потом — изменения, сделанные без входа
+            if (runCatching { syncMyHighlights() }.isSuccess) pushHighlights()
+            runCatching { syncCommunities() }
+            runCatching { syncPrisms() }
             refreshExplore()
         }
         pushToken?.let(::setPushToken)
@@ -2471,14 +2586,27 @@ class AppViewModel(
         if (sent.isEmpty() || !serverMode) return
         val posts = sent.filter { it.kind == OpKind.CreatePost }.associate { it.localId to it.serverId }
         val stories = sent.filter { it.kind == OpKind.CreateStory }.associate { it.localId to it.serverId }
+        val groupPosts = sent.filter { it.kind == OpKind.CreateGroupPost }.associate { it.localId to it.serverId }
+        val prisms = sent.filter { it.kind == OpKind.CreatePrism }.associate { it.localId to it.serverId }
         serverStoryIds += stories.values
         val me = _state.value.me.id
         _state.update { s ->
             s.copy(
                 posts = s.posts.map { p -> posts[p.id]?.takeIf { p.author.id == me }?.let { p.copy(id = it, outboxKey = "") } ?: p },
                 stories = s.stories.map { st -> stories[st.id]?.takeIf { st.authorId == me }?.let { st.copy(id = it) } ?: st },
+                // В «Актуальном» — тоже номер сервера
+                highlights = if (stories.isEmpty()) s.highlights else s.highlights.map { h ->
+                    if (h.ownerId != me) h else h.copy(storyIds = h.storyIds.map { stories[it] ?: it }, coverId = stories[h.coverId] ?: h.coverId)
+                },
+                groups = if (groupPosts.isEmpty()) s.groups else s.groups.map { g ->
+                    // Сервер мог уже вернуть эту запись (открыли группу) — без двойников
+                    g.copy(posts = g.posts.map { p -> groupPosts[p.id]?.takeIf { p.author.id == me }?.let { p.copy(id = it, outboxKey = "") } ?: p }.distinctBy { it.id })
+                },
+                prisms = s.prisms.map { p -> prisms[p.id]?.takeIf { p.author.id == me }?.let { p.copy(id = it, outboxKey = "") } ?: p }.distinctBy { it.id },
+                prismStartId = s.prismStartId?.let { prisms[it] ?: it },
             )
         }
+        if (stories.isNotEmpty() && _state.value.highlights.any { h -> h.ownerId == me && h.storyIds.any { it in stories.values } }) pushHighlights()
     }
 
     private fun reconcileOutbox() {
@@ -2489,6 +2617,11 @@ class AppViewModel(
         _state.update { s ->
             s.copy(
                 posts = s.posts.map { if (it.outboxKey.isNotEmpty() && it.outboxKey !in keys) it.copy(outboxKey = "") else it },
+                groups = s.groups.map { g ->
+                    if (g.posts.none { it.outboxKey.isNotEmpty() && it.outboxKey !in keys }) g
+                    else g.copy(posts = g.posts.map { if (it.outboxKey.isNotEmpty() && it.outboxKey !in keys) it.copy(outboxKey = "") else it })
+                },
+                prisms = s.prisms.map { if (it.outboxKey.isNotEmpty() && it.outboxKey !in keys) it.copy(outboxKey = "") else it },
                 chats = s.chats.map { c ->
                     if (c.id in chatsWithOps || c.messages.none { it.pending }) c
                     else c.copy(messages = c.messages.map { if (it.pending) it.copy(pending = false, delivered = true) else it })
@@ -2553,6 +2686,8 @@ class AppViewModel(
         feedPager = net.feedPager()
         explorePager = net.explorePager()
         serverStoryIds.clear()
+        highlightsPulled = false
+        deletedHighlights.clear()
     }
 
     private fun publishFeed() {
@@ -2584,6 +2719,19 @@ class AppViewModel(
         })
     }
 
+    /** Записи групп и страниц людей: скачанные файлы — вместо адресов на сервере. */
+    private fun swapDownloaded() {
+        fun Post.local(): Post = if (media.none { net.isRemote(it.path) }) this else copy(media = media.map { a ->
+            if (!net.isRemote(a.path)) a else net.mediaFile(a.path, mediaExt(a)).takeIf { it.exists() && it.length() > 0 }?.let { a.copy(path = it.path) } ?: a
+        })
+        _state.update { s ->
+            s.copy(
+                groups = s.groups.map { g -> if (g.posts.none { p -> p.media.any { net.isRemote(it.path) } }) g else g.copy(posts = g.posts.map { it.local() }) },
+                personPosts = s.personPosts.mapValues { e -> e.value.map { it.local() } },
+            )
+        }
+    }
+
     private fun fetchFeedMedia(a: Attachment) {
         if (!fetchingMedia.add(a.path)) return
         val n = net
@@ -2592,6 +2740,7 @@ class AppViewModel(
             if (ok && n === net) {
                 publishFeed()
                 publishExplore()
+                swapDownloaded()
             }
             // Не вышло (нет сети) — попробуем при следующем показе ленты
             if (!ok) fetchingMedia.remove(a.path)
@@ -2672,6 +2821,7 @@ class AppViewModel(
         for ((op, answer) in r.sent) {
             when (op.kind) {
                 OpKind.CreatePost -> _state.update { s -> s.copy(posts = s.posts.map { if (it.outboxKey == op.key) it.copy(outboxKey = "") else it }) }
+                OpKind.CreateGroupPost -> clearGroupPostKey(op.key)
                 OpKind.SendMessage -> {
                     val localId = runCatching { org.json.JSONObject(op.payload).getLong("id") }.getOrNull()
                     val sentAt = answer?.optLong("sentAt") ?: 0L
@@ -2687,6 +2837,11 @@ class AppViewModel(
                 OpKind.CreatePost -> {
                     _state.update { s -> s.copy(posts = s.posts.map { if (it.outboxKey == op.key) it.copy(outboxKey = "") else it }, netNotice = t("Запись не отправлена: файл не нашёлся. Она осталась только на этом телефоне.")) }
                 }
+                OpKind.CreateGroupPost -> {
+                    clearGroupPostKey(op.key)
+                    _state.update { it.copy(netNotice = t("Запись не отправлена: файл не нашёлся. Она осталась только на этом телефоне.")) }
+                }
+                OpKind.CreatePrism -> _state.update { it.copy(netNotice = t("PRISM не отправлен: видео не нашлось. Он остался только на этом телефоне.")) }
                 OpKind.SendMessage -> {
                     val localId = runCatching { org.json.JSONObject(op.payload).getLong("id") }.getOrNull()
                     if (localId != null) updateMessage(op.target.toInt(), localId) { it.copy(pending = false) }
@@ -2706,6 +2861,15 @@ class AppViewModel(
             )
         }
         refreshNetCounters()
+    }
+
+    /** Запись в сообществе ушла (или уже не уйдёт) — больше не «отправляется». */
+    private fun clearGroupPostKey(key: String) {
+        _state.update { s ->
+            s.copy(groups = s.groups.map { g ->
+                if (g.posts.none { it.outboxKey == key }) g else g.copy(posts = g.posts.map { if (it.outboxKey == key) it.copy(outboxKey = "") else it })
+            })
+        }
     }
 
     private fun updateMessage(chatId: Int, messageId: Long, change: (Message) -> Message) {
@@ -2790,6 +2954,7 @@ class AppViewModel(
         net.outbox.get(job.owner)?.let { op ->
             net.outbox.remove(op.key)
             if (op.kind == OpKind.CreatePost) _state.update { s -> s.copy(posts = s.posts.map { if (it.outboxKey == op.key) it.copy(outboxKey = "") else it }) }
+            if (op.kind == OpKind.CreateGroupPost) clearGroupPostKey(op.key)
             if (op.kind == OpKind.SendMessage) {
                 val localId = runCatching { org.json.JSONObject(op.payload).getLong("id") }.getOrNull()
                 if (localId != null) updateMessage(op.target.toInt(), localId) { it.copy(pending = false) }
@@ -3408,10 +3573,64 @@ class AppViewModel(
 
     fun togglePrismCommentLike(prismId: Long, commentId: Long) {
         updatePrism(prismId) { p -> p.copy(commentList = p.commentList.map { it.flipLike(commentId) }) }
+        if (!isServerPost(prismId) || !isServerComment(commentId)) return
+        val liked = findPrismIn(prismId)?.commentList?.firstOrNull { it.id == commentId }?.liked ?: return
+        runCatching { net.queueCall(if (liked) "PUT" else "DELETE", "/v1/comments/$commentId/like", coalesce = "clike:$commentId") }
+        kickNet()
     }
+
+    private fun findPrismIn(id: Long): Prism? = _state.value.prisms.firstOrNull { it.id == id }
 
     fun togglePrismLike(prismId: Long) {
         updatePrism(prismId) { it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1) }
+        if (isServerPost(prismId)) findPrismIn(prismId)?.let { runCatching { net.queueLike(prismId, it.liked) } }
+        kickNet()
+    }
+
+    /** Время, когда PRISM с сервера сверялись в последний раз. */
+    private var prismsSyncedAt = 0L
+
+    /**
+     * PRISM с сервера: новые ролики — когда скачано видео (и обложка);
+     * удалённые на сервере — уходят. Свои ещё не отправленные — остаются.
+     */
+    suspend fun syncPrisms() {
+        if (!serverMode || clock() - prismsSyncedAt < 30_000) return
+        prismsSyncedAt = clock()
+        val page = net.api.prisms(null, 30)
+        val fresh = page.items.filter { it.author.id !in _state.value.blocked }
+        val ids = fresh.associateBy { it.id }
+        val me = _state.value.me.id
+        // Удалённым считаем только то, что должно было попасть в эту страницу (не старее её конца);
+        // сохранённые в закладки и свои — остаются
+        val oldest = if (page.next == null) Long.MIN_VALUE else page.items.minOfOrNull { it.createdAt } ?: Long.MIN_VALUE
+        _state.update { s ->
+            s.copy(prisms = s.prisms.filter { !isServerPost(it.id) || it.id in ids || it.author.id == me || it.saved || it.createdAt < oldest }
+                .map { p -> ids[p.id]?.let { f -> p.copy(likes = f.likes, liked = f.liked, comments = f.comments, caption = f.caption) } ?: p })
+        }
+        peopleChanged()
+        for (p in fresh) {
+            if (_state.value.prisms.any { it.id == p.id }) continue
+            val video = p.video ?: continue
+            val vf = runCatching { net.fetchMedia(video.path, ext = mediaExt(video)) }.getOrNull() ?: continue
+            val cover = p.cover?.let { c -> runCatching { net.fetchMedia(c.path, ext = mediaExt(c)) }.getOrNull()?.let { c.copy(path = it.path) } }
+            val local = p.copy(video = video.copy(path = vf.path), cover = cover)
+            _state.update { s -> if (s.prisms.any { it.id == p.id }) s else s.copy(prisms = (s.prisms + local).sortedByDescending { it.createdAt }) }
+        }
+    }
+
+    /** Комментарии к PRISM с сервера — при открытии обсуждения. */
+    private fun loadPrismComments(prismId: Long) {
+        if (!isServerPost(prismId)) return
+        viewModelScope.launch {
+            val list = runCatching { net.api.comments(prismId) }.getOrNull() ?: return@launch
+            val me = _state.value.me.id
+            updatePrism(prismId) { p ->
+                val pending = p.commentList.filter { !isServerComment(it.id) && it.author.id == me }
+                p.copy(commentList = list + pending, comments = list.size + pending.size)
+            }
+            peopleChanged()
+        }
     }
 
     /** «Сохранить»: закладка, ролик появляется в «Сохранённом» в профиле. */
@@ -3425,14 +3644,25 @@ class AppViewModel(
         val me = _state.value.me
         val comment = Comment(nextId++, me, trimmed, createdAt = clock(), replyTo = replyTo, sticker = sticker)
         updatePrism(prismId) { it.copy(comments = it.comments + 1, commentList = it.commentList + comment) }
+        if (!isServerPost(prismId)) return
+        viewModelScope.launch {
+            val saved = try { net.api.addComment(prismId, comment, net.newKey()) } catch (e: NetError) {
+                updatePrism(prismId) { p -> p.copy(comments = (p.comments - 1).coerceAtLeast(0), commentList = p.commentList.filterNot { it.id == comment.id }) }
+                _state.update { it.copy(notice = t("Комментарий не отправлен — проверьте сеть")) }
+                return@launch
+            }
+            updatePrism(prismId) { p -> p.copy(commentList = p.commentList.map { if (it.id == comment.id) saved else it }) }
+        }
     }
 
     fun deletePrismComment(prismId: Long, commentId: Long) {
         val meId = _state.value.me.id
-        updatePrism(prismId) { p ->
-            if (p.commentList.none { it.id == commentId && it.author.id == meId }) p
-            else p.copy(comments = (p.comments - 1).coerceAtLeast(0), commentList = p.commentList.filterNot { it.id == commentId })
-        }
+        val prism = findPrismIn(prismId) ?: return
+        // Свой — всегда; под своим роликом — любой
+        if (prism.commentList.none { it.id == commentId && (it.author.id == meId || prism.author.id == meId) }) return
+        updatePrism(prismId) { p -> p.copy(comments = (p.comments - 1).coerceAtLeast(0), commentList = p.commentList.filterNot { it.id == commentId }) }
+        if (isServerPost(prismId) && isServerComment(commentId)) runCatching { net.queueCall("DELETE", "/v1/comments/$commentId") }
+        kickNet()
     }
 
     /** Открыть вкладку PRISM на нужном ролике — из «Сохранённого». */
@@ -3465,13 +3695,34 @@ class AppViewModel(
             )
             s.copy(prisms = listOf(prism) + s.prisms, creatingPrism = false, tab = Tab.Prism, prismStartId = prism.id)
         }
+        // С сервером — в очередь: видео загрузится, ролик уйдёт и получит номер сервера
+        if (serverMode) {
+            val p = _state.value.prisms.firstOrNull() ?: return
+            val key = runCatching { net.queuePrism(p) }.getOrDefault("")
+            updatePrism(p.id) { it.copy(outboxKey = key) }
+            refreshNetCounters()
+            kickNet()
+        }
     }
 
     /** Удалить свой ролик. Файлы удаляет экран — модель о файлах не знает. */
     fun deletePrism(prismId: Long) {
+        val own = findPrismIn(prismId)?.takeIf { it.author.id == _state.value.me.id }
+        if (own != null) dropOnServer(prismId, own.outboxKey)
         _state.update { s ->
             s.copy(prisms = s.prisms.filterNot { it.id == prismId && it.author.id == s.me.id })
         }
+    }
+
+    /**
+     * Удалить на сервере: ещё не ушедшее — снять из очереди (а если как раз
+     * уходит — удалить, когда придёт номер); ушедшее — DELETE.
+     */
+    private fun dropOnServer(postId: Long, outboxKey: String) {
+        if (outboxKey.isNotEmpty()) runCatching { net.discard(outboxKey) }
+        else if (isServerPost(postId)) runCatching { net.queueCall("DELETE", "/v1/posts/$postId") }
+        refreshNetCounters()
+        kickNet()
     }
 
     fun consumePrismStart() {
@@ -3580,6 +3831,8 @@ class AppViewModel(
 
     /** Удалить свою запись из ленты. Файлы удаляет экран. */
     fun deletePost(postId: Long) {
+        val own = _state.value.posts.firstOrNull { it.id == postId && it.author.id == _state.value.me.id }
+        if (own != null) dropOnServer(postId, own.outboxKey)
         _state.update { s ->
             s.copy(
                 posts = s.posts.filterNot { it.id == postId && it.author.id == s.me.id },
@@ -3620,10 +3873,20 @@ class AppViewModel(
         }
         val edited = post.copy(text = clean, media = kept, editedAt = clock())
         Telemetry.track(AppEvent.PostEdited)
+        // На сервере — текст и какие вложения остались (по их номерам)
+        if (post.outboxKey.isNotEmpty()) {
+            // Ещё в очереди — уйдёт уже исправленной
+            runCatching { net.updateQueuedPost(post.outboxKey, edited) }
+        } else if (isServerPost(postId)) {
+            val body = org.json.JSONObject().put("text", clean).put("keep", org.json.JSONArray(kept.map { it.id }))
+            runCatching { net.queueCall("PATCH", "/v1/posts/$postId", body, coalesce = "edit:$postId") }
+            kickNet()
+        }
         _state.update { s ->
             s.copy(
                 posts = s.posts.map { if (it.id == postId) edited else it },
                 groups = s.groups.map { g -> if (g.posts.none { it.id == postId }) g else g.copy(posts = g.posts.map { if (it.id == postId) edited else it }) },
+                olderFeed = s.olderFeed.map { if (it.id == postId) edited else it },
                 editingPostId = null,
             )
         }
@@ -3673,6 +3936,7 @@ class AppViewModel(
 
     /** Группа поверх вкладки; из раздела профиля «назад» вернёт в него. */
     fun openGroup(groupId: Int) {
+        if (isServerGroup(groupId) && demoReplies) viewModelScope.launch { runCatching { loadCommunity(groupId) } }
         _state.update {
             it.copy(
                 tab = if (it.tab == Tab.Profile && it.profileSection != null) it.tab else Tab.Groups,
@@ -3726,6 +3990,9 @@ class AppViewModel(
     /** Удалить запись в группе: свою — всегда, любую — в своей группе. Файлы удаляет экран. */
     fun deleteGroupPost(groupId: Int, postId: Long) {
         val meId = _state.value.me.id
+        val g0 = _state.value.groups.firstOrNull { it.id == groupId }
+        val p0 = g0?.posts?.firstOrNull { it.id == postId }
+        if (p0 != null && (p0.author.id == meId || g0.mine)) dropOnServer(postId, p0.outboxKey)
         _state.update { s ->
             s.copy(groups = s.groups.map { g ->
                 if (g.id != groupId) g
@@ -3739,7 +4006,123 @@ class AppViewModel(
     }
 
     private fun updateOwnGroup(groupId: Int, change: (Group) -> Group) {
+        val before = _state.value.groups.firstOrNull { it.id == groupId }
         _state.update { s -> s.copy(groups = s.groups.map { if (it.id == groupId && it.mine) change(it) else it }) }
+        // Своё сообщество на сервере — целиком, с фото (уже загруженные — ссылкой)
+        val after = _state.value.groups.firstOrNull { it.id == groupId } ?: return
+        if (isServerGroup(groupId) && after.mine && after != before) {
+            runCatching { net.queueCommunity(after) }
+            refreshNetCounters()
+            kickNet()
+        }
+    }
+
+    // ---------- Сообщества на сервере ----------
+
+    /**
+     * Группа с сервера поверх той, что на телефоне: записи и «без звука» —
+     * здешние; фото — здешний файл, если он есть, иначе скачанная копия.
+     */
+    private fun mergeServerGroup(local: Group?, srv: Group): Group {
+        val known = (listOfNotNull(local?.cover) + local?.shop.orEmpty().flatMap { it.photos }).associateBy { it.id }
+        fun pick(a: Attachment): Attachment {
+            known[a.id]?.takeIf { it.path.isNotEmpty() && java.io.File(it.path).exists() }?.let { return it }
+            if (!net.isRemote(a.path)) return a
+            val f = net.mediaFile(a.path, mediaExt(a))
+            return if (f.exists() && f.length() > 0) a.copy(path = f.path) else a
+        }
+        return srv.copy(
+            posts = local?.posts.orEmpty(),
+            muted = local?.muted ?: false,
+            cover = srv.cover?.let(::pick),
+            shop = srv.shop.map { pr -> pr.copy(photos = pr.photos.map(::pick)) },
+            // Своё фото фона на сервер не уходит — у себя оно остаётся
+            backdrop = if (local?.mine == true && local.backdrop?.photo?.isNotEmpty() == true && srv.backdrop == null) local.backdrop else srv.backdrop,
+        )
+    }
+
+    /** Фото групп, которых ещё нет на телефоне, — скачать и показать. */
+    private suspend fun fetchGroupMedia(groupIds: Collection<Int>) {
+        for (id in groupIds) {
+            val g = _state.value.groups.firstOrNull { it.id == id } ?: continue
+            val remote = (listOfNotNull(g.cover) + g.shop.flatMap { it.photos }).filter { net.isRemote(it.path) }
+            for (a in remote) {
+                val f = runCatching { net.fetchMedia(a.path, ext = mediaExt(a)) }.getOrNull() ?: continue
+                fun fix(x: Attachment) = if (x.path == a.path) x.copy(path = f.path) else x
+                _state.update { s ->
+                    s.copy(groups = s.groups.map { cur ->
+                        if (cur.id != id) cur else cur.copy(cover = cur.cover?.let(::fix), shop = cur.shop.map { pr -> pr.copy(photos = pr.photos.map(::fix)) })
+                    })
+                }
+            }
+        }
+    }
+
+    /** Время, когда сообщества сверялись в последний раз. */
+    private var communitiesSyncedAt = 0L
+
+    /**
+     * Сообщества с сервера: мои (где состою) и самые большие. Мои, которых
+     * сервер больше не знает (удалили, заблокировали создателя), — уходят.
+     */
+    suspend fun syncCommunities() {
+        if (!serverMode || clock() - communitiesSyncedAt < 30_000) return
+        communitiesSyncedAt = clock()
+        val mine = net.api.myCommunities()
+        val popular = runCatching { net.api.communities() }.getOrDefault(emptyList())
+        val byId = LinkedHashMap<Int, Group>()
+        (mine + popular).forEach { byId.putIfAbsent(it.id, it) }
+        _state.update { s ->
+            val local = s.groups.associateBy { it.id }
+            val merged = byId.values.map { mergeServerGroup(local[it.id], it) }
+            val rest = s.groups.filter { it.id !in byId && !(it.id > COMMUNITY_ID_BASE && it.joined) }
+            s.copy(groups = merged + rest, openGroupId = s.openGroupId?.takeIf { id -> merged.any { it.id == id } || rest.any { it.id == id } })
+        }
+        peopleChanged()
+        fetchGroupMedia(byId.keys)
+    }
+
+    /** Поиск сообществ на сервере — найденные добавляются в список групп. */
+    fun searchCommunities(query: String) {
+        if (!serverMode || !demoReplies || query.trim().length < 2) return
+        viewModelScope.launch {
+            val found = runCatching { net.api.communities(query.trim()) }.getOrNull() ?: return@launch
+            _state.update { s ->
+                val local = s.groups.associateBy { it.id }
+                val add = found.filter { it.id !in local }.map { mergeServerGroup(null, it) }
+                s.copy(groups = s.groups + add)
+            }
+            fetchGroupMedia(found.map { it.id })
+        }
+    }
+
+    /** Открыли сообщество: свежие сведения и записи (свои ещё не ушедшие — сверху). */
+    suspend fun loadCommunity(id: Int) {
+        val srv = try { net.api.community(id) } catch (e: NetError) {
+            // Группы больше нет (удалили или создатель недоступен)
+            if (e.code == 404) _state.update { s ->
+                s.copy(groups = s.groups.filterNot { it.id == id }, openGroupId = s.openGroupId.takeIf { it != id }, groupSettingsOpen = s.groupSettingsOpen && s.openGroupId != id)
+            }
+            return
+        }
+        val page = runCatching { net.api.communityPosts(id, null, 50) }.getOrNull()
+        val posts = page?.let { withLocalMedia(it.items.filter { p -> p.author.id !in _state.value.blocked }) }
+        _state.update { s ->
+            s.copy(groups = s.groups.map { cur ->
+                if (cur.id != id) cur
+                else {
+                    val merged = mergeServerGroup(cur, srv)
+                    if (posts == null) merged
+                    else {
+                        // Свои ещё не ушедшие — сверху; уже ушедшие пришли с сервера
+                        val pending = cur.posts.filter { it.outboxKey.isNotEmpty() && net.outbox.get(it.outboxKey) != null }
+                        merged.copy(posts = (pending + posts).distinctBy { it.id })
+                    }
+                }
+            })
+        }
+        peopleChanged()
+        fetchGroupMedia(listOf(id))
     }
 
     // ---------- Витрина, сведения и оформление группы ----------
@@ -3888,6 +4271,11 @@ class AppViewModel(
                 else it.copy(joined = !it.joined, members = it.members + if (it.joined) -1 else 1)
             })
         }
+        val g = _state.value.groups.firstOrNull { it.id == groupId } ?: return
+        if (isServerGroup(groupId) && !g.mine) {
+            runCatching { net.queueCall(if (g.joined) "PUT" else "DELETE", "/v1/communities/$groupId/join", coalesce = "join:$groupId") }
+            kickNet()
+        }
     }
 
     /** Отключить или включить уведомления группы. */
@@ -3901,7 +4289,20 @@ class AppViewModel(
         if (title.length < 3) return t("Название — от 3 символов")
         if (title.length > 40) return t("Название — не длиннее 40 символов")
         if (_state.value.groups.any { it.name.equals(title, ignoreCase = true) }) return tf("Группа «%s» уже есть", title)
-        val id = (_state.value.groups.maxOfOrNull { it.id } ?: 0) + 1
+        // С сервером: группа создаётся там (нужна сеть) и приходит с его номером
+        if (serverMode) {
+            val draft = Group(0, title, description.trim().take(500), topic.ifBlank { GROUP_TOPICS.last() }, members = 1, seed = 100 + Random.nextInt(900), joined = true, mine = true)
+            viewModelScope.launch {
+                val g = try { net.api.createCommunity(draft, net.newKey()) } catch (e: NetError) {
+                    _state.update { it.copy(notice = if (e.kind == NetError.Kind.Offline) t("Группа не создана — нет сети") else t("Группа не создана — попробуйте позже")) }
+                    return@launch
+                }
+                _state.update { s -> s.copy(groups = listOf(mergeServerGroup(null, g)) + s.groups.filterNot { it.id == g.id }) }
+                openGroup(g.id)
+            }
+            return null
+        }
+        val id = (_state.value.groups.filter { it.id <= COMMUNITY_ID_BASE }.maxOfOrNull { it.id } ?: 0) + 1
         val group = Group(
             id, title, description.trim(), topic.ifBlank { GROUP_TOPICS.last() },
             members = 1, seed = 100 + id, joined = true, mine = true,
@@ -3912,6 +4313,14 @@ class AppViewModel(
     }
 
     fun deleteGroup(groupId: Int) {
+        val g = _state.value.groups.firstOrNull { it.id == groupId && it.mine }
+        if (g != null && isServerGroup(groupId)) {
+            // Записи, что ещё не ушли, — не нужны: группы больше нет
+            g.posts.filter { it.outboxKey.isNotEmpty() }.forEach { runCatching { net.discard(it.outboxKey) } }
+            runCatching { net.queueCall("DELETE", "/v1/communities/$groupId") }
+            refreshNetCounters()
+            kickNet()
+        }
         _state.update { s ->
             s.copy(groups = s.groups.filterNot { it.id == groupId && it.mine }, openGroupId = null, groupSettingsOpen = false)
         }
@@ -3925,13 +4334,17 @@ class AppViewModel(
         val trimmed = text.trim()
         val built = poll?.build(nextId++)
         if (trimmed.isEmpty() && media.isEmpty() && built == null) return
-        _state.update { s ->
-            s.copy(groups = s.groups.map {
-                if (it.id != groupId || !it.joined || (it.onlyOwnerPosts && !it.mine)) it
-                else it.copy(posts = listOf(Post(nextId++, s.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), poll = built)) + it.posts)
-            })
-        }
+        val g = _state.value.groups.firstOrNull { it.id == groupId } ?: return
+        if (!g.joined || (g.onlyOwnerPosts && !g.mine)) return
+        var post = Post(nextId++, _state.value.me, trimmed, 0, media = media.take(MAX_MEDIA), createdAt = clock(), poll = built)
+        // Сообщество на сервере — через очередь, как своя запись
+        if (isServerGroup(groupId)) post = post.copy(outboxKey = runCatching { net.queueGroupPost(groupId, post) }.getOrDefault(""))
+        _state.update { s -> s.copy(groups = s.groups.map { if (it.id != groupId) it else it.copy(posts = listOf(post) + it.posts) }) }
         media.filter { it.isGif }.forEach(::rememberGif)
+        if (isServerGroup(groupId)) {
+            refreshNetCounters()
+            kickNet()
+        }
     }
 
     // ==================== ОПРОСЫ ====================
@@ -4186,6 +4599,11 @@ class AppViewModel(
                     else it.copy(liked = !it.liked, likes = it.likes + if (it.liked) -1 else 1)
                 })
             })
+        }
+        val p = _state.value.groups.firstOrNull { it.id == groupId }?.posts?.firstOrNull { it.id == postId } ?: return
+        if (isServerPost(postId) && p.outboxKey.isEmpty()) {
+            runCatching { net.queueLike(postId, p.liked) }
+            kickNet()
         }
     }
 
@@ -4904,6 +5322,8 @@ class AppViewModel(
     companion object {
         /** С этого номера — записи, комментарии и истории сервера (у телефона номера меньше). */
         const val SERVER_ID_BASE = 10_000_000L
+        /** Номера сообществ на сервере — больше этого (демо-группы — маленькие). */
+        const val COMMUNITY_ID_BASE = 50_000_000
 
         /** Служебные строки переписки (не человек): «Вы создали группу». */
         const val SYSTEM_AUTHOR = -1

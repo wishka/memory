@@ -140,7 +140,7 @@ object AdminPage {
     var actions = el("div", "row");
     actions.style.marginTop = "10px";
     actions.appendChild(button("Оставить", "", "dismiss"));
-    if (r.kind === "post" || r.kind === "comment" || r.kind === "story") actions.appendChild(button("Удалить", "primary", "remove"));
+    if (r.kind === "post" || r.kind === "prism" || r.kind === "comment" || r.kind === "story") actions.appendChild(button("Удалить", "primary", "remove"));
     if (r.verified !== false) actions.appendChild(button("Удалить и заблокировать автора", "danger", "ban"));
     c.appendChild(actions);
 
