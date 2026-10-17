@@ -33,8 +33,8 @@ val giphyApiKey: String = (env("GIPHY_API_KEY") ?: localProperties.getProperty("
 // Нет ключа — отправка выключена, отчёты остаются на телефоне.
 val sentryDsn: String = (env("SENTRY_DSN") ?: localProperties.getProperty("sentry.dsn").orEmpty()).replace("\"", "")
 
-// Прямые эфиры (LiveKit): адрес сервера — local.properties (livekit.url=wss://…) или LIVEKIT_URL.
-// Нет адреса — эфиры в демо-режиме (docs/LIVE.md).
+// Звонки и эфиры (LiveKit): адрес и токен комнаты присылает сервер Memory — в приложении
+// задавать не нужно. LIVEKIT_URL остаётся только для сведения (docs/LIVE.md).
 val livekitUrl: String = (env("LIVEKIT_URL") ?: localProperties.getProperty("livekit.url").orEmpty()).replace("\"", "")
 // Сервер Memory (API): local.properties (api.url=https://…) или API_URL. Пусто — встроенный демо-сервер на телефоне.
 val apiUrl: String = (env("API_URL") ?: localProperties.getProperty("api.url").orEmpty()).replace("\"", "")
@@ -143,6 +143,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    // Звонки и эфиры: LiveKit (WebRTC); комнату и токен выдаёт сервер Memory — docs/LIVE.md
+    implementation("io.livekit:livekit-android:2.29.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // PRISM: монтаж и сборка ролика в mp4, предпросмотр

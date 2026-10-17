@@ -32,6 +32,8 @@ data class LiveStream(
     val friendsOnly: Boolean = false,
     /** Картинка демо-эфира (туманность) — пока видео не идёт с сервера. */
     val seed: Int = 0,
+    /** Эфир на сервере (номер — серверный): зрители, сердечки и чат — оттуда, не из демо. */
+    val server: Boolean = false,
 ) {
     val live: Boolean get() = endedAt == 0L
     val room: String get() = "live-$id"
@@ -48,11 +50,11 @@ data class LiveStream(
  * в CI — секрет), см. docs/LIVE.md.
  */
 interface LiveTransport {
-    /** Начать публикацию камеры и микрофона. */
-    fun publish(room: String, token: String)
+    /** Начать публикацию камеры и микрофона (url — адрес LiveKit; пустой токен — демо). */
+    fun publish(url: String, room: String, token: String)
 
     /** Подключиться зрителем. */
-    fun join(room: String, token: String)
+    fun join(url: String, room: String, token: String)
 
     /** Выйти из комнаты (ведущий — закончить публикацию). */
     fun leave()
@@ -63,8 +65,8 @@ interface LiveTransport {
 
 /** Пока сервера нет: эфир идёт «на телефоне» — интерфейс, зрители и чат из демо. */
 object DemoLiveTransport : LiveTransport {
-    override fun publish(room: String, token: String) {}
-    override fun join(room: String, token: String) {}
+    override fun publish(url: String, room: String, token: String) {}
+    override fun join(url: String, room: String, token: String) {}
     override fun leave() {}
     override val connected: Boolean = false
 }

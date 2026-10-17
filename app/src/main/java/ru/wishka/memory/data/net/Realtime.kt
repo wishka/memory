@@ -26,6 +26,22 @@ sealed class RtEvent {
         override val chatId: Int get() = 0
     }
 
+    /**
+     * Звонок: state — "ringing" (звонят мне), "accepted", "declined",
+     * "cancelled" (не дождались), "ended". user — кто (для справочника).
+     */
+    data class Call(val id: Long, val state: String, val from: Int, val video: Boolean, val user: JSONObject? = null) : RtEvent() {
+        override val chatId: Int get() = 0
+    }
+    /** Эфир: state — "started" (live — сам эфир), "ended", "counts" (зрители и сердечки). */
+    data class Live(val id: Long, val state: String, val live: JSONObject? = null, val viewers: Int = 0, val hearts: Int = 0) : RtEvent() {
+        override val chatId: Int get() = 0
+    }
+    /** Комментарий в эфире. */
+    data class LiveComment(val liveId: Long, val comment: JSONObject) : RtEvent() {
+        override val chatId: Int get() = 0
+    }
+
     fun json(): JSONObject = when (this) {
         is NewMessage -> JSONObject().put("type", "message").put("chat", chatId).put("message", message)
         is Typing -> JSONObject().put("type", "typing").put("chat", chatId).put("user", userId).put("on", typing)
@@ -34,6 +50,9 @@ sealed class RtEvent {
             .put("members", org.json.JSONArray(memberIds)).put("admins", org.json.JSONArray(adminIds))
         is Follow -> JSONObject().put("type", "follow").put("user", userId).put("state", state)
         is NewComment -> JSONObject().put("type", "comment").put("post", postId).put("comment", comment)
+        is Call -> JSONObject().put("type", "call").put("id", id).put("state", state).put("from", from).put("video", video).put("user", user ?: JSONObject.NULL)
+        is Live -> JSONObject().put("type", "live").put("id", id).put("state", state).put("live", live ?: JSONObject.NULL).put("viewers", viewers).put("hearts", hearts)
+        is LiveComment -> JSONObject().put("type", "live_comment").put("id", liveId).put("comment", comment)
     }
 
     companion object {
@@ -49,6 +68,9 @@ sealed class RtEvent {
                 }
                 "follow" -> Follow(o.optInt("user"), o.optString("state"))
                 "comment" -> o.optJSONObject("comment")?.let { NewComment(o.optLong("post"), it) }
+                "call" -> Call(o.optLong("id"), o.optString("state"), o.optInt("from"), o.optBoolean("video"), o.optJSONObject("user"))
+                "live" -> Live(o.optLong("id"), o.optString("state"), o.optJSONObject("live"), o.optInt("viewers"), o.optInt("hearts"))
+                "live_comment" -> o.optJSONObject("comment")?.let { LiveComment(o.optLong("id"), it) }
                 else -> null
             }
         }

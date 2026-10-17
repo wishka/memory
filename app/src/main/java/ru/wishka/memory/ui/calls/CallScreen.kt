@@ -40,6 +40,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.MutableStateFlow
+import ru.wishka.memory.call.AskCallPermissions
+import ru.wishka.memory.call.VideoViews
 import ru.wishka.memory.data.ActiveCall
 import ru.wishka.memory.data.CallPhase
 import ru.wishka.memory.data.Calls
@@ -81,11 +85,17 @@ fun CallScreen(vm: AppViewModel, state: UiState, call: ActiveCall) {
     }
     BackHandler { /* звонок не сбрасывается «назад» — только кнопкой */ }
     val videoOn = call.video && call.cameraOn && call.phase != CallPhase.Incoming
+    // Связь LiveKit: видео собеседника и своя камера идут через неё
+    val views = vm.callTransport as? VideoViews
+    val noVideo = remember { MutableStateFlow(false) }
+    val remoteOn by (views?.remoteVideo ?: noVideo).collectAsState()
+    if (views != null) AskCallPermissions(call.video) { views.permissionsGranted() }
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF241A4A), Color(0xFF07081A))))) {
         if (call.video && call.phase == CallPhase.Active) {
-            // Собеседник: пока сервера нет — демо-картинка вместо его видео
-            Nebula(peer.id * 37 + 11, Modifier.fillMaxSize())
+            // Собеседник: его видео; пока его нет (демо, соединяемся) — картинка
+            if (remoteOn && views != null) views.Remote(Modifier.fillMaxSize())
+            else Nebula(peer.id * 37 + 11, Modifier.fillMaxSize())
         }
         Column(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(24.dp),
@@ -139,7 +149,11 @@ fun CallScreen(vm: AppViewModel, state: UiState, call: ActiveCall) {
                     .padding(16.dp)
                     .size(width = 110.dp, height = 160.dp)
                     .clip(RoundedCornerShape(16.dp)),
-            ) { CameraPreview(Modifier.fillMaxSize(), front = call.frontCamera) }
+            ) {
+                // Камера занята звонком — показываем то, что уходит собеседнику
+                if (views != null && vm.callTransport.connected) views.Local(Modifier.fillMaxSize())
+                else CameraPreview(Modifier.fillMaxSize(), front = call.frontCamera)
+            }
         }
     }
 }

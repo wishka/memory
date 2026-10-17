@@ -853,6 +853,54 @@ paths:
       responses:
         "200": { description: "{items: [{id, owner, title, stories, cover, storyList: [Story]}]}" }
         "403": { description: Закрытый профиль }
+  /v1/calls:
+    post:
+      summary: Позвонить — сервер звонит собеседнику (событие call и пуш), звонящему — комната LiveKit
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [to], properties: { to: { type: integer }, video: { type: boolean } } } } }
+      responses:
+        "201": { description: RoomTicket }
+        "403": { description: Заблокирован или собеседник не принимает звонки от вас (privacy.calls) }
+        "409": { description: Занято }
+        "503": { description: LiveKit на сервере не настроен }
+  /v1/calls/ringing:
+    get:
+      summary: Кто мне сейчас звонит (открыли приложение по пушу)
+      responses: { "200": { description: "{items: [{id, from, video, createdAt, user}]}" } }
+  /v1/calls/{callId}/{action}:
+    post:
+      summary: accept — ответить (RoomTicket); decline — отклонить; end — положить трубку (не дождался — у собеседника пропущенный)
+      parameters:
+        - { name: callId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: action, in: path, required: true, schema: { enum: [accept, decline, end] } }
+      responses:
+        "200": { description: RoomTicket (accept) }
+        "204": { description: Готово }
+        "410": { description: Звонок уже закончился }
+  /v1/lives:
+    get:
+      summary: Идущие эфиры, которые мне видны
+      responses: { "200": { description: "{items: [Live]}" } }
+    post:
+      summary: Начать эфир — подписчикам событие live и пуш; ведущему — RoomTicket с правом публиковать
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string, maxLength: 80 }, friendsOnly: { type: boolean } } } } }
+      responses: { "201": { description: "RoomTicket + live" }, "503": { description: LiveKit не настроен } }
+  /v1/lives/{liveId}:
+    delete:
+      summary: Закончить свой эфир
+      parameters:
+        - { name: liveId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses: { "204": { description: Закончен } }
+  /v1/lives/{liveId}/{action}:
+    post:
+      summary: join — смотреть (RoomTicket только на просмотр); leave; heart; comments {text ≤ 200}
+      parameters:
+        - { name: liveId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: action, in: path, required: true, schema: { enum: [join, leave, heart, comments] } }
+      responses: { "200": { description: RoomTicket (join) }, "201": { description: Комментарий }, "204": { description: Готово }, "404": { description: Эфир закончился или не виден } }
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
@@ -865,6 +913,14 @@ components:
       schema: { type: string, format: uuid }
       description: Один и тот же при каждом повторе одного действия
   schemas:
+    RoomTicket:
+      type: object
+      description: Куда подключаться в LiveKit
+      properties:
+        id: { type: integer, format: int64 }
+        url: { type: string, description: "wss://….livekit.cloud" }
+        room: { type: string, description: "call-<id> или live-<id>" }
+        token: { type: string, description: "JWT LiveKit (HS256): sub — номер человека, video.room, canPublish" }
     Community:
       type: object
       description: Сообщество — как группа в приложении (Group); posts всегда пустой, записи — /v1/communities/{id}/posts

@@ -194,6 +194,14 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
         onDispose { netMonitor.stop() }
     }
     LaunchedEffect(netMonitor) { netMonitor.online.collect { vm.setDeviceOnline(it) } }
+    // Звонки и эфиры — через LiveKit (адрес и токен даёт сервер; без сервера — демо)
+    // Одна связь на приложение: пересоздание экрана не рвёт разговор
+    LaunchedEffect(vm) {
+        vm.callTransport = ru.wishka.memory.call.LiveLinks.call(context)
+        vm.liveTransport = ru.wishka.memory.call.LiveLinks.live(context)
+    }
+    // Вернулись в приложение (например, по пушу о звонке) — звонки и эфиры с сервера
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_START) { vm.onForeground() }
     // Короткие сообщения модели («Слишком часто…») — тостом
     val vmState by vm.state.collectAsState()
     val notice = vmState.notice

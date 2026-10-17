@@ -266,9 +266,10 @@ docker compose up -d
 | `Hub.kt` | Кто сейчас на связи по WebSocket |
 | `Crypto.kt` | Пароли, токены |
 | `Push.kt` | Пуши: FCM HTTP v1 (JWT подписывается ключом сервисного аккаунта) |
+| `LiveKit.kt` | Токены комнат LiveKit (звонки и эфиры) |
 
 Проверки: `./gradlew -p server test` из корня репозитория.
-`CoreTest`, `SocialTest`, `ModerationTest` и `CommunityTest` — весь контракт на хранилище в памяти;
+`CoreTest`, `SocialTest`, `ModerationTest`, `CommunityTest` и `CallLiveTest` — весь контракт на хранилище в памяти;
 `PgStoreTest`, `PgSocialTest`, `PgModerationTest` и `PgCommunityTest` — те же проверки на PostgreSQL (если задан `TEST_DATABASE_URL`; в CI —
 `.github/workflows/server.yml`, там же собирается и запускается
 Docker-образ). Без Docker: `DATABASE_URL` не задан — сервер держит всё в
@@ -276,6 +277,14 @@ Docker-образ). Без Docker: `DATABASE_URL` не задан — серве
 
 ## Звонки и эфиры
 
-Пока демо. Для настоящих — [LiveKit Cloud](https://livekit.io/pricing)
-(план Build бесплатный, без карты): сервер Memory должен будет выдавать
-телефонам токены LiveKit — это отдельный шаг.
+Через [LiveKit Cloud](https://cloud.livekit.io) (план Build бесплатный, без
+карты). Проект → Settings → API Keys → Create key, затем в `server/.env`:
+
+```
+LIVEKIT_URL=wss://….livekit.cloud
+LIVEKIT_API_KEY=API…
+LIVEKIT_API_SECRET=…
+```
+
+`docker compose up -d --build` — в логе «Звонки и эфиры: LiveKit …».
+Секрет — только в `.env` (он в `.gitignore`). Подробно — [LIVE.md](LIVE.md).
