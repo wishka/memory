@@ -2,54 +2,62 @@
 
 Что в Memory уже работает на телефоне и что подключается вместе с сервером.
 
-## Прямые эфиры (LiveKit)
+## Звонки и прямые эфиры (LiveKit)
 
-Сейчас эфиры — **демо**: ведущий видит свою камеру, зрители, сердечки и чат
-приходят из демо-жизни, видео никуда не уходит.
+Видео и звук идут через [LiveKit Cloud](https://cloud.livekit.io) (план
+Build бесплатный). Сервер Memory только решает, кому можно, и выдаёт
+токены комнат (JWT HS256, `server/.../LiveKit.kt`); сам LiveKit ничего не
+знает о людях Memory.
 
-Код уже разделён: экран эфира знает только `LiveTransport`
-(`data/Live.kt`, `Data/Live.swift`) — `publish(room, token)`,
-`join(room, token)`, `leave()`. Сейчас вместо него `DemoLiveTransport`.
+**Подключение.**
 
-Подключение:
+1. В LiveKit Cloud: проект → Settings → API Keys → Create key.
+2. В `server/.env`: `LIVEKIT_URL=wss://….livekit.cloud`,
+   `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` — и
+   `docker compose up -d --build`. В логе: «Звонки и эфиры: LiveKit …».
+   Без них звонки и эфиры на сервере выключены (503), в демо — как были.
+3. В приложении ничего задавать не нужно: адрес LiveKit и токен
+   присылает сервер.
 
-1. Поднять сервер [LiveKit](https://livekit.io) (свой или LiveKit Cloud).
-2. На сервере Memory — `POST /live/token`: по входу человека выдаёт
-   токен комнаты `live-<id>` (ведущему — право публиковать, зрителям —
-   только смотреть; эфир «для друзей» — только друзьям).
-3. Адрес — `livekit.url=wss://…` в `local.properties` (Android) и
-   `LIVEKIT_URL` в `ios/Memory/Secrets.plist`; в CI — секрет `LIVEKIT_URL`.
-4. Android: зависимость `io.livekit:livekit-android`, класс
-   `LiveKitTransport : LiveTransport` → `vm.liveTransport = LiveKitTransport(...)`.
-   iPhone: пакет `client-sdk-swift` (Swift Package Manager в Xcode),
-   `LiveKitTransport: LiveTransport`.
-5. Экран зрителя вместо демо-картинки показывает видеодорожку ведущего.
+**Звонки** (`/v1/calls`, docs/openapi.yaml):
 
-## Звонки (LiveKit)
+- Позвонить — `POST /v1/calls {to, video}`: сервер проверяет блокировку и
+  «Кто может мне звонить» собеседника (`privacy.calls`: все / друзья /
+  никто), «занято», и звонит ему — событие `call` (`ringing`) по живому
+  каналу и пуш `call`. Звонящему — комната `call-<id>` и токен.
+- Ответить — `POST /v1/calls/{id}/accept` (токен), отклонить —
+  `…/decline`, положить трубку — `…/end` (не дождался — у собеседника
+  пропущенный, пуш `missed_call`). Звонит 45 с.
+- Открыли приложение по пушу — `GET /v1/calls/ringing`, звонок на экране.
+- Звонки живут в памяти сервера: перезапуск сервера обрывает идущие.
 
-Сейчас звонки — **демо**: экран звонка, кнопки, история звонков,
-пропущенные и строка звонка в переписке работают; друг «отвечает» через
-пару секунд, голос и видео никуда не уходят. Своя камера в окошке —
-настоящая.
+**Эфиры** (`/v1/lives`):
 
-Экран знает только `CallTransport` (`data/Calls.kt`, `Data/Calls.swift`):
-`connect(room, token, video)`, `setMuted`, `setCamera(on, front)`,
-`hangUp()`. Сейчас — `DemoCallTransport`.
+- `POST /v1/lives {title, friendsOnly}` — эфир и токен ведущего (камера и
+  микрофон); подписчикам — событие `live` (`started`) и пуш `live`.
+- `GET /v1/lives` — идущие эфиры, которые мне видны (профиль открыт или я
+  подписан; «для друзей» — только подписчикам).
+- `POST /v1/lives/{id}/join` — токен зрителя (только смотреть);
+  `…/leave`, `…/heart`, `…/comments {text}` — зрители, сердечки и чат идут
+  через сервер событиями `live` (`counts`) и `live_comment`.
+- `DELETE /v1/lives/{id}` — конец эфира (зрителям — `ended`). Забытый эфир
+  кончается сам через 4 часа.
 
-Подключение — тот же сервер LiveKit, что у эфиров:
+**Телефоны.**
 
-1. На сервере Memory — `POST /calls/token`: комната `call-<id>` на двоих;
-   токен выдаётся, только если собеседник разрешил вам звонить
-   (`Privacy.calls`: все / друзья / никто) и не заблокировал вас.
-2. Входящий звонок — пуш: на Android high-priority FCM с
-   `full-screen intent` (foreground service типа `phoneCall`,
-   разрешения `CAMERA`, `RECORD_AUDIO`), на iPhone — VoIP-пуш
-   (PushKit) + CallKit (`UIBackgroundModes: voip` добавить в Info.plist
-   через Xcode, вместе с подключением).
-3. `LiveKitCallTransport : CallTransport` → `vm.callTransport = …`;
-   вместо демо-картинки собеседника — его видеодорожка.
-4. Ответ, отказ, «нет ответа» — события комнаты; `callAnswered()` /
-   `callTimeout()` у модели уже есть.
+- Android: `call/LiveKitTransports.kt` — `LiveKitCallTransport`,
+  `LiveKitLiveTransport` (библиотека `io.livekit:livekit-android`), видео —
+  `TextureViewRenderer` на экранах звонка и эфира; камера и микрофон
+  просятся при первом звонке или эфире.
+- iPhone: пока демо. Нужно добавить в Xcode пакет
+  `https://github.com/livekit/client-sdk-swift` и написать
+  `LiveKitCallTransport` / `LiveKitLiveTransport` по образцу Android;
+  входящие звонки при закрытом приложении — VoIP-пуш (PushKit) + CallKit
+  (`UIBackgroundModes: voip` в Info.plist через Xcode).
+- Входящий звонок на Android при закрытом приложении — обычное
+  уведомление «Звонок»; нажатие открывает приложение, звонок уже на экране.
+  Полноэкранный звонок поверх блокировки (`full-screen intent`,
+  foreground service `phoneCall`) — следующий шаг.
 
 ## Сквозное шифрование переписки
 

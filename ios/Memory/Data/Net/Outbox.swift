@@ -8,6 +8,12 @@ enum OpKind: String {
     case sendMessage = "message"
     /// История: payload — Story в JSON (ApiCodec.storyJson), вложение — после загрузки.
     case createStory = "story"
+    /// Запись в сообществе: payload — {community, post}; вложения — после загрузки.
+    case createGroupPost = "group-post"
+    /// PRISM: payload — Prism в JSON (ApiCodec.prismJson); видео и обложка — после загрузки.
+    case createPrism = "prism"
+    /// Своё сообщество целиком (PATCH): payload — группа в JSON; target — её номер.
+    case saveCommunity = "community"
     /// Любой запрос: группы, «прочитано», профиль. payload — {method, path, body, coalesce}.
     case call = "call"
 
@@ -87,8 +93,15 @@ final class Outbox {
         return OutboxOp.of(o)
     }
 
+    /// По времени постановки; при равном — в порядке добавления.
     func all() -> [OutboxOp] {
-        cache.keys(CacheKeys.op).compactMap { decode(cache.get($0)) }
+        let ops: [OutboxOp] = cache.keys(CacheKeys.op).compactMap { decode(cache.get($0)) }
+        let indexed = Array(ops.enumerated())
+        let sorted = indexed.sorted { a, b in
+            if a.element.createdAt != b.element.createdAt { return a.element.createdAt < b.element.createdAt }
+            return a.offset < b.offset
+        }
+        return sorted.map(\.element)
     }
 
     var count: Int { cache.keys(CacheKeys.op).count }
@@ -114,6 +127,13 @@ final class Outbox {
 
     func remove(_ key: String) {
         cache.remove(cacheKey(key))
+    }
+
+    /// Ещё не ушедшее действие — с новым содержимым (правка записи до отправки).
+    func replacePayload(_ key: String, _ payload: String) {
+        guard var op = get(key) else { return }
+        op.payload = payload
+        save(op)
     }
 
     private func coalesceOf(_ op: OutboxOp) -> String? {
@@ -149,10 +169,13 @@ final class Outbox {
         var sent = 0
         var waiting = 0
         var failed = 0
-        var blockedChats = Set<Int64>()
+        // По порядку: сообщения одной переписки и сохранения одного сообщества
+        // (сообщество уходит целиком — старое не должно обогнать новое)
+        var blockedLanes = Set<String>()
         for op in all() {
-            let chatOrdered = op.kind == .sendMessage
-            if chatOrdered && blockedChats.contains(op.target) {
+            let chatOrdered = op.kind == .sendMessage || op.kind == .saveCommunity
+            let lane = op.kind.rawValue + ":" + String(op.target)
+            if chatOrdered && blockedLanes.contains(lane) {
                 waiting += 1
                 continue
             }
@@ -164,7 +187,7 @@ final class Outbox {
             }
             if op.nextAt > now || !ready(op) {
                 waiting += 1
-                if chatOrdered { blockedChats.insert(op.target) }
+                if chatOrdered { blockedLanes.insert(lane) }
                 continue
             }
             do {
@@ -193,7 +216,7 @@ final class Outbox {
                     retry.error = err.kind.rawValue
                     save(retry)
                     waiting += 1
-                    if chatOrdered { blockedChats.insert(op.target) }
+                    if chatOrdered { blockedLanes.insert(lane) }
                     if err.kind == .offline {
                         return FlushResult(sent: sent, waiting: count, failed: failed, offline: true)
                     }

@@ -160,6 +160,18 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Смена пароля в «Безопасности». Ответ — текст ошибки или null; пароль проверяется не в главном потоке. */
+    /** Проверить смену пароля, ничего не меняя (сначала — сервер, потом телефон). */
+    suspend fun checkPasswordChange(current: String, new: String, repeat: String): String? {
+        val account = _state.value.account ?: return t("Вы не вошли")
+        return withContext(Dispatchers.Default) { auth.checkChange(account.username, current, new, repeat) }
+    }
+
+    /** Подходит ли пароль текущего аккаунта. */
+    suspend fun checkPassword(password: String): Boolean {
+        val account = _state.value.account ?: return false
+        return withContext(Dispatchers.Default) { auth.checkPasswordOf(account.username, password) }
+    }
+
     suspend fun changePassword(current: String, new: String, repeat: String): String? {
         val account = _state.value.account ?: return t("Вы не вошли")
         return withContext(Dispatchers.Default) { auth.changePassword(account.username, current, new, repeat) }

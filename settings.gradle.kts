@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // LiveKit тянет пару библиотек с JitPack (audioswitch)
+        maven("https://jitpack.io")
     }
 }
 

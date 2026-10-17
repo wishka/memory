@@ -64,6 +64,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.MutableStateFlow
+import ru.wishka.memory.call.AskCallPermissions
+import ru.wishka.memory.call.VideoViews
 import ru.wishka.memory.data.Demo
 import ru.wishka.memory.data.LiveStream
 import ru.wishka.memory.data.Lives
@@ -207,8 +211,19 @@ fun LiveScreen(vm: AppViewModel, state: UiState, live: LiveStream) {
     }
     BackHandler { vm.back() }
 
+    // Связь LiveKit: своя камера ведущего и видео эфира у зрителя
+    val views = vm.liveTransport as? VideoViews
+    val noVideo = remember { MutableStateFlow(false) }
+    val remoteOn by (views?.remoteVideo ?: noVideo).collectAsState()
+    if (views != null && mine) AskCallPermissions(video = true) { views.permissionsGranted() }
+
     Box(Modifier.fillMaxSize().background(Palette.Void)) {
-        if (mine) ru.wishka.memory.ui.components.CameraPreview(Modifier.fillMaxSize()) else {
+        if (mine) {
+            if (views != null && vm.liveTransport.connected) views.Local(Modifier.fillMaxSize())
+            else ru.wishka.memory.ui.components.CameraPreview(Modifier.fillMaxSize())
+        } else if (remoteOn && views != null) {
+            views.Remote(Modifier.fillMaxSize())
+        } else {
             Nebula(live.seed, Modifier.fillMaxSize())
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Avatar(person, size = 96.dp)

@@ -15,6 +15,8 @@ data class UserRow(
     val created: Long = 0,
     /** Закрытый профиль: подписка — по заявке, записи и истории — только подписчикам. */
     val closed: Boolean = false,
+    /** Заблокирован модератором: войти нельзя, его не видно. */
+    val banned: Boolean = false,
 )
 
 /** Устройство, с которого вошли; токены хранятся только отпечатками (SHA-256). */
@@ -32,7 +34,24 @@ data class DeviceRow(
 )
 
 /** Запись: body — JSON записи в формате API (без автора и счётчиков — их сервер подставляет сам). */
-data class PostRow(val id: Long, val author: Int, val created: Long, val body: String, val likes: Int, val commentsOff: Boolean)
+/**
+ * community — номер сообщества (0 — личная запись); kind — "post" или
+ * "prism" (короткое видео). Ленты, «Интересное» и страница человека —
+ * только личные записи; у сообществ и PRISM — свои списки.
+ */
+data class PostRow(
+    val id: Long,
+    val author: Int,
+    val created: Long,
+    val body: String,
+    val likes: Int,
+    val commentsOff: Boolean,
+    val community: Int = 0,
+    val kind: String = "post",
+)
+
+/** Сообщество (группа с записями и витриной): body — JSON группы, как у приложения. */
+data class CommunityRow(val id: Int, val owner: Int, val name: String, val topic: String, val created: Long, val body: String)
 
 data class ChatRow(val id: Int, val kind: String, val title: String, val owner: Int, val created: Long) {
     val direct: Boolean get() = kind == "direct"
@@ -55,6 +74,25 @@ data class StoryRow(val id: Long, val author: Int, val created: Long, val expire
 
 data class StoryViewRow(val storyId: Long, val userId: Int, val at: Long, val liked: Boolean)
 
+/**
+ * Жалоба. kind — post, comment, story, prism, message, person; target —
+ * номер того, на что жалуются (у сообщений и PRISM — номер телефона, тогда
+ * модератор смотрит preview); author — на кого.
+ */
+data class ReportRow(
+    val id: Long,
+    val reporter: Int,
+    val kind: String,
+    val target: Long,
+    val author: Int,
+    val reason: String,
+    val note: String,
+    val preview: String,
+    val created: Long,
+    /** open — ждёт модератора; dismissed, removed, banned — решено. */
+    val status: String = "open",
+)
+
 /** Сохранённый ответ на запрос с Idempotency-Key: повтор получит его же. */
 data class IdemRow(val status: Int, val body: String)
 
@@ -70,6 +108,7 @@ interface Store {
     fun userByLogin(login: String): UserRow?
     fun searchUsers(query: String, limit: Int): List<UserRow>
     fun updateUser(row: UserRow)
+    fun updatePassword(id: Int, passHash: String, salt: String)
 
     // Устройства
     fun saveDevice(row: DeviceRow)
@@ -82,7 +121,12 @@ interface Store {
     fun clearPushToken(token: String)
 
     // Записи
-    fun createPost(author: Int, created: Long, body: String): PostRow
+    fun createPost(author: Int, created: Long, body: String, community: Int = 0, kind: String = "post"): PostRow
+    fun updatePostBody(id: Long, body: String)
+    /** Записи сообщества, новые сверху. */
+    fun communityPosts(community: Int, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
+    /** PRISM всех, новые сверху. */
+    fun prisms(beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
     fun post(id: Long): PostRow?
     /** Новые сверху; после (createdAt, id) — следующая страница. author == null — все. */
     fun posts(author: Int?, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow>
@@ -142,12 +186,47 @@ interface Store {
     fun addMessage(chatId: Int, author: Int, sentAt: Long, body: String): MessageRow
     /** Новые сверху; before — номер сообщения (следующая страница). */
     fun messages(chatId: Int, before: Long?, limit: Int): List<MessageRow>
+    /** Сообщение по переписке, автору и времени сервера (для жалоб). */
+    fun messageAt(chatId: Int, author: Int, sentAt: Long): MessageRow?
 
     // Загрузки
     fun createUpload(row: UploadRow)
     fun upload(id: String): UploadRow?
     fun setUploadOffset(id: String, offset: Long)
     fun deleteUpload(id: String)
+
+    // Сообщества
+    fun createCommunity(owner: Int, name: String, topic: String, created: Long, body: String): CommunityRow
+    fun community(id: Int): CommunityRow?
+    fun updateCommunity(id: Int, name: String, topic: String, body: String)
+    /** Удалить сообщество с его записями. */
+    fun deleteCommunity(id: Int)
+    /** Поиск по названию (q == null — все); больше участников — выше. */
+    fun communities(query: String?, topic: String?, limit: Int): List<CommunityRow>
+    fun setMember(community: Int, userId: Int, on: Boolean, at: Long)
+    fun isMember(community: Int, userId: Int): Boolean
+    fun memberCount(community: Int): Int
+    fun communitiesOf(userId: Int): List<CommunityRow>
+
+    // «Актуальное»: подборки своих историй (JSON-список), живут, пока не удалят
+    fun highlights(owner: Int): String
+    fun setHighlights(owner: Int, body: String)
+
+    // Модерация
+    fun createReport(row: ReportRow): ReportRow
+    fun report(id: Long): ReportRow?
+    /** status == null — все; новые сверху. */
+    fun reports(status: String?, limit: Int): List<ReportRow>
+    fun setReportStatus(id: Long, status: String)
+    fun setBlock(blocker: Int, blocked: Int, on: Boolean)
+    /** Кого заблокировал человек. */
+    fun blockedBy(userId: Int): Set<Int>
+    /** Есть ли блокировка в любую сторону. */
+    fun blockedEither(a: Int, b: Int): Boolean
+    fun deletePost(id: Long)
+    fun uploadsOf(owner: Int): List<UploadRow>
+    /** Удалить человека со всем, что его (устройства, записи, подписки, истории…). */
+    fun deleteUser(id: Int)
 
     // Повторы
     fun idem(userId: Int, key: String): IdemRow?

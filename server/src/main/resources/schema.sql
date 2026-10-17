@@ -152,3 +152,61 @@ CREATE TABLE IF NOT EXISTS close_friends (
     friend INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     PRIMARY KEY (owner, friend)
 );
+
+-- Раунд 26: модерация — блокировки, жалобы, бан
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS blocks (
+    blocker INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    blocked INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    PRIMARY KEY (blocker, blocked)
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id       BIGSERIAL PRIMARY KEY,
+    reporter INTEGER NOT NULL,
+    kind     TEXT NOT NULL,
+    target   BIGINT NOT NULL,
+    author   INTEGER NOT NULL,
+    reason   TEXT NOT NULL,
+    note     TEXT NOT NULL DEFAULT '',
+    preview  TEXT NOT NULL DEFAULT '',
+    created  BIGINT NOT NULL,
+    status   TEXT NOT NULL DEFAULT 'open'
+);
+CREATE INDEX IF NOT EXISTS reports_status ON reports (status, id DESC);
+
+-- Раунд 27: сообщества, PRISM, «Актуальное»
+
+-- Запись в сообществе (community) или короткое видео PRISM (kind = 'prism')
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS community INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'post';
+CREATE INDEX IF NOT EXISTS posts_community ON posts (community, created DESC, id DESC);
+CREATE INDEX IF NOT EXISTS posts_kind ON posts (kind, created DESC, id DESC);
+
+-- Номера сообществ — с 50 000 001: у демо-групп на телефоне — маленькие
+CREATE SEQUENCE IF NOT EXISTS community_seq START 50000001;
+
+CREATE TABLE IF NOT EXISTS communities (
+    id      INTEGER PRIMARY KEY DEFAULT nextval('community_seq'),
+    owner   INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name    TEXT NOT NULL,
+    topic   TEXT NOT NULL DEFAULT '',
+    created BIGINT NOT NULL,
+    body    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS communities_name ON communities (lower(name));
+
+CREATE TABLE IF NOT EXISTS community_members (
+    community INTEGER NOT NULL REFERENCES communities (id) ON DELETE CASCADE,
+    user_id   INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    joined    BIGINT NOT NULL,
+    PRIMARY KEY (community, user_id)
+);
+CREATE INDEX IF NOT EXISTS community_members_user ON community_members (user_id);
+
+CREATE TABLE IF NOT EXISTS highlights (
+    owner INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    body  TEXT NOT NULL
+);

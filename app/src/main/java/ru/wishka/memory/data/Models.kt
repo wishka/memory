@@ -374,6 +374,8 @@ data class Prism(
     /** Обложка своего ролика — кадр, выбранный в редакторе. */
     val cover: Attachment? = null,
     val createdAt: Long = 0,
+    /** Свой ролик ещё уходит на сервер: ключ очереди; "" — ушёл (или без сервера). */
+    val outboxKey: String = "",
 )
 
 /**

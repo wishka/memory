@@ -118,13 +118,20 @@ class LocalAuth(
      * Сменить пароль: нужен текущий. null — готово, иначе текст ошибки.
      * Сессия остаётся: человек не выходит из профиля.
      */
-    fun changePassword(username: String, current: String, new: String, repeat: String): String? {
+    /** Можно ли сменить пароль (ничего не меняет): null — можно, иначе текст ошибки. */
+    fun checkChange(username: String, current: String, new: String, repeat: String): String? {
         val login = normalize(username)
         if (current.isEmpty()) return t("Введите текущий пароль")
         if (!checkPassword(login, current)) return t("Текущий пароль не подходит")
         validatePassword(new)?.let { return it }
         if (new != repeat) return t("Пароли не совпадают")
         if (new == current) return t("Новый пароль совпадает с текущим")
+        return null
+    }
+
+    fun changePassword(username: String, current: String, new: String, repeat: String): String? {
+        val login = normalize(username)
+        checkChange(username, current, new, repeat)?.let { return it }
         val salt = PasswordHasher.newSalt()
         store.put(key(login, "salt"), salt.toHex())
         store.put(key(login, "hash"), PasswordHasher.hash(new, salt, iterations).toHex())

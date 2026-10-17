@@ -190,6 +190,24 @@ class Api(
         }
     }
 
+    // ── Аккаунт и модерация ──────────────────────────────────────────
+
+    /** Удалить аккаунт на сервере со всем, что в нём (нужен пароль). */
+    suspend fun deleteMe(password: String) {
+        sendJson("DELETE", "/v1/me", JSONObject().put("password", password), null)
+    }
+
+    /** Сменить пароль на сервере; остальные устройства выходят. */
+    suspend fun changePassword(current: String, new: String) {
+        sendJson("PUT", "/v1/me/password", JSONObject().put("current", current).put("new", new), null)
+    }
+
+    /** Кого я заблокировал (номера на сервере). */
+    suspend fun blocked(): List<Int> {
+        val arr = getJson("/v1/me/blocked").optJSONArray("ids") ?: JSONArray()
+        return (0 until arr.length()).map { arr.optInt(it) }
+    }
+
     /** Мои переписки на сервере (личные и группы) — JSON как есть. */
     suspend fun chats(): List<JSONObject> {
         val arr = getJson("/v1/chats").optJSONArray("items") ?: JSONArray()
@@ -271,6 +289,117 @@ class Api(
         val c = codec()
         return c.messageOf(sendJson("POST", "/v1/chats/$chatId/messages", c.messageJson(message), key))
     }
+
+    // ── Сообщества, PRISM, «Актуальное» ──────────────────────────────
+
+    /** Сообщество с сервера: создатель — в справочник, номер — как на телефоне. */
+    private fun group(o: JSONObject): ru.wishka.memory.data.Group {
+        Directory.remember(o.optJSONObject("ownerInfo"))
+        val g = codec().groupOf(o)
+        return g.copy(ownerId = Directory.local(g.ownerId))
+    }
+
+    private fun groups(o: JSONObject): List<ru.wishka.memory.data.Group> {
+        val arr = o.optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { group(it) }.getOrNull() } }
+    }
+
+    /** Поиск сообществ (q == null — самые большие). */
+    suspend fun communities(q: String? = null): List<ru.wishka.memory.data.Group> =
+        groups(getJson("/v1/communities", if (q.isNullOrBlank()) emptyMap() else mapOf("q" to q)))
+
+    /** Сообщества, где я состою (и свои). */
+    suspend fun myCommunities(): List<ru.wishka.memory.data.Group> = groups(getJson("/v1/me/communities"))
+
+    suspend fun community(id: Int): ru.wishka.memory.data.Group = group(getJson("/v1/communities/$id"))
+
+    /** Новое сообщество; ответ — оно же с номером сервера. */
+    suspend fun createCommunity(g: ru.wishka.memory.data.Group, key: String): ru.wishka.memory.data.Group {
+        val body = communityBody(g)
+        return group(sendJson("POST", "/v1/communities", body, key))
+    }
+
+    /** Тело сообщества для сервера: без записей и того, что считает сервер. */
+    fun communityBody(g: ru.wishka.memory.data.Group): JSONObject = codec().groupJson(g).apply {
+        listOf("posts", "members", "joined", "mine", "muted", "ownerId", "id").forEach { remove(it) }
+    }
+
+    suspend fun communityPosts(id: Int, cursor: String?, limit: Int = PAGE): Page<Post> =
+        posts(getJson("/v1/communities/$id/posts", query(cursor, limit)))
+
+    /** PRISM всех, новые сверху. */
+    suspend fun prisms(cursor: String?, limit: Int = PAGE): Page<ru.wishka.memory.data.Prism> {
+        val o = getJson("/v1/prisms", query(cursor, limit))
+        val c = codec()
+        val arr = o.optJSONArray("items") ?: JSONArray()
+        val items = (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { c.prismOf(it) }.getOrNull() } }
+        return Page(items, o.optString("next").ifEmpty { null }.takeUnless { o.isNull("next") })
+    }
+
+    /**
+     * «Актуальное» человека и истории в нём (даже старше суток). Номера
+     * подборок чужих людей — отрицательные: свои подборки на телефоне
+     * нумеруются с 1, так они не пересекутся.
+     */
+    suspend fun highlights(userId: Int, own: Boolean = false): Pair<List<ru.wishka.memory.data.Highlight>, List<ru.wishka.memory.data.Story>> {
+        val arr = getJson("/v1/users/$userId/highlights").optJSONArray("items") ?: JSONArray()
+        val c = codec()
+        val hs = ArrayList<ru.wishka.memory.data.Highlight>()
+        val stories = LinkedHashMap<Long, ru.wishka.memory.data.Story>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val h = runCatching { c.highlightOf(o) }.getOrNull() ?: continue
+            val id = if (own) h.id else -(userId.toLong() * 1000 + i + 1)
+            hs += h.copy(id = id, ownerId = Directory.local(h.ownerId))
+            val list = o.optJSONArray("storyList") ?: JSONArray()
+            for (j in 0 until list.length()) list.optJSONObject(j)?.let { so -> runCatching { c.storyOf(so) }.getOrNull()?.let { stories[it.id] = it } }
+        }
+        return hs to stories.values.toList()
+    }
+
+    // ── Звонки и эфиры (LiveKit) ─────────────────────────────────────
+
+    /** Куда подключаться: адрес LiveKit, комната и токен. */
+    data class RoomTicket(val id: Long, val url: String, val room: String, val token: String, val body: JSONObject)
+
+    private fun ticket(o: JSONObject) = RoomTicket(o.optLong("id"), o.optString("url"), o.optString("room"), o.optString("token"), o)
+
+    /** Позвонить (сервер проверит, можно ли, и позвонит собеседнику). */
+    suspend fun startCall(userId: Int, video: Boolean, key: String): RoomTicket =
+        ticket(sendJson("POST", "/v1/calls", JSONObject().put("to", userId).put("video", video), key))
+
+    suspend fun acceptCall(id: Long): RoomTicket = ticket(sendJson("POST", "/v1/calls/$id/accept", JSONObject(), null))
+
+    /** decline / end. */
+    suspend fun callAction(id: Long, action: String) {
+        sendJson("POST", "/v1/calls/$id/$action", JSONObject(), null)
+    }
+
+    /** Кто мне сейчас звонит (JSON: id, from, video, user). */
+    suspend fun ringingCalls(): List<JSONObject> {
+        val arr = getJson("/v1/calls/ringing").optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.onEach { Directory.remember(it.optJSONObject("user")) }
+    }
+
+    /** Эфир с сервера: ведущий — в справочник. */
+    fun liveOf(o: JSONObject): ru.wishka.memory.data.LiveStream {
+        Directory.remember(o.optJSONObject("authorInfo"))
+        return ru.wishka.memory.data.LiveStream(
+            o.optLong("id"), Directory.local(o.optInt("host")), o.optString("title"), o.optLong("startedAt"),
+            viewers = o.optInt("viewers"), peakViewers = o.optInt("viewers"), hearts = o.optInt("hearts"),
+            friendsOnly = o.optBoolean("friendsOnly"), seed = (o.optLong("id") % 1000).toInt(), server = true,
+        )
+    }
+
+    suspend fun lives(): List<ru.wishka.memory.data.LiveStream> {
+        val arr = getJson("/v1/lives").optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { liveOf(it) }.getOrNull() } }
+    }
+
+    suspend fun startLive(title: String, friendsOnly: Boolean, key: String): RoomTicket =
+        ticket(sendJson("POST", "/v1/lives", JSONObject().put("title", title).put("friendsOnly", friendsOnly), key))
+
+    suspend fun joinLive(id: Long): RoomTicket = ticket(sendJson("POST", "/v1/lives/$id/join", JSONObject(), null))
 
     companion object {
         const val PAGE = 20

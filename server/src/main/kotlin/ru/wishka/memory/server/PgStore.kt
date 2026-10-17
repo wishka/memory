@@ -62,10 +62,10 @@ class PgStore(url: String, user: String, password: String) : Store {
 
     // ── Строки ───────────────────────────────────────────────────────
 
-    private val userCols = "id, login, name, hue, pass_hash, salt, public_key, profile, profile_updated, created, closed"
+    private val userCols = "id, login, name, hue, pass_hash, salt, public_key, profile, profile_updated, created, closed, banned"
     private fun userOf(r: ResultSet) = UserRow(
         r.getInt(1), r.getString(2), r.getString(3), r.getFloat(4), r.getString(5), r.getString(6),
-        r.getString(7), r.getString(8), r.getLong(9), r.getLong(10), r.getBoolean(11),
+        r.getString(7), r.getString(8), r.getLong(9), r.getLong(10), r.getBoolean(11), r.getBoolean(12),
     )
 
     private val deviceCols = "id, user_id, name, platform, last_seen, refresh_hash, access_hash, access_until, push_token"
@@ -73,8 +73,11 @@ class PgStore(url: String, user: String, password: String) : Store {
         r.getString(1), r.getInt(2), r.getString(3), r.getString(4), r.getLong(5), r.getString(6), r.getString(7), r.getLong(8), r.getString(9),
     )
 
-    private val postCols = "id, author, created, body, likes, comments_off"
-    private fun postOf(r: ResultSet) = PostRow(r.getLong(1), r.getInt(2), r.getLong(3), r.getString(4), r.getInt(5), r.getBoolean(6))
+    private val postCols = "id, author, created, body, likes, comments_off, community, kind"
+    private fun postOf(r: ResultSet) = PostRow(r.getLong(1), r.getInt(2), r.getLong(3), r.getString(4), r.getInt(5), r.getBoolean(6), r.getInt(7), r.getString(8))
+
+    /** Личные записи: не в сообществе и не PRISM. */
+    private val PLAIN = "community = 0 AND kind = 'post'"
 
     private val chatCols = "id, kind, title, owner, created"
     private fun chatOf(r: ResultSet) = ChatRow(r.getInt(1), r.getString(2), r.getString(3), r.getInt(4), r.getLong(5))
@@ -101,10 +104,14 @@ class PgStore(url: String, user: String, password: String) : Store {
         return query("SELECT $userCols FROM users WHERE login LIKE ? OR lower(name) LIKE ? ORDER BY login LIMIT ?", like, like, limit, map = ::userOf)
     }
 
+    override fun updatePassword(id: Int, passHash: String, salt: String) {
+        update("UPDATE users SET pass_hash = ?, salt = ? WHERE id = ?", passHash, salt, id)
+    }
+
     override fun updateUser(row: UserRow) {
         update(
-            "UPDATE users SET name = ?, hue = ?, public_key = ?, profile = ?, profile_updated = ?, closed = ? WHERE id = ?",
-            row.name, row.hue, row.publicKey, row.profile, row.profileUpdated, row.closed, row.id,
+            "UPDATE users SET name = ?, hue = ?, public_key = ?, profile = ?, profile_updated = ?, closed = ?, banned = ? WHERE id = ?",
+            row.name, row.hue, row.publicKey, row.profile, row.profileUpdated, row.closed, row.banned, row.id,
         )
     }
 
@@ -126,6 +133,74 @@ class PgStore(url: String, user: String, password: String) : Store {
     override fun devices(userId: Int) = query("SELECT $deviceCols FROM devices WHERE user_id = ?", userId, map = ::deviceOf)
     override fun deleteDevice(id: String) { update("DELETE FROM devices WHERE id = ?", id) }
     override fun clearPushToken(token: String) { update("UPDATE devices SET push_token = '' WHERE push_token = ?", token) }
+
+    // ── Модерация ────────────────────────────────────────────────────
+
+    private val reportCols = "id, reporter, kind, target, author, reason, note, preview, created, status"
+    private fun reportOf(r: ResultSet) = ReportRow(
+        r.getLong(1), r.getInt(2), r.getString(3), r.getLong(4), r.getInt(5), r.getString(6), r.getString(7), r.getString(8), r.getLong(9), r.getString(10),
+    )
+
+    override fun createReport(row: ReportRow): ReportRow = query(
+        "INSERT INTO reports (reporter, kind, target, author, reason, note, preview, created, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING $reportCols",
+        row.reporter, row.kind, row.target, row.author, row.reason, row.note, row.preview, row.created, row.status, map = ::reportOf,
+    ).first()
+
+    override fun report(id: Long) = query("SELECT $reportCols FROM reports WHERE id = ?", id, map = ::reportOf).firstOrNull()
+
+    override fun reports(status: String?, limit: Int): List<ReportRow> =
+        if (status == null) query("SELECT $reportCols FROM reports ORDER BY id DESC LIMIT ?", limit, map = ::reportOf)
+        else query("SELECT $reportCols FROM reports WHERE status = ? ORDER BY id DESC LIMIT ?", status, limit, map = ::reportOf)
+
+    override fun setReportStatus(id: Long, status: String) { update("UPDATE reports SET status = ? WHERE id = ?", status, id) }
+
+    override fun setBlock(blocker: Int, blocked: Int, on: Boolean) {
+        if (on) update("INSERT INTO blocks (blocker, blocked) SELECT ?, id FROM users WHERE id = ? ON CONFLICT DO NOTHING", blocker, blocked)
+        else update("DELETE FROM blocks WHERE blocker = ? AND blocked = ?", blocker, blocked)
+    }
+
+    override fun blockedBy(userId: Int): Set<Int> = query("SELECT blocked FROM blocks WHERE blocker = ?", userId) { it.getInt(1) }.toSet()
+
+    override fun blockedEither(a: Int, b: Int): Boolean =
+        query("SELECT 1 FROM blocks WHERE (blocker = ? AND blocked = ?) OR (blocker = ? AND blocked = ?) LIMIT 1", a, b, b, a) { true }.isNotEmpty()
+
+    override fun deletePost(id: Long) { update("DELETE FROM posts WHERE id = ?", id) }
+
+    override fun uploadsOf(owner: Int) =
+        query("SELECT id, owner, length, \"offset\", meta, created FROM uploads WHERE owner = ?", owner, map = ::uploadOf)
+
+    override fun deleteUser(id: Int) {
+        // Остальное (устройства, записи, комментарии, подписки, истории, участие в переписках) — ON DELETE CASCADE
+        val steps = listOf(
+            // Счётчики «нравится» — без этого человека
+            "UPDATE posts SET likes = likes - 1 WHERE id IN (SELECT post_id FROM likes WHERE user_id = ?) AND likes > 0",
+            "UPDATE comments SET likes = likes - 1 WHERE id IN (SELECT comment_id FROM comment_likes WHERE user_id = ?) AND likes > 0",
+            "DELETE FROM messages WHERE author = ?",
+            // Свои сообщества — с их записями (записи других участников там тоже)
+            "DELETE FROM posts WHERE community IN (SELECT id FROM communities WHERE owner = ?)",
+            "DELETE FROM communities WHERE owner = ?",
+            "DELETE FROM reports WHERE reporter = ? OR author = ?",
+            // Свои группы без других участников — удалить; остальные — следующему (сначала админам)
+            "DELETE FROM chats c WHERE c.owner = ? AND NOT EXISTS (SELECT 1 FROM members m WHERE m.chat_id = c.id AND m.user_id <> c.owner)",
+            """UPDATE chats c SET owner = (SELECT m.user_id FROM members m WHERE m.chat_id = c.id AND m.user_id <> c.owner
+                   ORDER BY m.admin DESC, m.user_id LIMIT 1) WHERE c.owner = ?""",
+            "UPDATE members m SET admin = TRUE FROM chats c WHERE c.id = m.chat_id AND c.owner = m.user_id AND NOT m.admin",
+            "DELETE FROM idem WHERE user_id = ?",
+            "DELETE FROM users WHERE id = ?",
+        )
+        tx { c ->
+            for (sql in steps) c.prepareStatement(sql).use { st ->
+                val n = sql.count { it == '?' }
+                for (i in 1..n) st.setInt(i, id)
+                st.executeUpdate()
+            }
+        }
+    }
+
+    override fun messageAt(chatId: Int, author: Int, sentAt: Long): MessageRow? = query(
+        "SELECT id, chat_id, author, sent_at, body FROM messages WHERE chat_id = ? AND author = ? AND sent_at = ? LIMIT 1",
+        chatId, author, sentAt, map = ::messageOf,
+    ).firstOrNull()
 
     // ── Подписки ─────────────────────────────────────────────────────
 
@@ -242,8 +317,98 @@ class PgStore(url: String, user: String, password: String) : Store {
 
     // ── Записи ───────────────────────────────────────────────────────
 
-    override fun createPost(author: Int, created: Long, body: String): PostRow =
-        query("INSERT INTO posts (author, created, body) VALUES (?, ?, ?) RETURNING $postCols", author, created, body, map = ::postOf).first()
+    override fun createPost(author: Int, created: Long, body: String, community: Int, kind: String): PostRow = query(
+        "INSERT INTO posts (author, created, body, community, kind) VALUES (?, ?, ?, ?, ?) RETURNING $postCols",
+        author, created, body, community, kind, map = ::postOf,
+    ).first()
+
+    override fun updatePostBody(id: Long, body: String) { update("UPDATE posts SET body = ? WHERE id = ?", body, id) }
+
+    override fun communityPosts(community: Int, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow> {
+        val c = beforeCreated ?: Long.MAX_VALUE
+        return query(
+            "SELECT $postCols FROM posts WHERE community = ? AND kind = 'post' AND (created < ? OR (created = ? AND id < ?)) ORDER BY created DESC, id DESC LIMIT ?",
+            community, c, c, beforeId ?: Long.MAX_VALUE, limit, map = ::postOf,
+        )
+    }
+
+    override fun prisms(beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow> {
+        val c = beforeCreated ?: Long.MAX_VALUE
+        return query(
+            "SELECT $postCols FROM posts WHERE kind = 'prism' AND (created < ? OR (created = ? AND id < ?)) ORDER BY created DESC, id DESC LIMIT ?",
+            c, c, beforeId ?: Long.MAX_VALUE, limit, map = ::postOf,
+        )
+    }
+
+    // ── Сообщества ───────────────────────────────────────────────────
+
+    private val communityCols = "id, owner, name, topic, created, body"
+    private fun communityOf(r: ResultSet) = CommunityRow(r.getInt(1), r.getInt(2), r.getString(3), r.getString(4), r.getLong(5), r.getString(6))
+
+    override fun createCommunity(owner: Int, name: String, topic: String, created: Long, body: String): CommunityRow = tx { c ->
+        val row = c.prepareStatement("INSERT INTO communities (owner, name, topic, created, body) VALUES (?, ?, ?, ?, ?) RETURNING $communityCols").use { st ->
+            st.setInt(1, owner); st.setString(2, name); st.setString(3, topic); st.setLong(4, created); st.setString(5, body)
+            st.executeQuery().use { rs -> rs.next(); communityOf(rs) }
+        }
+        c.prepareStatement("INSERT INTO community_members (community, user_id, joined) VALUES (?, ?, ?)").use { st ->
+            st.setInt(1, row.id); st.setInt(2, owner); st.setLong(3, created); st.executeUpdate()
+        }
+        row
+    }
+
+    override fun community(id: Int) = query("SELECT $communityCols FROM communities WHERE id = ?", id, map = ::communityOf).firstOrNull()
+
+    override fun updateCommunity(id: Int, name: String, topic: String, body: String) {
+        update("UPDATE communities SET name = ?, topic = ?, body = ? WHERE id = ?", name, topic, body, id)
+    }
+
+    override fun deleteCommunity(id: Int) {
+        tx { c ->
+            c.prepareStatement("DELETE FROM posts WHERE community = ?").use { st -> st.setInt(1, id); st.executeUpdate() }
+            c.prepareStatement("DELETE FROM communities WHERE id = ?").use { st -> st.setInt(1, id); st.executeUpdate() }
+        }
+    }
+
+    override fun communities(query: String?, topic: String?, limit: Int): List<CommunityRow> {
+        val where = ArrayList<String>()
+        val args = ArrayList<Any?>()
+        if (query != null) {
+            where += "lower(c.name) LIKE ?"
+            args += "%" + query.lowercase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        }
+        if (topic != null) { where += "c.topic = ?"; args += topic }
+        args += limit
+        val w = if (where.isEmpty()) "" else "WHERE " + where.joinToString(" AND ")
+        return query(
+            """SELECT c.id, c.owner, c.name, c.topic, c.created, c.body FROM communities c
+               LEFT JOIN community_members m ON m.community = c.id $w
+               GROUP BY c.id ORDER BY count(m.user_id) DESC, c.id DESC LIMIT ?""",
+            *args.toTypedArray(), map = ::communityOf,
+        )
+    }
+
+    override fun setMember(community: Int, userId: Int, on: Boolean, at: Long) {
+        if (on) update("INSERT INTO community_members (community, user_id, joined) VALUES (?, ?, ?) ON CONFLICT DO NOTHING", community, userId, at)
+        else update("DELETE FROM community_members WHERE community = ? AND user_id = ?", community, userId)
+    }
+
+    override fun isMember(community: Int, userId: Int) =
+        query("SELECT 1 FROM community_members WHERE community = ? AND user_id = ?", community, userId) { true }.isNotEmpty()
+
+    override fun memberCount(community: Int) =
+        query("SELECT count(*) FROM community_members WHERE community = ?", community) { it.getInt(1) }.first()
+
+    override fun communitiesOf(userId: Int) = query(
+        "SELECT c.id, c.owner, c.name, c.topic, c.created, c.body FROM communities c JOIN community_members m ON m.community = c.id WHERE m.user_id = ? ORDER BY m.joined DESC",
+        userId, map = ::communityOf,
+    )
+
+    override fun highlights(owner: Int): String =
+        query("SELECT body FROM highlights WHERE owner = ?", owner) { it.getString(1) }.firstOrNull() ?: "[]"
+
+    override fun setHighlights(owner: Int, body: String) {
+        update("INSERT INTO highlights (owner, body) VALUES (?, ?) ON CONFLICT (owner) DO UPDATE SET body = EXCLUDED.body", owner, body)
+    }
 
     override fun post(id: Long) = query("SELECT $postCols FROM posts WHERE id = ?", id, map = ::postOf).firstOrNull()
 
@@ -252,7 +417,7 @@ class PgStore(url: String, user: String, password: String) : Store {
         val marks = authors.joinToString(",") { "?" }
         val c = beforeCreated ?: Long.MAX_VALUE
         return query(
-            "SELECT $postCols FROM posts WHERE author IN ($marks) AND (created < ? OR (created = ? AND id < ?)) ORDER BY created DESC, id DESC LIMIT ?",
+            "SELECT $postCols FROM posts WHERE $PLAIN AND author IN ($marks) AND (created < ? OR (created = ? AND id < ?)) ORDER BY created DESC, id DESC LIMIT ?",
             *authors.toTypedArray(), c, c, beforeId ?: Long.MAX_VALUE, limit, map = ::postOf,
         )
     }
@@ -261,15 +426,15 @@ class PgStore(url: String, user: String, password: String) : Store {
         val marks = if (exclude.isEmpty()) "0" else exclude.joinToString(",") { "?" }
         val c = beforeCreated ?: Long.MAX_VALUE
         return query(
-            """SELECT p.id, p.author, p.created, p.body, p.likes, p.comments_off FROM posts p JOIN users u ON u.id = p.author
-               WHERE NOT u.closed AND p.author NOT IN ($marks) AND (p.created < ? OR (p.created = ? AND p.id < ?))
+            """SELECT p.id, p.author, p.created, p.body, p.likes, p.comments_off, p.community, p.kind FROM posts p JOIN users u ON u.id = p.author
+               WHERE NOT u.closed AND p.community = 0 AND p.kind = 'post' AND p.author NOT IN ($marks) AND (p.created < ? OR (p.created = ? AND p.id < ?))
                ORDER BY p.created DESC, p.id DESC LIMIT ?""",
             *exclude.toTypedArray(), c, c, beforeId ?: Long.MAX_VALUE, limit, map = ::postOf,
         )
     }
 
     override fun posts(author: Int?, beforeCreated: Long?, beforeId: Long?, limit: Int): List<PostRow> {
-        val where = ArrayList<String>()
+        val where = arrayListOf(PLAIN)
         val args = ArrayList<Any?>()
         if (author != null) { where += "author = ?"; args += author }
         if (beforeCreated != null) {
@@ -379,11 +544,12 @@ class PgStore(url: String, user: String, password: String) : Store {
     fun wipe() {
         tx { c ->
             c.createStatement().use { st ->
-                st.execute("TRUNCATE close_friends, story_views, stories, comment_likes, comments, follows, idem, uploads, messages, members, chats, likes, posts, devices, users RESTART IDENTITY")
+                st.execute("TRUNCATE highlights, community_members, communities, reports, blocks, close_friends, story_views, stories, comment_likes, comments, follows, idem, uploads, messages, members, chats, likes, posts, devices, users RESTART IDENTITY")
                 st.execute("ALTER SEQUENCE user_seq RESTART WITH 100001")
                 st.execute("ALTER SEQUENCE post_seq RESTART WITH 10000001")
                 st.execute("ALTER SEQUENCE comment_seq RESTART WITH 10000001")
                 st.execute("ALTER SEQUENCE story_seq RESTART WITH 10000001")
+                st.execute("ALTER SEQUENCE community_seq RESTART WITH 50000001")
             }
         }
     }

@@ -162,7 +162,23 @@ final class Net {
         try? fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
         // Целиком во временный файл и замена: оборванная запись не оставит половину
         try plain.write(to: f, options: .atomic)
+        // Своё сообщество с этим фото уйдёт на сервер со ссылкой, без повторной загрузки
+        if key == nil { rememberRemote(mediaRef(f), path) }
         return f
+    }
+
+    /// Приставка ключей кэша: файл на телефоне → его адрес на сервере.
+    static let remotePrefix = "remote:"
+
+    /// Файл на телефоне — копия файла на сервере (скачан или отправлен): его адрес там.
+    func remoteFor(_ local: String) -> String? {
+        if isRemote(local) { return local }
+        return cache.get(Self.remotePrefix + local)?.value
+    }
+
+    private func rememberRemote(_ local: String, _ remote: String) {
+        if local.isEmpty || isRemote(local) { return }
+        cache.put(Self.remotePrefix + local, remote, at: clock())
     }
 
     private func codec() -> ApiCodec { ApiCodec(me: me()) }
@@ -228,6 +244,52 @@ final class Net {
         return key
     }
 
+    /// Запись в сообществе — как своя запись, но в его ленту.
+    @discardableResult
+    func queueGroupPost(_ communityId: Int, _ post: Post) -> String {
+        let key = post.outboxKey.isEmpty ? newKey() : post.outboxKey
+        queueMedia(key, post.media)
+        var clean = post
+        clean.outboxKey = ""
+        var payload: JSONObject = [:]
+        payload["community"] = communityId
+        payload["post"] = codec().postJson(clean)
+        outbox.enqueue(OutboxOp(key: key, kind: .createGroupPost, target: post.id, payload: Json.string(payload)))
+        return key
+    }
+
+    /// Свой PRISM: видео и обложка — в загрузки, ролик — в очередь.
+    @discardableResult
+    func queuePrism(_ prism: Prism) -> String {
+        let key = newKey()
+        let files: [Attachment] = [prism.video, prism.cover].compactMap { $0 }
+        queueMedia(key, files)
+        let payload = Json.string(codec().prismJson(prism))
+        outbox.enqueue(OutboxOp(key: key, kind: .createPrism, target: prism.id, payload: payload))
+        return key
+    }
+
+    /// Фото сообщества: заставка и фото товаров.
+    private func communityMedia(_ g: MemoryGroup) -> [Attachment] {
+        let cover: [Attachment] = g.cover.map { [$0] } ?? []
+        let photos: [Attachment] = g.shop.flatMap { $0.photos }
+        return cover + photos
+    }
+
+    /// Своё сообщество — на сервер целиком. Фото, которые уже там (скачаны
+    /// оттуда или отправлены раньше), второй раз не загружаются.
+    @discardableResult
+    func queueCommunity(_ g: MemoryGroup) -> String {
+        let key = newKey()
+        let fresh: [Attachment] = communityMedia(g).filter { remoteFor($0.fileName) == nil }
+        queueMedia(key, fresh)
+        var clean = g
+        clean.posts = []
+        let payload = Json.string(codec().groupJson(clean))
+        outbox.enqueue(OutboxOp(key: key, kind: .saveCommunity, target: Int64(g.id), payload: payload))
+        return key
+    }
+
     /// Новая запись: вложения — в загрузки, сама запись — в очередь (уйдёт после них).
     @discardableResult
     func queuePost(_ post: Post) -> String {
@@ -290,6 +352,32 @@ final class Net {
         }
     }
 
+    /// Своё сообщество — PATCH. Путь фото на сервере: только что загружено,
+    /// уже было там — или фото не отправляем.
+    private func saveCommunity(_ g: MemoryGroup, _ op: OutboxOp, _ remote: [String: String]) async throws -> JSONObject {
+        func fix(_ a: Attachment) -> Attachment? {
+            guard let url = remote[a.id] ?? remoteFor(a.fileName) else { return nil }
+            var x = a
+            x.fileName = url
+            return x
+        }
+        var sent = g
+        sent.cover = g.cover.flatMap { fix($0) }
+        sent.shop = g.shop.map { pr -> Product in
+            var x = pr
+            x.photos = pr.photos.compactMap { fix($0) }
+            return x
+        }
+        let answer = try await api.send("PATCH", "/v1/communities/\(op.target)", body: api.communityBody(sent), key: op.key)
+        // Свои файлы теперь и на сервере — запомнить их адреса
+        var byId: [String: Attachment] = [:]
+        for a in communityMedia(g) { byId[a.id] = a }
+        for a in communityMedia(sent) {
+            if let local = byId[a.id] { rememberRemote(local.fileName, a.fileName) }
+        }
+        return answer
+    }
+
     /// Вложения с путями на сервере вместо путей на телефоне.
     private func withRemote(_ media: [Attachment], _ remote: [String: String]) -> [Attachment] {
         media.map { a in
@@ -330,6 +418,26 @@ final class Net {
                 body["media"] = c.attachmentJson(sent)
             }
             return try await api.send("POST", "/v1/stories", body: body, key: op.key)
+        case .createGroupPost:
+            guard let p = Json.parse(op.payload), let po = Json.object(p, "post"), var post = c.postOf(po) else {
+                throw NetError(.badData, message: "payload")
+            }
+            post.media = withRemote(post.media, remote)
+            let community = Json.int(p, "community")
+            return try await api.send("POST", "/v1/communities/\(community)/posts", body: c.postJson(post), key: op.key)
+        case .createPrism:
+            guard let o = Json.parse(op.payload), let prism = c.prismOf(o) else { throw NetError(.badData, message: "payload") }
+            var body: JSONObject = [:]
+            body["caption"] = prism.caption
+            body["music"] = prism.music
+            body["seed"] = prism.seed
+            body["durationMs"] = Int64(prism.durationMs)
+            if let v = prism.video { body["video"] = c.attachmentJson(withRemote([v], remote)[0]) }
+            if let cv = prism.cover { body["cover"] = c.attachmentJson(withRemote([cv], remote)[0]) }
+            return try await api.send("POST", "/v1/prisms", body: body, key: op.key)
+        case .saveCommunity:
+            guard let o = Json.parse(op.payload), let g = c.groupOf(o) else { throw NetError(.badData, message: "payload") }
+            return try await saveCommunity(g, op, remote)
         case .call:
             guard let p = Json.parse(op.payload) else { throw NetError(.badData, message: "payload") }
             let method = Json.string(p, "method")
@@ -395,7 +503,8 @@ final class Net {
     /// отправка могла пройти в фоне (BackgroundNet), без экрана, и приложение
     /// подхватит номер при следующем открытии (takeServerIds).
     private func rememberServerId(_ op: OutboxOp, _ answer: JSONObject?) {
-        if op.kind != .createPost && op.kind != .createStory { return }
+        let kinds: [OpKind] = [.createPost, .createStory, .createGroupPost, .createPrism]
+        if !kinds.contains(op.kind) { return }
         guard let answer else { return }
         let id = Json.long(answer, "id")
         if id <= 0 { return }
@@ -418,7 +527,57 @@ final class Net {
             let item = SentId(kind: kind, localId: Json.long(o, "local"), serverId: Json.long(o, "server"), key: Json.string(o, "key"))
             out.append(item)
         }
-        return out
+        // Удалили на телефоне, пока оно уходило: дошло — удалить и на сервере
+        var kept: [SentId] = []
+        for item in out {
+            if cache.get(Self.dropPrefix + item.key) == nil {
+                kept.append(item)
+                continue
+            }
+            cache.remove(Self.dropPrefix + item.key)
+            let what = item.kind == .createStory ? "stories" : "posts"
+            queueCall("DELETE", "/v1/\(what)/\(item.serverId)")
+        }
+        return kept
+    }
+
+    /// Приставка ключей кэша: удалили на телефоне то, что ещё уходило.
+    static let dropPrefix = "drop:"
+
+    /// Удалили то, что ещё не ушло (запись, PRISM): ждёт в очереди — снять
+    /// вместе с загрузками; уже уходит — удалить на сервере, когда придёт номер.
+    func discard(_ key: String) {
+        if key.isEmpty { return }
+        // Метка — всегда: действие могло уже уходить прямо сейчас
+        cache.put(Self.dropPrefix + key, "1", at: clock())
+        if outbox.get(key) == nil { return }
+        outbox.remove(key)
+        for job in uploads.all() where job.owner == key {
+            uploads.remove(job.id)
+        }
+    }
+
+    /// Правка ещё не ушедшей записи: в очереди — уже новый текст и вложения.
+    func updateQueuedPost(_ key: String, _ post: Post) {
+        guard let op = outbox.get(key) else { return }
+        var clean = post
+        clean.outboxKey = ""
+        let json = codec().postJson(clean)
+        switch op.kind {
+        case .createPost:
+            outbox.replacePayload(key, Json.string(json))
+        case .createGroupPost:
+            var o: JSONObject = Json.parse(op.payload) ?? [:]
+            o["post"] = json
+            outbox.replacePayload(key, Json.string(o))
+        default:
+            return
+        }
+        // Убранные правкой вложения — не загружать: их файлов уже нет, иначе не ушла бы вся запись
+        let keep = Set(post.media.map(\.id))
+        for job in uploads.all() where job.owner == key && !keep.contains(job.attachmentId) {
+            uploads.remove(job.id)
+        }
     }
 
     /// Сеть вернулась: что ждало из-за «нет сети», пробуем сразу, без

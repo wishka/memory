@@ -194,6 +194,14 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
         onDispose { netMonitor.stop() }
     }
     LaunchedEffect(netMonitor) { netMonitor.online.collect { vm.setDeviceOnline(it) } }
+    // Звонки и эфиры — через LiveKit (адрес и токен даёт сервер; без сервера — демо)
+    // Одна связь на приложение: пересоздание экрана не рвёт разговор
+    LaunchedEffect(vm) {
+        vm.callTransport = ru.wishka.memory.call.LiveLinks.call(context)
+        vm.liveTransport = ru.wishka.memory.call.LiveLinks.live(context)
+    }
+    // Вернулись в приложение (например, по пушу о звонке) — звонки и эфиры с сервера
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_START) { vm.onForeground() }
     // Короткие сообщения модели («Слишком часто…») — тостом
     val vmState by vm.state.collectAsState()
     val notice = vmState.notice
@@ -235,6 +243,9 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
             vm.setDemoOffline(device.demoOffline)
             vm.uploadCleanup = ru.wishka.memory.net.MediaCompressor::cleanup
             vm.deviceName = android.os.Build.MODEL.orEmpty().ifEmpty { "Android" }
+            // Плашка «Войдите на сервер» проверяет пароль здесь, на телефоне
+            val localAuth = ru.wishka.memory.data.auth.LocalAuth(ru.wishka.memory.data.auth.SecurePrefs(context.applicationContext))
+            vm.passwordCheck = { password -> localAuth.checkPasswordOf(account.username, password) }
             vm.attachNet(
                 ru.wishka.memory.net.NetSetup.forAccount(
                     context, account.username, { vm.state.value.me }, System::currentTimeMillis,
@@ -327,9 +338,17 @@ fun AppRoot(vm: AppViewModel = viewModel(), authVm: AuthViewModel = viewModel())
                 onSaveProfile = authVm::saveProfile,
                 account = AccountActions(
                     logout = authVm::logout,
-                    changePassword = authVm::changePassword,
-                    deleteAccount = { password ->
+                    // Сначала проверка на телефоне, потом сервер, потом телефон: пароли не разойдутся
+                    changePassword = { current, new, repeat ->
+                        authVm.checkPasswordChange(current, new, repeat)
+                            ?: vm.changeServerPassword(current, new)
+                            ?: authVm.changePassword(current, new, repeat)
+                    },
+                    deleteAccount = deleteAccount@{ password ->
                         val login = account?.username
+                        if (!authVm.checkPassword(password)) return@deleteAccount ru.wishka.memory.i18n.t("Пароль не подходит")
+                        // Сначала — на сервере (нет связи — не удаляем нигде)
+                        vm.deleteOnServer(password)?.let { return@deleteAccount it }
                         val error = authVm.deleteAccount(password)
                         if (error == null && login != null) {
                             // База сети ещё открыта — закрыть, потом стирать

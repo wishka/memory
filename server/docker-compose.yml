@@ -41,6 +41,12 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       JAVA_OPTS: ${JAVA_OPTS:--Xmx384m}
       FCM_CREDENTIALS: /run/secrets/firebase.json
+      # Модераторы (логины через запятую): https://<адрес>/admin
+      ADMINS: ${ADMINS:-}
+      # Звонки и эфиры (LiveKit Cloud): docs/LIVE.md; пусто — выключены
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
     volumes:
       - files:/data
       # Ключ Firebase для пушей: server/secrets/firebase.json (не в git)

@@ -637,6 +637,14 @@ struct Prism: Identifiable, Equatable, Codable {
     /// Обложка своего ролика — кадр, выбранный в редакторе.
     var cover: Attachment? = nil
     var createdAt: Date? = nil
+    /// Ещё не на сервере: ключ отправки в очереди; nil — отправлен или не
+    /// уходил. Необязательное — старые сохранения читаются без него; снаружи — outboxKey.
+    var outboxKeyValue: String? = nil
+
+    var outboxKey: String {
+        get { outboxKeyValue ?? "" }
+        set { outboxKeyValue = newValue.isEmpty ? nil : newValue }
+    }
 }
 
 /// Трек в «Моей музыке». Файл — копия в папке приложения (fileName), его

@@ -72,7 +72,17 @@ struct GroupsScreen: View {
             .padding(.bottom, tabBarSpace)
         }
         .scrollDismissesKeyboard(.interactively)
+        // С сервером: группы, которых ещё нет на телефоне, ищутся там (пауза — пока печатают)
+        .task(id: searchNeedle) {
+            let needle = searchNeedle
+            if needle.count < 2 { return }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if Task.isCancelled { return }
+            model.searchCommunities(needle)
+        }
     }
+
+    private var searchNeedle: String { query.trimmingCharacters(in: .whitespaces).lowercased() }
 }
 
 private struct GroupRow: View {
