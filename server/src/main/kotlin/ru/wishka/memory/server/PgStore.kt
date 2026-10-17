@@ -426,7 +426,7 @@ class PgStore(url: String, user: String, password: String) : Store {
         val marks = if (exclude.isEmpty()) "0" else exclude.joinToString(",") { "?" }
         val c = beforeCreated ?: Long.MAX_VALUE
         return query(
-            """SELECT p.id, p.author, p.created, p.body, p.likes, p.comments_off FROM posts p JOIN users u ON u.id = p.author
+            """SELECT p.id, p.author, p.created, p.body, p.likes, p.comments_off, p.community, p.kind FROM posts p JOIN users u ON u.id = p.author
                WHERE NOT u.closed AND p.community = 0 AND p.kind = 'post' AND p.author NOT IN ($marks) AND (p.created < ? OR (p.created = ? AND p.id < ?))
                ORDER BY p.created DESC, p.id DESC LIMIT ?""",
             *exclude.toTypedArray(), c, c, beforeId ?: Long.MAX_VALUE, limit, map = ::postOf,
