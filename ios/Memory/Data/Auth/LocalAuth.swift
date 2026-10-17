@@ -169,13 +169,21 @@ final class LocalAuth {
 
     /// Сменить пароль: нужен текущий. nil — готово, иначе текст ошибки.
     /// Сессия остаётся: человек не выходит из профиля.
-    func changePassword(username: String, current: String, new: String, repeatPassword repeated: String) -> String? {
+    /// Проверить смену пароля, ничего не меняя: сначала её примет сервер,
+    /// потом — телефон (changePassword). nil — можно, иначе текст ошибки.
+    func checkChange(username: String, current: String, new: String, repeatPassword repeated: String) -> String? {
         let login = Self.normalize(username)
         if current.isEmpty { return t("Введите текущий пароль") }
         if !checkPassword(login, current) { return t("Текущий пароль не подходит") }
         if let error = Self.validatePassword(new) { return error }
         if new != repeated { return t("Пароли не совпадают") }
         if new == current { return t("Новый пароль совпадает с текущим") }
+        return nil
+    }
+
+    func changePassword(username: String, current: String, new: String, repeatPassword repeated: String) -> String? {
+        let login = Self.normalize(username)
+        if let error = checkChange(username: username, current: current, new: new, repeatPassword: repeated) { return error }
         let salt = PasswordHasher.newSalt()
         store.put(key(login, "salt"), salt.hex)
         store.put(key(login, "hash"), PasswordHasher.hash(new, salt: salt, iterations: iterations).hex)

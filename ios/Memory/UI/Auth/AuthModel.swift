@@ -176,6 +176,31 @@ final class AuthModel {
         account = current
     }
 
+    /// Подойдёт ли смена пароля (ничего не меняет). Ответ — текст ошибки или nil.
+    func checkPasswordChange(_ current: String, _ new: String, _ repeated: String) async -> String? {
+        guard let login = account?.username else { return t("Вы не вошли") }
+        let auth = self.auth
+        return await Task.detached(priority: .userInitiated) {
+            auth.checkChange(username: login, current: current, new: new, repeatPassword: repeated)
+        }.value
+    }
+
+    /// Проверка пароля аккаунта login для модели (вход на сервер с плашки).
+    /// Медленная (PBKDF2) — звать не в главном потоке.
+    func passwordChecker(_ login: String) -> (String) -> Bool {
+        let auth = self.auth
+        return { password in auth.checkPasswordOf(login, password) }
+    }
+
+    /// Подходит ли пароль текущего аккаунта (проверка — не в главном потоке).
+    func checkPassword(_ password: String) async -> Bool {
+        guard let login = account?.username else { return false }
+        let auth = self.auth
+        return await Task.detached(priority: .userInitiated) {
+            auth.checkPasswordOf(login, password)
+        }.value
+    }
+
     /// Смена пароля в «Безопасности». Ответ — текст ошибки или nil;
     /// пароль проверяется не в главном потоке.
     func changePassword(_ current: String, _ new: String, _ repeated: String) async -> String? {

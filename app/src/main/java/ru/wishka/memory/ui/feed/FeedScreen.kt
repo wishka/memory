@@ -161,7 +161,11 @@ fun FeedScreen(vm: AppViewModel, state: UiState, contentPadding: PaddingValues) 
                 friends = state.friends,
             )
         }
-        // Новичку — гид по приложению, пока карточку не скрыли
+        // С сервером, но вход на него не удался (пароль телефон не хранит) — спросить один раз
+        if (state.serverMode && state.signedOut) {
+            item(key = "server-sign-in") { ServerSignInCard(vm) }
+        }
+                // Новичку — гид по приложению, пока карточку не скрыли
         if (!state.guideHidden) {
             item(key = "guide") { ru.wishka.memory.ui.guide.GuideFeedCard(vm) }
         }
@@ -431,5 +435,29 @@ fun PostCard(
             meId = links?.meId,
             onUntagMe = { tagsOpen = false; links?.onUntagMe?.invoke(post) },
         ) { tagsOpen = false }
+    }
+}
+
+/** «Войдите на сервер»: пароль Memory ещё раз — и друзья видят записи, можно переписываться. */
+@Composable
+private fun ServerSignInCard(vm: AppViewModel) {
+    var password by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
+    GlassCard(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(t("Войдите на сервер"), style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
+            Text(
+                t("Введите пароль Memory ещё раз — так друзья увидят ваши записи и смогут вам написать. Пароль нужен один раз."),
+                style = MaterialTheme.typography.bodyMedium, color = Palette.Mist,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ru.wishka.memory.ui.components.GlassField(
+                    password, { password = it }, t("Пароль"),
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).glass(RoundedCornerShape(14.dp)),
+                    password = true,
+                )
+                Spacer(Modifier.width(10.dp))
+                ru.wishka.memory.ui.components.GlowButton(t("Войти"), onClick = { vm.signInToServer(password); password = "" }, enabled = password.isNotEmpty())
+            }
+        }
     }
 }

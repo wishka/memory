@@ -300,6 +300,8 @@ struct UiState: Equatable {
     /// «Интересное»: записи людей, на которых вы не подписаны (с сервера, страницами).
     var explore: [Post] = []
     var explorePaging = FeedPaging()
+    /// Настоящий сервер (а не встроенный демо): есть плашка «Войдите на сервер», удаление там.
+    var serverMode: Bool = false
     /// Загрузки фото и видео: что идёт, что ждёт, что на паузе.
     var uploads: [UploadJob] = []
     /// Сколько действий ждут отправки.
@@ -2741,6 +2743,8 @@ final class AppModel {
         let following: Set<Int> = Set(followingPeople.map(\.id))
         let sent: Set<Int> = Set(sentPeople.map(\.id))
         let incoming: [Int] = incomingPeople.map(\.id)
+        let blockedRaw: [Int] = (try? await n.api.blocked()) ?? []
+        let blockedOnServer: Set<Int> = Set(blockedRaw.map { Directory.local($0) })
         var s = state
         let keepFollowing: Set<Int> = s.following.filter { !isServerPerson($0) }
         let keepSent: Set<Int> = s.sentRequests.filter { !isServerPerson($0) }
@@ -2750,6 +2754,9 @@ final class AppModel {
         s.following = keepFollowing.union(following)
         s.sentRequests = keepSent.union(sent)
         s.followRequests = keepIncoming + newIncoming
+        // Чёрный список людей с сервера — как на сервере (разблокировали на другом телефоне — и здесь)
+        let keepBlocked: Set<Int> = s.blocked.filter { !isServerPerson($0) }
+        s.blocked = keepBlocked.union(blockedOnServer)
         state = s
         peopleChanged()
     }
@@ -3515,6 +3522,99 @@ final class AppModel {
     /// Имя этого телефона для списка устройств («iPhone») — ставит MemoryApp.
     @ObservationIgnored var deviceName: String = "iPhone"
 
+    /// Подходит ли пароль Memory (проверка на телефоне; задаёт MemoryApp).
+    @ObservationIgnored var passwordCheck: (String) -> Bool = { _ in true }
+
+    /// Идёт вход с плашки «Войдите на сервер».
+    @ObservationIgnored private var serverSignIn: Task<Void, Never>?
+
+    /// Плашка «Войдите на сервер»: пароль спрашивается один раз (телефон хранит
+    /// только его отпечаток). Неверный пароль на сервер не уходит — иначе
+    /// сервер завёл бы аккаунт с ним.
+    func signInToServer(_ password: String) {
+        if serverSignIn != nil { return }
+        let check = passwordCheck
+        serverSignIn = Task { @MainActor [weak self] in
+            defer { self?.serverSignIn = nil }
+            // Проверка пароля нарочно медленная (PBKDF2) — не в главном потоке
+            var ok = false
+            if !password.isEmpty {
+                ok = await Task.detached(priority: .userInitiated) { check(password) }.value
+            }
+            guard let self else { return }
+            if !ok {
+                self.state.notice = t("Пароль не подходит")
+                return
+            }
+            self.net.session.clear()
+            await self.startSessionNow(login: self.state.me.handle, password: password, fresh: false)
+            if self.state.signedOut || !self.net.session.signedIn {
+                self.state.notice = t("Не получилось — проверьте сеть")
+                return
+            }
+            self.state.notice = t("Готово — вы на сервере")
+            await self.refreshFeedNow()
+        }
+    }
+
+    /// Удалить аккаунт и на сервере (до удаления на телефоне). nil — можно
+    /// удалять дальше; иначе текст ошибки (нет связи — ничего не удаляем).
+    @MainActor func deleteOnServer(_ password: String) async -> String? {
+        if !serverMode { return nil }
+        let n = net
+        let offline = t("Нет связи с сервером — аккаунт не удалён. Попробуйте позже.")
+        if !n.session.signedIn {
+            do {
+                try await n.signIn(login: state.me.handle, password: password, device: deviceName, platform: "ios")
+            } catch {
+                let e = NetError.of(error)
+                // Войти нельзя: такого аккаунта на сервере нет (заведён до сервера и туда не попал) — удалять там нечего
+                if e.kind == .auth { return nil }
+                if e.code == 403 {
+                    return t("Аккаунт заблокирован модератором — напишите в поддержку, чтобы удалить его на сервере.")
+                }
+                return offline
+            }
+        }
+        do {
+            try await n.api.deleteMe(password)
+            n.session.clear()
+            return nil
+        } catch {
+            // Сервер ответил, но пароль у него другой — ничего не удаляем, иначе аккаунт остался бы на сервере
+            if NetError.of(error).code == 403 {
+                return t("Пароль на сервере другой — аккаунт не удалён. Войдите на сервер и повторите.")
+            }
+            return offline
+        }
+    }
+
+    /// Сменить пароль и на сервере (до смены на телефоне). nil — можно менять дальше.
+    @MainActor func changeServerPassword(_ current: String, _ new: String) async -> String? {
+        if !serverMode { return nil }
+        let n = net
+        let offline = t("Нет связи с сервером — пароль не сменён. Попробуйте позже.")
+        if !n.session.signedIn {
+            do {
+                try await n.signIn(login: state.me.handle, password: current, device: deviceName, platform: "ios")
+            } catch {
+                let e = NetError.of(error)
+                // Аккаунта на сервере нет — меняем только на телефоне
+                if e.kind == .auth || e.code == 403 { return nil }
+                return offline
+            }
+        }
+        do {
+            try await n.api.changePassword(current: current, new: new)
+            return nil
+        } catch {
+            if NetError.of(error).code == 403 {
+                return t("Пароль на сервере другой — пароль не сменён. Войдите на сервер и повторите.")
+            }
+            return offline
+        }
+    }
+
     /// Войти на сервер (если ещё не вошли) и сверить профиль. fresh — на
     /// этом телефоне аккаунт новый: берём профиль с сервера, иначе — шлём свой.
     func startSession(login: String, password: String?, fresh: Bool) {
@@ -3859,6 +3959,7 @@ final class AppModel {
         pager.restore()
         feedPager = pager
         explorePager = n.explorePager()
+        state.serverMode = n.demo == nil
         publishFeed()
         // Пока приложение было закрыто, очередь могла уйти в фоне
         reconcileOutbox()
@@ -3882,6 +3983,7 @@ final class AppModel {
         feedPager = net.feedPager()
         explorePager = net.explorePager()
         serverStoryIds.removeAll()
+        state.serverMode = false
         connectRealtime()
     }
 
@@ -4983,11 +5085,10 @@ final class AppModel {
         state.followRequests.removeAll { $0 == userId }
         state.sentRequests.remove(userId)
         state.closeFriends.remove(userId)
-        // Человек с сервера: подписки в обе стороны снимаются — он больше не видит ваши записи и истории
+        // Человек с сервера: блокировка на сервере — подписки в обе стороны снимаются,
+        // он больше не видит ваши записи, истории и комментарии и не может написать
         if isServerPerson(userId) {
-            net.queueCall("DELETE", "/v1/users/\(userId)/follow", coalesce: "follow:\(userId)")
-            net.queueCall("DELETE", "/v1/me/followers/\(userId)", coalesce: "follower:\(userId)")
-            net.queueCall("DELETE", "/v1/me/requests/\(userId)")
+            net.queueCall("PUT", "/v1/users/\(userId)/block", coalesce: "block:\(userId)")
             pushCloseFriends()
             kickNet()
         }
@@ -4995,6 +5096,10 @@ final class AppModel {
 
     func unblock(_ userId: Int) {
         state.blocked.remove(userId)
+        if isServerPerson(userId) {
+            net.queueCall("DELETE", "/v1/users/\(userId)/block", coalesce: "block:\(userId)")
+            kickNet()
+        }
     }
 
     // MARK: - Жалобы и документы
@@ -5025,6 +5130,7 @@ final class AppModel {
     /// На свои сообщения не жалуются.
     func reportMessage(_ chatId: Int, _ message: Message) {
         guard let peer = state.chats.first(where: { $0.id == chatId })?.peer, !message.fromMe else { return }
+        reportedSentAt[message.id] = message.sentAt
         startReport(ReportTarget(kind: .message, id: message.id, authorId: peer.id, authorName: peer.name,
                                  chatId: chatId, preview: String(previewOf(message).prefix(80))))
     }
@@ -5051,6 +5157,8 @@ final class AppModel {
             s.reportedComments.insert(target.id)
         case .post:
             s.posts.removeAll { $0.id == target.id }
+            s.olderFeed.removeAll { $0.id == target.id }
+            s.explore.removeAll { $0.id == target.id }
             s.groups = s.groups.map { group in
                 var g = group
                 g.posts.removeAll { $0.id == target.id }
@@ -5072,9 +5180,50 @@ final class AppModel {
             break
         }
         state = s
+        if target.kind == .post {
+            feedPager?.drop(target.id)
+            explorePager?.drop(target.id)
+        }
+        sendReport(target, reason, note: note)
         if block && target.authorId != 0 && target.authorId != state.me.id {
             self.block(target.authorId)
         }
+    }
+
+    /// Жалоба — модераторам на сервер (только на то, что пришло с сервера:
+    /// на демо-людей жаловаться некому). У записей и комментариев сервер знает
+    /// их номер; у сообщений и PRISM модератор увидит preview.
+    /// Время сервера у сообщений, на которые жалуются (номер на телефоне → sentAt).
+    @ObservationIgnored private var reportedSentAt: [Int64: Int64] = [:]
+
+    private func sendReport(_ target: ReportTarget, _ reason: ReportReason, note: String) {
+        if !serverMode || !isServerPerson(target.authorId) { return }
+        let onServer = target.id >= Self.serverIdBase
+        let kind: String
+        switch target.kind {
+        case .post:
+            if !onServer { return }
+            kind = "post"
+        // Сервер проверит сам, есть ли такой комментарий
+        case .comment: kind = "comment"
+        case .prism: kind = "prism"
+        case .message: kind = "message"
+        case .person: kind = "person"
+        }
+        var body: JSONObject = [:]
+        body["kind"] = kind
+        body["target"] = target.id
+        body["author"] = target.authorId
+        body["reason"] = reason.id
+        body["note"] = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+        body["preview"] = String(target.preview.prefix(300))
+        // Сообщение сервер найдёт сам — по переписке и времени сервера; автор и текст будут его, а не со слов
+        if target.kind == .message {
+            body["chat"] = target.chatId
+            body["sentAt"] = reportedSentAt[target.id] ?? 0
+        }
+        net.queueCall("POST", "/v1/reports", body: body)
+        kickNet()
     }
 
     func openLegal(_ doc: LegalDoc) {

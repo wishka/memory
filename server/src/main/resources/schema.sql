@@ -152,3 +152,27 @@ CREATE TABLE IF NOT EXISTS close_friends (
     friend INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     PRIMARY KEY (owner, friend)
 );
+
+-- Раунд 26: модерация — блокировки, жалобы, бан
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS blocks (
+    blocker INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    blocked INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    PRIMARY KEY (blocker, blocked)
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id       BIGSERIAL PRIMARY KEY,
+    reporter INTEGER NOT NULL,
+    kind     TEXT NOT NULL,
+    target   BIGINT NOT NULL,
+    author   INTEGER NOT NULL,
+    reason   TEXT NOT NULL,
+    note     TEXT NOT NULL DEFAULT '',
+    preview  TEXT NOT NULL DEFAULT '',
+    created  BIGINT NOT NULL,
+    status   TEXT NOT NULL DEFAULT 'open'
+);
+CREATE INDEX IF NOT EXISTS reports_status ON reports (status, id DESC);

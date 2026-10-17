@@ -91,6 +91,11 @@ struct FeedScreen: View {
 
                 PostComposer(model: model)
 
+                // С сервером, но вход на него не удался (пароль телефон не хранит) — спросить один раз
+                if state.serverMode && state.signedOut {
+                    ServerSignInCard(model: model)
+                }
+
                 // Новичку — гид по приложению, пока карточку не скрыли
                 if !state.guideHidden {
                     GuideFeedCard(model: model)
@@ -145,6 +150,34 @@ private extension Post {
 private func footerKey(_ state: UiState) -> String {
     let count: Int = state.olderFeed.count
     return "\(count)-\(state.netStatus)"
+}
+
+/// «Войдите на сервер»: пароль Memory ещё раз — и друзья видят записи, можно переписываться.
+private struct ServerSignInCard: View {
+    let model: AppModel
+    @State private var password = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(t("Войдите на сервер"))
+                .textStyle(.title, Palette.ink)
+            Text(t("Введите пароль Memory ещё раз — так друзья увидят ваши записи и смогут вам написать. Пароль нужен один раз."))
+                .textStyle(.bodySmall, Palette.mist)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                GlassField(placeholder: t("Пароль"), text: $password, limit: 128, singleLine: true, secure: true, plain: true)
+                    .glass(radius: 14)
+                GlowButton(title: t("Войти"), enabled: !password.isEmpty) {
+                    model.signInToServer(password)
+                    password = ""
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glass(radius: 20)
+        .padding(.horizontal, 16)
+    }
 }
 
 /// «Запись не отправлена…» — стеклянная карточка над лентой с крестиком.

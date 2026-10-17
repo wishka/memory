@@ -391,6 +391,8 @@ data class UiState(
     /** «Интересное» под лентой друзей: записи людей, на которых вы не подписаны (с сервера). */
     val explore: List<Post> = emptyList(),
     val explorePaging: FeedPaging = FeedPaging(),
+    /** Приложение работает с настоящим сервером (не встроенным демо). */
+    val serverMode: Boolean = false,
     val feedPaging: FeedPaging = FeedPaging(),
     /** Загрузки фото и видео: что идёт, что ждёт, что на паузе. */
     val uploads: List<UploadJob> = emptyList(),
@@ -1421,12 +1423,15 @@ class AppViewModel(
         val following = net.api.following().map { it.id }.toSet()
         val sent = net.api.sentRequests().map { it.id }.toSet()
         val incoming = net.api.followRequests().map { it.id }
+        val blockedOnServer = runCatching { net.api.blocked() }.getOrDefault(emptyList()).map(Directory::local).toSet()
         _state.update { s ->
             fun Set<Int>.local() = filter { !isServerPerson(it) }.toSet()
             s.copy(
                 following = s.following.local() + following,
                 sentRequests = s.sentRequests.local() + sent,
                 followRequests = s.followRequests.filter { !isServerPerson(it) } + incoming.filter { it !in s.blocked },
+                // С сервера — целиком (разблокировали на другом телефоне — и здесь); демо-люди — как были
+                blocked = s.blocked.filter { !isServerPerson(it) }.toSet() + blockedOnServer,
             )
         }
         peopleChanged()
@@ -2199,6 +2204,84 @@ class AppViewModel(
 
     // ==================== ВХОД НА СЕРВЕР И УСТРОЙСТВА ====================
 
+    /** Подходит ли пароль Memory (проверка на телефоне; задаёт MainActivity). */
+    var passwordCheck: (String) -> Boolean = { true }
+
+    /** Идёт вход с плашки «Войдите на сервер». */
+    private var serverSignIn: Job? = null
+
+    /**
+     * Плашка «Войдите на сервер»: пароль спрашивается один раз (телефон хранит
+     * только его отпечаток). Неверный пароль на сервер не уходит — иначе
+     * сервер завёл бы аккаунт с ним.
+     */
+    fun signInToServer(password: String) {
+        if (serverSignIn?.isActive == true) return
+        serverSignIn = viewModelScope.launch {
+            // Проверка пароля нарочно медленная (PBKDF2) — не в главном потоке
+            val ok = password.isNotEmpty() && kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { passwordCheck(password) }
+            if (!ok) {
+                _state.update { it.copy(notice = t("Пароль не подходит")) }
+                return@launch
+            }
+            net.session.clear()
+            runCatching { startSessionNow(_state.value.me.handle, password, fresh = false) }
+            if (_state.value.signedOut || !net.session.signedIn) _state.update { it.copy(notice = t("Не получилось — проверьте сеть")) }
+            else {
+                _state.update { it.copy(notice = t("Готово — вы на сервере")) }
+                refreshFeedNow()
+            }
+        }
+    }
+
+    /**
+     * Удалить аккаунт и на сервере (до удаления на телефоне). null — можно
+     * удалять дальше; иначе текст ошибки (нет связи — ничего не удаляем).
+     */
+    suspend fun deleteOnServer(password: String): String? {
+        if (!serverMode) return null
+        if (!net.session.signedIn) {
+            try {
+                net.signIn(_state.value.me.handle, password, deviceName, "android")
+            } catch (e: NetError) {
+                // Войти нельзя: такого аккаунта на сервере нет (заведён до сервера и туда не попал) — удалять там нечего
+                if (e.kind == NetError.Kind.Auth) return null
+                return if (e.code == 403) t("Аккаунт заблокирован модератором — напишите в поддержку, чтобы удалить его на сервере.")
+                else t("Нет связи с сервером — аккаунт не удалён. Попробуйте позже.")
+            }
+        }
+        return try {
+            net.api.deleteMe(password)
+            net.session.clear()
+            null
+        } catch (e: NetError) {
+            // Сервер ответил, но пароль у него другой — ничего не удаляем, иначе аккаунт остался бы на сервере
+            if (e.code == 403) t("Пароль на сервере другой — аккаунт не удалён. Войдите на сервер и повторите.")
+            else t("Нет связи с сервером — аккаунт не удалён. Попробуйте позже.")
+        }
+    }
+
+    /** Сменить пароль и на сервере (до смены на телефоне). null — можно менять дальше. */
+    suspend fun changeServerPassword(current: String, new: String): String? {
+        if (!serverMode) return null
+        if (!net.session.signedIn) {
+            try {
+                net.signIn(_state.value.me.handle, current, deviceName, "android")
+            } catch (e: NetError) {
+                // Аккаунта на сервере нет — меняем только на телефоне
+                if (e.kind == NetError.Kind.Auth || e.code == 403) return null
+                return t("Нет связи с сервером — пароль не сменён. Попробуйте позже.")
+            }
+        }
+        return try {
+            net.api.changePassword(current, new)
+            null
+        } catch (e: NetError) {
+            if (e.code == 403) t("Пароль на сервере другой — пароль не сменён. Войдите на сервер и повторите.")
+            else t("Нет связи с сервером — пароль не сменён. Попробуйте позже.")
+        }
+    }
+
     /** Имя этого телефона для списка устройств («Pixel 8»). */
     var deviceName: String = "Android"
 
@@ -2444,6 +2527,7 @@ class AppViewModel(
         net = n
         // Свой номер на сервере — до того, как читать кэш: записи с ним — мои
         Directory.selfId = n.session.userId
+        _state.update { it.copy(serverMode = n.demo == null) }
         feedPager = n.feedPager()
         feedPager.restore()
         explorePager = n.explorePager()
@@ -2462,6 +2546,7 @@ class AppViewModel(
         tickJob = null
         runCatching { net.realtime.close() }
         Directory.selfId = 0
+        _state.update { it.copy(serverMode = false) }
         // Люди с сервера — у каждого аккаунта свои (вернутся с его сохранённым состоянием)
         Directory.clear()
         net = Net.demo(clock, { _state.value.me })
@@ -3963,6 +4048,7 @@ class AppViewModel(
     fun reportMessage(chatId: Int, message: Message) {
         val peer = _state.value.chats.firstOrNull { it.id == chatId }?.peer ?: return
         if (message.fromMe) return
+        reportedSentAt[message.id] = message.sentAt
         startReport(ReportTarget(ReportKind.Message, message.id, peer.id, peer.name, chatId, messagePreview(message).take(80)))
     }
 
@@ -3983,6 +4069,8 @@ class AppViewModel(
             when (target.kind) {
                 ReportKind.Comment -> next.copy(reportedComments = next.reportedComments + target.id)
                 ReportKind.Post -> next.copy(
+                    olderFeed = next.olderFeed.filterNot { it.id == target.id },
+                    explore = next.explore.filterNot { it.id == target.id },
                     posts = next.posts.filterNot { it.id == target.id },
                     groups = next.groups.map { g -> g.copy(posts = g.posts.filterNot { it.id == target.id }) },
                     commentsPostId = if (next.commentsPostId == target.id) null else next.commentsPostId,
@@ -3998,9 +4086,41 @@ class AppViewModel(
                 ReportKind.Person -> next
             }
         }
+        if (target.kind == ReportKind.Post) {
+            feedPager.drop(target.id)
+            explorePager.drop(target.id)
+        }
+        sendReport(target, reason, note)
         if (block && target.authorId != 0 && target.authorId != _state.value.me.id) {
             block(target.authorId)
         }
+    }
+
+    /** Время сервера у сообщений, на которые жалуются (сообщение из переписки уже убрано). */
+    private val reportedSentAt = HashMap<Long, Long>()
+
+    /**
+     * Жалоба — модераторам на сервер (только на то, что пришло с сервера:
+     * на демо-людей жаловаться некому). У записей и комментариев сервер знает
+     * их номер; у сообщений и PRISM модератор увидит preview.
+     */
+    private fun sendReport(target: ReportTarget, reason: ReportReason, note: String) {
+        if (!serverMode || !isServerPerson(target.authorId)) return
+        val kind = when (target.kind) {
+            ReportKind.Post -> if (target.id >= SERVER_ID_BASE) "post" else return
+            ReportKind.Comment -> "comment"
+            ReportKind.Prism -> "prism"
+            ReportKind.Message -> "message"
+            ReportKind.Person -> "person"
+        }
+        val body = org.json.JSONObject().put("kind", kind).put("target", target.id).put("author", target.authorId)
+            .put("reason", reason.id).put("note", note.trim().take(500)).put("preview", target.preview.take(300))
+        // Сообщение сервер найдёт сам — по переписке и времени сервера; автор и текст будут его, а не со слов
+        if (target.kind == ReportKind.Message) {
+            body.put("chat", target.chatId).put("sentAt", reportedSentAt[target.id] ?: 0L)
+        }
+        runCatching { net.queueCall("POST", "/v1/reports", body) }
+        kickNet()
     }
 
     fun openLegal(doc: LegalDoc) {
@@ -4152,13 +4272,10 @@ class AppViewModel(
                 closeFriends = s.closeFriends - userId,
             )
         }
-        // Человек с сервера: подписки в обе стороны снимаются — он больше не видит ваши записи и истории
+        // Человек с сервера: блокировка на сервере — подписки в обе стороны снимаются,
+        // он больше не видит ваши записи, истории и комментарии и не может написать
         if (isServerPerson(userId)) {
-            runCatching {
-                net.queueCall("DELETE", "/v1/users/$userId/follow", coalesce = "follow:$userId")
-                net.queueCall("DELETE", "/v1/me/followers/$userId", coalesce = "follower:$userId")
-                net.queueCall("DELETE", "/v1/me/requests/$userId")
-            }
+            runCatching { net.queueCall("PUT", "/v1/users/$userId/block", coalesce = "block:$userId") }
             pushCloseFriends()
             kickNet()
         }
@@ -4166,6 +4283,10 @@ class AppViewModel(
 
     fun unblock(userId: Int) {
         _state.update { s -> s.copy(blocked = s.blocked - userId) }
+        if (isServerPerson(userId)) {
+            runCatching { net.queueCall("DELETE", "/v1/users/$userId/block", coalesce = "block:$userId") }
+            kickNet()
+        }
     }
 
     // ==================== УВЕДОМЛЕНИЯ И ИТОГИ ====================

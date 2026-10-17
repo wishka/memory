@@ -39,6 +39,8 @@ class Core(
     private val pusher: Pusher = NoPush,
     /** Где отправлять пуши — не в потоке запроса (тесты: сразу). */
     private val background: (Runnable) -> Unit = { pushPool.execute(it) },
+    /** Логины модераторов (ADMINS): им — жалобы и админка /admin. */
+    private val admins: Set<String> = emptySet(),
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val uploadsDir = File(dataDir, "uploads").apply { mkdirs() }
@@ -82,6 +84,8 @@ class Core(
         if (clock() - d.lastSeen > 60_000) store.saveDevice(d.copy(lastSeen = clock()))
         return d.userId
     }
+
+    private fun isAdmin(userId: Int): Boolean = admins.isNotEmpty() && store.user(userId)?.login in admins
 
     /** Живой канал: кто и до какого момента действует токен (потом — закрыть кодом 4401). */
     fun realtimeSession(token: String?): Pair<Int, Long>? {
@@ -130,6 +134,8 @@ class Core(
                 val name = body.optString("name").trim().take(MAX_TITLE).ifEmpty { login }
                 if (!LOGIN.matches(login)) return error(400, "Логин: 3–32 знака, латиница, цифры, точка, подчёркивание")
                 if (password.length < 6) return error(400, "Пароль не короче 6 знаков")
+                // Логины модераторов (ADMINS) занять нельзя: иначе тот, кто успел, стал бы модератором
+                if (login in admins) return error(409, "Логин занят")
                 val salt = Crypto.newSalt()
                 val user = store.createUser(login, name, (login.hashCode() and 0xffff) / 65535f, Crypto.hashPassword(password, salt), salt, clock())
                     ?: return error(409, "Логин занят")
@@ -144,11 +150,12 @@ class Core(
                     return error(401, "Неверный логин или пароль")
                 }
                 failures.remove(login)
+                if (user.banned) return error(403, "Аккаунт заблокирован модератором")
                 json(issue(user, "d" + Crypto.randomToken(9), devName, platform))
             }
             "/v1/auth/refresh" -> {
                 val d = store.deviceByRefresh(Crypto.sha256(body.optString("refresh"))) ?: return error(401, "Сессия закрыта")
-                val user = store.user(d.userId) ?: return error(401, "Нет такого человека")
+                val user = store.user(d.userId)?.takeIf { !it.banned } ?: return error(401, "Нет такого человека")
                 // Новый токен обновления, старый больше не действует
                 json(issue(user, d.id, d.name, d.platform))
             }
@@ -182,10 +189,15 @@ class Core(
         return o
     }
 
+    /** Комментарий виден: свой, или автор не заблокирован (в любую сторону) и не забанен. */
+    private fun visibleComment(viewer: Int, c: CommentRow): Boolean =
+        c.author == viewer || (!store.blockedEither(viewer, c.author) && store.user(c.author)?.banned == false)
+
     /** Видит ли viewer записи и истории автора: свой, открытый профиль или подписан. */
     private fun canSee(viewer: Int, author: Int): Boolean {
         if (viewer == author) return true
         val u = store.user(author) ?: return false
+        if (u.banned || store.blockedEither(viewer, author)) return false
         return !u.closed || store.follow(viewer, author)?.accepted == true
     }
 
@@ -204,6 +216,10 @@ class Core(
     private fun route(r: Req): Resp {
         val path = r.path.trimEnd('/').ifEmpty { "/" }
         if (path == "/health") return json(JSONObject().put("ok", true))
+        // Модерация в браузере: страница сама входит через API (только логины из ADMINS)
+        if (path == "/admin" && r.method == "GET") {
+            return Resp(200, mapOf("Cache-Control" to "no-store", "X-Frame-Options" to "DENY"), AdminPage.HTML.toByteArray(), contentType = "text/html; charset=utf-8")
+        }
         if (path.startsWith("/v1/auth/")) return auth(Req(r.method, path, r.query, mapOf("Authorization" to (r.header("Authorization") ?: "")), r.body))
         if (r.method == "OPTIONS" && path == "/v1/uploads") {
             return empty(204, mapOf("Tus-Version" to TUS, "Tus-Max-Size" to MAX_UPLOAD.toString(), "Tus-Extension" to "creation,termination"))
@@ -211,6 +227,25 @@ class Core(
         val me = userByAccess(r.header("Authorization")) ?: return error(401, "Нужен вход")
         val p = path.trim('/').split('/')
         return when {
+            path == "/v1/me" && r.method == "DELETE" -> deleteMe(me, r)
+            path == "/v1/me/password" && r.method == "PUT" -> {
+                val u = store.user(me) ?: return error(404, "Нет")
+                val body = bodyJson(r) ?: return error(400, "Нужен JSON")
+                if (tooManyFailures("pw:$me")) return json(JSONObject().put("error", "Слишком много попыток"), 429, mapOf("Retry-After" to "900"))
+                if (!Crypto.checkPassword(body.optString("current"), u.salt, u.passHash)) {
+                    failed("pw:$me")
+                    return error(403, "Пароль не подходит")
+                }
+                val next = body.optString("new")
+                if (next.length < 6) return error(400, "Пароль не короче 6 знаков")
+                val salt = Crypto.newSalt()
+                store.updatePassword(me, Crypto.hashPassword(next, salt), salt)
+                // Другие устройства выходят: пароль сменили — старые входы больше не действуют
+                val current = deviceByAccess(r)?.id
+                store.devices(me).filter { it.id != current }.forEach { store.deleteDevice(it.id) }
+                hub.kick(me)
+                empty()
+            }
             path == "/v1/me" -> me(r, me)
             path == "/v1/me/key" && r.method == "PUT" -> {
                 val key = bodyJson(r)?.optString("publicKey").orEmpty()
@@ -227,21 +262,24 @@ class Core(
             path == "/v1/devices/revoke-others" && r.method == "POST" -> {
                 val current = deviceByAccess(r)?.id
                 store.devices(me).filter { it.id != current }.forEach { store.deleteDevice(it.id) }
+                hub.kick(me)
                 empty()
             }
             p.size == 3 && p[1] == "devices" && r.method == "DELETE" -> {
                 val d = store.device(p[2])
                 if (d == null || d.userId != me || d.id == deviceByAccess(r)?.id) return error(404, "Нет такого устройства")
                 store.deleteDevice(d.id)
+                hub.kick(me)
                 empty()
             }
             path == "/v1/users" && r.method == "GET" -> {
                 val q = r.query["q"].orEmpty().trim().lowercase()
                 if (q.length < 2) return json(JSONObject().put("items", JSONArray()))
-                json(JSONObject().put("items", JSONArray(store.searchUsers(q, 20).map { userJson(it, me) })))
+                val found = store.searchUsers(q, 40).filter { !it.banned && !store.blockedEither(me, it.id) }.take(20)
+                json(JSONObject().put("items", JSONArray(found.map { userJson(it, me) })))
             }
             p.size == 3 && p[1] == "users" && r.method == "GET" -> {
-                val u = p[2].toIntOrNull()?.let(store::user) ?: return error(404, "Нет такого человека")
+                val u = p[2].toIntOrNull()?.let(store::user)?.takeIf { !it.banned && !store.blockedEither(me, it.id) } ?: return error(404, "Нет такого человека")
                 json(userJson(u, me))
             }
             p.size == 4 && p[1] == "users" && p[3] == "follow" -> follow(me, p[2].toIntOrNull(), r.method)
@@ -272,6 +310,17 @@ class Core(
                 val arr = bodyJson(r)?.optJSONArray("ids") ?: return error(400, "Нужен ids")
                 store.setCloseFriends(me, (0 until arr.length()).map { arr.optInt(it) }.filter { it > 0 && it != me }.distinct().take(500))
                 empty()
+            }
+            p.size == 4 && p[1] == "users" && p[3] == "block" -> block(me, p[2].toIntOrNull(), r.method)
+            path == "/v1/me/blocked" && r.method == "GET" -> json(JSONObject().put("ids", JSONArray(store.blockedBy(me).toList())))
+            path == "/v1/reports" && r.method == "POST" -> idempotent(me, r) { createReport(me, r) }
+            path == "/v1/admin/reports" && r.method == "GET" -> {
+                if (!isAdmin(me)) return error(403, "Только модераторам")
+                adminReports(r.query["status"]?.takeIf { it != "all" } ?: if (r.query["status"] == "all") null else "open")
+            }
+            p.size == 4 && p[1] == "admin" && p[2] == "reports" && r.method == "POST" -> {
+                if (!isAdmin(me)) return error(403, "Только модераторам")
+                resolveReport(p[3].toLongOrNull() ?: return error(404, "Нет"), bodyJson(r)?.optString("action").orEmpty())
             }
             path == "/v1/me/close-friends" && r.method == "GET" -> json(JSONObject().put("ids", JSONArray(store.closeFriends(me).toList())))
             path == "/v1/devices/current/push" && r.method == "PUT" -> {
@@ -424,7 +473,7 @@ class Core(
     /** Запись для того, кто смотрит: номер, автор, счётчики, «нравится ли мне», последние комментарии. */
     private fun postJson(row: PostRow, liked: Boolean, viewer: Int, comments: Int = 0): JSONObject {
         val o = runCatching { JSONObject(row.body) }.getOrDefault(JSONObject())
-        val last = if (comments > 0) store.lastComments(row.id, 2) else emptyList()
+        val last = if (comments > 0) store.lastComments(row.id, 4).filter { visibleComment(viewer, it) }.takeLast(2) else emptyList()
         val likedComments = store.commentsLikedBy(viewer, last.map { it.id })
         o.put("id", row.id).put("author", row.author).put("createdAt", row.created).put("minutesAgo", 0)
             .put("likes", row.likes).put("liked", liked).put("commentsOff", row.commentsOff)
@@ -449,10 +498,12 @@ class Core(
             PageKind.Explore -> store.explore(mine, after?.first, after?.second, limit + 1)
             is PageKind.Author -> store.posts(kind.id, after?.first, after?.second, limit + 1)
         }
-        val chunk = rows.take(limit)
+        // Курсор — по всем строкам; показываем только то, что можно видеть (бан, блокировки)
+        val page = rows.take(limit)
+        val chunk = page.filter { canSee(me, it.author) }
         val liked = store.likedBy(me, chunk.map { it.id })
         val counts = store.commentCounts(chunk.map { it.id })
-        val next = if (rows.size > limit) chunk.last().let { encodeCursor(it.created, it.id) } else null
+        val next = if (rows.size > limit) page.last().let { encodeCursor(it.created, it.id) } else null
         val items = JSONArray(chunk.map { postJson(it, it.id in liked, me, counts[it.id] ?: 0) })
         return json(JSONObject().put("items", items).put("next", next ?: JSONObject.NULL))
     }
@@ -510,7 +561,9 @@ class Core(
         val title = body.optString("title").trim().take(MAX_TITLE)
         if (title.isEmpty()) return error(400, "Нужно название")
         val arr = body.optJSONArray("members") ?: JSONArray()
-        val ids = (0 until arr.length()).map { arr.optInt(it) }.filter { it != me && store.user(it) != null }.distinct().take(MAX_MEMBERS - 1)
+        // Заблокированных (в любую сторону) в группу не добавить — иначе блокировку обошли бы группой
+        val ids = (0 until arr.length()).map { arr.optInt(it) }
+            .filter { it != me && store.user(it)?.banned == false && !store.blockedEither(me, it) }.distinct().take(MAX_MEMBERS - 1)
         val members = listOf(MemberRow(id, me, admin = true, accepted = true)) + ids.map { MemberRow(id, it, admin = false, accepted = true) }
         if (!store.createChat(ChatRow(id, "group", title, me, clock()), members)) return error(409, "Номер занят")
         groupChanged(id)
@@ -521,7 +574,8 @@ class Core(
     private fun direct(me: Int, r: Req): Resp {
         val other = bodyJson(r)?.optInt("user") ?: return error(400, "Нужен user")
         if (other == me) return error(400, "Это вы")
-        store.user(other) ?: return error(404, "Нет такого человека")
+        store.user(other)?.takeIf { !it.banned } ?: return error(404, "Нет такого человека")
+        if (store.blockedEither(me, other)) return error(403, "Нельзя написать")
         synchronized(lock) {
             store.directChat(me, other)?.let { return json(chatJson(it, me)) }
             var id: Int
@@ -553,7 +607,8 @@ class Core(
             when (method) {
                 "PUT" -> {
                     if (!isAdmin) return error(403, "Только админы")
-                    if (store.user(userId) == null) return error(404, "Нет такого человека")
+                    if (store.user(userId)?.banned != false) return error(404, "Нет такого человека")
+                    if (store.blockedEither(me, userId)) return error(403, "Нельзя добавить")
                     if (ms.size >= MAX_MEMBERS) return error(409, "Группа заполнена")
                     if (ms.none { it.userId == userId }) store.saveMember(MemberRow(chat.id, userId, false, true))
                 }
@@ -605,6 +660,8 @@ class Core(
         val chat = store.chat(chatId) ?: return error(404, "Нет такой переписки")
         val ms = store.members(chatId)
         val mine = ms.firstOrNull { it.userId == me } ?: return error(403, "Вы не в переписке")
+        // Личная переписка с тем, кто заблокировал (или кого заблокировали), — закрыта
+        if (chat.direct && ms.any { it.userId != me && store.blockedEither(me, it.userId) }) return error(403, "Нельзя написать")
         val body = bodyJson(r) ?: return error(400, "Нужен JSON")
         if (body.optString("text").length > MAX_ENVELOPE) return error(400, "Слишком длинное сообщение")
         val media = cleanMedia(me, body.optJSONArray("attachments"), 10) ?: return error(422, "Загрузка не закончена")
@@ -615,12 +672,14 @@ class Core(
         if (!mine.accepted) store.saveMember(mine.copy(accepted = true))
         val row = store.addMessage(chat.id, me, clock(), body.toString())
         val event = JSONObject().put("type", "message").put("chat", chat.id)
-        ms.filter { it.userId != me }.forEach { m -> hub.send(m.userId, JSONObject(event.toString()).put("message", messageJson(row, m.userId)).toString()) }
+        // Тем, кто заблокировал автора (общая группа), — ни события, ни пуша
+        val to = ms.filter { it.userId != me && !store.blockedEither(me, it.userId) }
+        to.forEach { m -> hub.send(m.userId, JSONObject(event.toString()).put("message", messageJson(row, m.userId)).toString()) }
         // Кто не на связи — пуш. Секретное — без текста: сервер его и не знает
         val secret = body.optBoolean("secret")
         val preview = if (secret) "" else body.optString("text").take(120)
         val data = mapOf("type" to "message", "chatId" to chat.id.toString(), "body" to preview)
-        ms.filter { it.userId != me && !hub.online(it.userId) }.forEach { m -> notify(m.userId, me, data) }
+        to.filter { !hub.online(it.userId) }.forEach { m -> notify(m.userId, me, data) }
         return json(messageJson(row, me), 201)
     }
 
@@ -647,6 +706,8 @@ class Core(
 
     /** Кадр от телефона по живому каналу: «печатает» и «прочитано». */
     fun onClientFrame(me: Int, text: String) {
+        // Аккаунт удалён или забанен, пока соединение было открыто, — молчим
+        if (store.user(me)?.banned != false) return
         val o = runCatching { JSONObject(text) }.getOrNull() ?: return
         val chatId = o.optInt("chat")
         when (o.optString("type")) {
@@ -655,6 +716,7 @@ class Core(
                 val ms = store.members(chatId)
                 val mine = ms.firstOrNull { it.userId == me } ?: return
                 if (!mine.accepted || ms.size > 50) return
+                if (ms.size == 2 && ms.any { it.userId != me && store.blockedEither(me, it.userId) }) return
                 val ev = JSONObject().put("type", "typing").put("chat", chatId).put("user", me).put("on", o.optBoolean("on")).toString()
                 hub.sendAll(ms.filter { it.userId != me }.map { it.userId }, ev)
             }
@@ -670,6 +732,7 @@ class Core(
     private fun follow(me: Int, target: Int?, method: String): Resp {
         val u = target?.let(store::user) ?: return error(404, "Нет такого человека")
         if (u.id == me) return error(400, "Это вы")
+        if (method == "PUT" && (u.banned || store.blockedEither(me, u.id))) return error(403, "Нельзя подписаться")
         val existing = store.follow(me, u.id)
         return when (method) {
             "PUT" -> {
@@ -709,7 +772,9 @@ class Core(
         val chunk = rows.take(limit)
         val liked = store.commentsLikedBy(me, chunk.map { it.id })
         val next = if (rows.size > limit) chunk.last().id.toString() else null
-        return json(JSONObject().put("items", JSONArray(chunk.map { commentJson(it, it.id in liked) })).put("next", next ?: JSONObject.NULL))
+        // Курсор — по всем, а показываем без заблокированных и забаненных
+        val shown = chunk.filter { visibleComment(me, it) }
+        return json(JSONObject().put("items", JSONArray(shown.map { commentJson(it, it.id in liked) })).put("next", next ?: JSONObject.NULL))
     }
 
     private fun addComment(me: Int, post: PostRow, r: Req): Resp {
@@ -770,6 +835,147 @@ class Core(
         val now = clock()
         val row = store.createStory(me, now, now + STORY_TTL, clean.toString(), body.optBoolean("close"))
         return json(storyJson(row, me, false), 201)
+    }
+
+    // ── Модерация ────────────────────────────────────────────────────
+
+    /**
+     * Заблокировать: подписки в обе стороны снимаются, друг друга не видно
+     * (записи, истории, комментарии, поиск), написать нельзя.
+     */
+    private fun block(me: Int, target: Int?, method: String): Resp {
+        val u = target?.let(store::user) ?: return error(404, "Нет такого человека")
+        if (u.id == me) return error(400, "Это вы")
+        when (method) {
+            "PUT" -> {
+                store.setBlock(me, u.id, true)
+                store.removeFollow(me, u.id)
+                store.removeFollow(u.id, me)
+                store.setCloseFriends(me, store.closeFriends(me) - u.id)
+            }
+            "DELETE" -> store.setBlock(me, u.id, false)
+            else -> return error(405, "PUT или DELETE")
+        }
+        return empty()
+    }
+
+    private val REPORT_KINDS = setOf("post", "comment", "story", "prism", "message", "person")
+
+    /** Жалоба — модераторам (не больше 100 в сутки от одного человека). */
+    private fun createReport(me: Int, r: Req): Resp {
+        val body = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val kind = body.optString("kind")
+        if (kind !in REPORT_KINDS) return error(400, "kind: " + REPORT_KINDS.joinToString())
+        val today = store.reports(null, 500).count { it.reporter == me && clock() - it.created < 86_400_000L }
+        if (today >= 100) return json(JSONObject().put("error", "Слишком много жалоб"), 429, mapOf("Retry-After" to "3600"))
+        val target = body.optLong("target")
+        var preview = body.optString("preview").take(300)
+        // Автора сервер определяет сам. Чего проверить нельзя (PRISM пока на телефонах) —
+        // автор «со слов», и заблокировать его по такой жалобе модератор не сможет
+        var author = 0
+        when (kind) {
+            "post" -> store.post(target)?.let { author = it.author }
+            "comment" -> store.comment(target)?.let { author = it.author }
+            "story" -> store.story(target)?.let { author = it.author }
+            "person" -> author = target.toInt()
+            "message" -> {
+                // Сообщение — по переписке, автору и времени сервера; жалуется участник
+                val chatId = body.optInt("chat")
+                val m = if (store.members(chatId).any { it.userId == me }) store.messageAt(chatId, body.optInt("author"), body.optLong("sentAt")) else null
+                if (m != null) {
+                    author = m.author
+                    val o = runCatching { JSONObject(m.body) }.getOrNull()
+                    if (o != null && !o.optBoolean("secret")) preview = o.optString("text").take(300)
+                }
+            }
+        }
+        val verified = author != 0
+        if (!verified) author = body.optInt("author")
+        val row = store.createReport(ReportRow(
+            0, me, kind, target, author, body.optString("reason").take(40).ifEmpty { "other" },
+            body.optString("note").take(500), preview, clock(), status = if (verified) "open" else "open-unverified",
+        ))
+        return json(JSONObject().put("id", row.id), 201)
+    }
+
+    private fun adminReports(status: String?): Resp {
+        val rows = if (status == "open") (store.reports("open", 200) + store.reports("open-unverified", 200)).sortedByDescending { it.id }
+        else store.reports(status, 400)
+        val items = rows.map { rep ->
+            val author = store.user(rep.author)
+            val reporter = store.user(rep.reporter)
+            // Что сейчас на сервере — текст записи или комментария, если они ещё есть
+            val current = when (rep.kind) {
+                "post" -> store.post(rep.target)?.body?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }
+                "comment" -> store.comment(rep.target)?.body?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }
+                "story" -> store.story(rep.target)?.body?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }
+                else -> null
+            }
+            JSONObject().put("id", rep.id).put("kind", rep.kind).put("target", rep.target).put("reason", rep.reason)
+                .put("note", rep.note).put("preview", rep.preview).put("current", current ?: JSONObject.NULL)
+                .put("created", rep.created).put("status", if (rep.status == "open-unverified") "open" else rep.status)
+                .put("verified", rep.status != "open-unverified")
+                .put("author", JSONObject().put("id", rep.author).put("login", author?.login ?: "—").put("name", author?.name ?: "удалён").put("banned", author?.banned ?: false))
+                .put("reporter", reporter?.login ?: "—")
+        }
+        return json(JSONObject().put("items", JSONArray(items)))
+    }
+
+    /** dismiss — оставить; remove — удалить то, на что жалоба; ban — удалить и заблокировать автора. */
+    private fun resolveReport(id: Long, action: String): Resp {
+        val rep = store.report(id) ?: return error(404, "Нет такой жалобы")
+        when (action) {
+            "dismiss" -> store.setReportStatus(id, "dismissed")
+            "remove", "ban" -> {
+                if (action == "ban" && rep.status == "open-unverified") return error(400, "Автор не подтверждён — заблокировать нельзя")
+                when (rep.kind) {
+                    "post" -> store.post(rep.target)?.let { purgeMedia(it.body); store.deletePost(it.id) }
+                    "comment" -> store.comment(rep.target)?.let { purgeMedia(it.body); store.deleteComment(it.id) }
+                    "story" -> store.story(rep.target)?.let { purgeMedia(it.body); store.deleteStory(it.id) }
+                }
+                if (action == "ban") store.user(rep.author)?.let { u ->
+                    store.updateUser(u.copy(banned = true))
+                    store.devices(u.id).forEach { store.deleteDevice(it.id) }
+                    hub.kick(u.id)
+                }
+                store.setReportStatus(id, if (action == "ban") "banned" else "removed")
+            }
+            else -> return error(400, "action: dismiss, remove, ban")
+        }
+        return empty()
+    }
+
+    /**
+     * Файлы удалённого содержимого (фото и видео записи, истории,
+     * комментария): ссылки на них больше не работают ни у кого.
+     */
+    private fun purgeMedia(body: String) {
+        val o = runCatching { JSONObject(body) }.getOrNull() ?: return
+        val paths = ArrayList<String>()
+        o.optJSONArray("media")?.let { a -> for (i in 0 until a.length()) a.optJSONObject(i)?.optString("path")?.let(paths::add) }
+        o.optJSONObject("media")?.optString("path")?.let(paths::add)
+        o.optJSONObject("sticker")?.optString("path")?.let(paths::add)
+        paths.filter { it.contains("/v1/uploads/") }.map { it.substringAfterLast('/') }.forEach { id ->
+            store.deleteUpload(id)
+            fileOf(id).delete()
+        }
+    }
+
+    /** Удалить аккаунт: всё, что человек выложил, и его файлы. Нужен пароль. */
+    private fun deleteMe(me: Int, r: Req): Resp {
+        val u = store.user(me) ?: return error(404, "Нет")
+        if (tooManyFailures("pw:$me")) return json(JSONObject().put("error", "Слишком много попыток"), 429, mapOf("Retry-After" to "900"))
+        val password = bodyJson(r)?.optString("password").orEmpty()
+        if (!Crypto.checkPassword(password, u.salt, u.passHash)) {
+            failed("pw:$me")
+            return error(403, "Пароль не подходит")
+        }
+        val files = store.uploadsOf(me).map { it.id }
+        store.deleteUser(me)
+        // Файлы — после базы: не вышло стереть из базы — файлы целы
+        files.forEach { fileOf(it).delete() }
+        hub.kick(me)
+        return empty()
     }
 
     // ── Живой канал и пуши ───────────────────────────────────────────

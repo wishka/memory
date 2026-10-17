@@ -190,6 +190,24 @@ class Api(
         }
     }
 
+    // ── Аккаунт и модерация ──────────────────────────────────────────
+
+    /** Удалить аккаунт на сервере со всем, что в нём (нужен пароль). */
+    suspend fun deleteMe(password: String) {
+        sendJson("DELETE", "/v1/me", JSONObject().put("password", password), null)
+    }
+
+    /** Сменить пароль на сервере; остальные устройства выходят. */
+    suspend fun changePassword(current: String, new: String) {
+        sendJson("PUT", "/v1/me/password", JSONObject().put("current", current).put("new", new), null)
+    }
+
+    /** Кого я заблокировал (номера на сервере). */
+    suspend fun blocked(): List<Int> {
+        val arr = getJson("/v1/me/blocked").optJSONArray("ids") ?: JSONArray()
+        return (0 until arr.length()).map { arr.optInt(it) }
+    }
+
     /** Мои переписки на сервере (личные и группы) — JSON как есть. */
     suspend fun chats(): List<JSONObject> {
         val arr = getJson("/v1/chats").optJSONArray("items") ?: JSONArray()

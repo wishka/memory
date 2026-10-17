@@ -288,6 +288,16 @@ paths:
       summary: Выйти на всех, кроме этого
       responses: { "204": { description: Готово } }
   /v1/me:
+    delete:
+      summary: Удалить аккаунт со всем содержимым и файлами (нужен пароль)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [password], properties: { password: { type: string } } }
+      responses:
+        "204": { description: Удалён }
+        "403": { description: Пароль не подходит }
     get:
       summary: Профиль и приватность (общие для всех телефонов)
       responses:
@@ -661,6 +671,67 @@ paths:
           application/json:
             schema: { type: object, properties: { liked: { type: boolean } } }
       responses: { "204": { description: Готово } }
+  /v1/me/password:
+    put:
+      summary: Сменить пароль (остальные устройства выходят)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [current, new], properties: { current: { type: string }, new: { type: string, minLength: 6 } } }
+      responses:
+        "204": { description: Сменён }
+        "403": { description: Текущий пароль не подходит }
+  /v1/users/{userId}/block:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Заблокировать — подписки в обе стороны снимаются, друг друга не видно, написать нельзя
+      responses: { "204": { description: Готово } }
+    delete:
+      summary: Разблокировать
+      responses: { "204": { description: Готово } }
+  /v1/me/blocked:
+    get:
+      summary: Кого я заблокировал
+      responses: { "200": { description: "{ids: [int]}" } }
+  /v1/reports:
+    post:
+      summary: Жалоба модераторам (до 100 в сутки)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, target, reason]
+              properties:
+                kind: { enum: [post, comment, story, prism, message, person] }
+                target: { type: integer, format: int64, description: "Номер; у сообщений и PRISM — номер на телефоне (модератор смотрит preview)" }
+                author: { type: integer, description: "У записей, комментариев и историй сервер берёт автора сам" }
+                reason: { enum: [spam, abuse, hate, adult, illegal, minors, self_harm, copyright, impersonation, other] }
+                note: { type: string, maxLength: 500 }
+                preview: { type: string, maxLength: 300 }
+      responses: { "201": { description: Принята } }
+  /v1/admin/reports:
+    get:
+      summary: Жалобы (только логинам из ADMINS); страница модерации — /admin
+      parameters:
+        - { name: status, in: query, schema: { enum: [open, all] } }
+      responses:
+        "200": { description: Жалобы с автором, жалобщиком и текущим текстом }
+        "403": { description: Не модератор }
+  /v1/admin/reports/{reportId}:
+    post:
+      summary: Решение по жалобе
+      parameters:
+        - { name: reportId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { action: { enum: [dismiss, remove, ban] } } }
+      responses: { "204": { description: "dismiss — оставить; remove — удалить содержимое; ban — удалить и заблокировать автора (войти не сможет)" } }
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
