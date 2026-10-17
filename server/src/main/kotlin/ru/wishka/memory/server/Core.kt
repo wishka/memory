@@ -41,6 +41,8 @@ class Core(
     private val background: (Runnable) -> Unit = { pushPool.execute(it) },
     /** Логины модераторов (ADMINS): им — жалобы и админка /admin. */
     private val admins: Set<String> = emptySet(),
+    /** Звонки и эфиры (LiveKit); null — выключены. */
+    private val liveKit: LiveKit? = null,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val uploadsDir = File(dataDir, "uploads").apply { mkdirs() }
@@ -60,6 +62,12 @@ class Core(
         private val LOGIN = Regex("^[a-z0-9._]{3,32}$")
         const val STORY_TTL = 24 * 60 * 60_000L
         const val MAX_COMMENT = 1000
+        /** Сколько звонит входящий, пока не станет пропущенным. */
+        const val RING_MS = 45_000L
+        /** Эфир дольше — считается закончившимся (ведущий пропал). */
+        const val LIVE_MAX_MS = 4 * 60 * 60_000L
+        /** Разговор без отметок дольше — считается оборвавшимся (телефон сел, приложение убили). */
+        const val CALL_ALIVE_MS = 90_000L
         private val pushPool = java.util.concurrent.Executors.newFixedThreadPool(2) { r -> Thread(r, "push").apply { isDaemon = true } }
     }
 
@@ -303,7 +311,7 @@ class Core(
                 empty()
             }
             p.size == 4 && p[1] == "me" && p[2] == "followers" && r.method == "DELETE" -> {
-                p[3].toIntOrNull()?.let { store.removeFollow(it, me) }
+                p[3].toIntOrNull()?.let { store.removeFollow(it, me); leaveFriendsLives(me, it) }
                 empty()
             }
             path == "/v1/me/close-friends" && r.method == "PUT" -> {
@@ -474,6 +482,13 @@ class Core(
                 }
                 empty()
             }
+            path == "/v1/calls" && r.method == "POST" -> startCall(me, r)
+            path == "/v1/calls/ringing" && r.method == "GET" -> ringingCalls(me)
+            p.size == 4 && p[1] == "calls" && r.method == "POST" -> callAction(me, p[2].toLongOrNull(), p[3])
+            path == "/v1/lives" && r.method == "GET" -> lives(me)
+            path == "/v1/lives" && r.method == "POST" -> startLive(me, r)
+            p.size == 3 && p[1] == "lives" && r.method == "DELETE" -> endLive(me, p[2].toLongOrNull())
+            p.size == 4 && p[1] == "lives" && r.method == "POST" -> liveAction(me, p[2].toLongOrNull(), p[3], r)
             path == "/v1/chats" && r.method == "GET" -> myChats(me)
             path == "/v1/chats" && r.method == "POST" -> idempotent(me, r) { createGroup(me, r) }
             path == "/v1/chats/direct" && r.method == "POST" -> direct(me, r)
@@ -1042,6 +1057,8 @@ class Core(
             }
             "DELETE" -> {
                 store.removeFollow(me, u.id)
+                // Отписался — эфиры «для друзей» этого человека больше не для него
+                leaveFriendsLives(u.id, me)
                 json(JSONObject().put("state", "none"))
             }
             else -> error(405, "PUT или DELETE")
@@ -1131,6 +1148,274 @@ class Core(
         return json(storyJson(row, me, false), 201)
     }
 
+    // ── Звонки (LiveKit) ─────────────────────────────────────────────
+
+    /** Звонок на двоих: живёт в памяти сервера (перезапуск — звонки обрываются). */
+    private class CallRow(val id: Long, val caller: Int, val callee: Int, val video: Boolean, val created: Long) {
+        @Volatile var state = "ringing"
+        /** Разговор идёт: телефоны отмечаются (alive) — пропали надолго, значит, звонок оборвался. */
+        @Volatile var lastSeen = created
+    }
+
+    private val calls = ConcurrentHashMap<Long, CallRow>()
+    /** Номера звонков, эфиров и их комментариев: от времени запуска — после перезапуска не повторяются. */
+    private val callSeq = java.util.concurrent.atomic.AtomicLong(clock() * 1000)
+
+    private fun nextCallId(): Long = callSeq.incrementAndGet()
+
+    /** Звонит, пока не ответили; дольше RING_MS — пропущенный. */
+    private fun CallRow.ringing(now: Long) = state == "ringing" && now - created < RING_MS
+
+    private fun noLiveKit() = error(503, "Звонки и эфиры на сервере не настроены")
+
+    private fun callAnswer(c: CallRow, me: Int): JSONObject {
+        val lk = liveKit!!
+        val room = "call-${c.id}"
+        return JSONObject().put("id", c.id).put("url", lk.url).put("room", room)
+            .put("token", lk.token(me, store.user(me)?.name.orEmpty(), room, publish = true, now = clock()))
+            .put("video", c.video)
+    }
+
+    /** Можно ли звонить: не заблокированы, у собеседника звонки «от всех» или «от друзей» (и я — его друг). */
+    private fun callAllowed(me: Int, to: UserRow): String? {
+        if (to.banned || store.blockedEither(me, to.id)) return "Нельзя позвонить"
+        val privacy = runCatching { JSONObject(to.profile.ifEmpty { "{}" }).optJSONObject("privacy") }.getOrNull()
+        return when (privacy?.optString("calls")) {
+            "Nobody" -> "Человек не принимает звонки"
+            "Following" -> if (store.follow(to.id, me)?.accepted == true) null else "Звонить можно только друзьям"
+            else -> null
+        }
+    }
+
+    private fun startCall(me: Int, r: Req): Resp {
+        if (liveKit == null) return noLiveKit()
+        val body = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val to = store.user(body.optInt("to"))?.takeIf { it.id != me } ?: return error(404, "Нет такого человека")
+        callAllowed(me, to)?.let { return error(403, it) }
+        val now = clock()
+        // Занят — уже звонит или разговаривает (зависшие «разговоры» дольше суток не считаются)
+        val busy = calls.values.any { c ->
+            (c.caller == to.id || c.callee == to.id || c.caller == me || c.callee == me) &&
+                (c.ringing(now) || (c.state == "active" && now - c.lastSeen < CALL_ALIVE_MS))
+        }
+        if (busy) return error(409, "Занято")
+        calls.values.removeIf { it.state == "ended" || (it.state == "ringing" && now - it.created > RING_MS * 4) }
+        val c = CallRow(nextCallId(), me, to.id, body.optBoolean("video"), now)
+        calls[c.id] = c
+        event(to.id, JSONObject().put("type", "call").put("id", c.id).put("state", "ringing").put("from", me).put("video", c.video)
+            .apply { authorInfo(me)?.let { put("user", it) } })
+        notify(to.id, me, mapOf("type" to "call", "callId" to c.id.toString(), "video" to if (c.video) "1" else "0"))
+        return json(callAnswer(c, me), 201)
+    }
+
+    /** Кто мне сейчас звонит (открыли приложение по пушу — звонок на экран). */
+    private fun ringingCalls(me: Int): Resp {
+        val now = clock()
+        val items = calls.values.filter { it.callee == me && it.ringing(now) && !store.blockedEither(me, it.caller) }.map { c ->
+            JSONObject().put("id", c.id).put("from", c.caller).put("video", c.video).put("createdAt", c.created)
+                .apply { authorInfo(c.caller)?.let { put("user", it) } }
+        }
+        return json(JSONObject().put("items", JSONArray(items)))
+    }
+
+    /** accept / decline — тот, кому звонят; end — любой из двоих. */
+    private fun callAction(me: Int, id: Long?, action: String): Resp {
+        if (liveKit == null) return noLiveKit()
+        val c = id?.let(calls::get)?.takeIf { it.caller == me || it.callee == me } ?: return error(404, "Нет такого звонка")
+        val now = clock()
+        val other = if (c.caller == me) c.callee else c.caller
+        fun tell(state: String) = event(other, JSONObject().put("type", "call").put("id", c.id).put("state", state).put("from", me).put("video", c.video))
+        return when (action) {
+            "accept" -> {
+                if (c.callee != me) return error(403, "Звонят не вам")
+                if (!c.ringing(now)) return error(410, "Звонок уже закончился")
+                c.state = "active"
+                c.lastSeen = now
+                tell("accepted")
+                json(callAnswer(c, me))
+            }
+            "decline" -> {
+                if (c.callee != me) return error(403, "Звонят не вам")
+                if (c.state != "ended") { c.state = "ended"; tell("declined") }
+                calls.remove(c.id)
+                liveKit.deleteRoom("call-${c.id}")
+                empty()
+            }
+            "alive" -> {
+                if (c.state == "active") c.lastSeen = now
+                empty()
+            }
+            "end" -> {
+                if (c.state == "ringing" && c.caller == me) {
+                    // Не дождался ответа — у собеседника пропущенный
+                    tell("cancelled")
+                    notify(other, me, mapOf("type" to "missed_call", "callId" to c.id.toString(), "video" to if (c.video) "1" else "0"))
+                } else if (c.state != "ended") tell("ended")
+                c.state = "ended"
+                calls.remove(c.id)
+                // Комната закрывается: кто бы там ни остался — отключается
+                liveKit.deleteRoom("call-${c.id}")
+                empty()
+            }
+            else -> error(404, "Нет такого действия")
+        }
+    }
+
+    // ── Эфиры (LiveKit) ──────────────────────────────────────────────
+
+    private class LiveRow(val id: Long, val host: Int, val title: String, val friendsOnly: Boolean, val started: Long) {
+        val viewers: MutableSet<Int> = ConcurrentHashMap.newKeySet()
+        @Volatile var hearts = 0
+    }
+
+    private val livesById = ConcurrentHashMap<Long, LiveRow>()
+    private val liveThrottle = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Человек больше не может звонить и смотреть (бан, удаление аккаунта):
+     * его эфиры и звонки кончаются, комнаты LiveKit закрываются.
+     */
+    private fun endEverythingOf(userId: Int) {
+        livesById.values.filter { it.host == userId }.forEach(::finishLive)
+        livesById.values.forEach { l -> if (l.viewers.remove(userId)) liveKit?.removeParticipant("live-${l.id}", userId) }
+        calls.values.filter { it.caller == userId || it.callee == userId }.forEach { c ->
+            val other = if (c.caller == userId) c.callee else c.caller
+            if (c.state != "ended") event(other, JSONObject().put("type", "call").put("id", c.id).put("state", "ended").put("from", userId).put("video", c.video))
+            c.state = "ended"
+            calls.remove(c.id)
+            liveKit?.deleteRoom("call-${c.id}")
+        }
+    }
+
+    /** Перестали дружить: из эфиров «для друзей» ведущего — вон. */
+    private fun leaveFriendsLives(host: Int, viewer: Int) {
+        for (l in livesById.values) {
+            if (l.host == host && l.friendsOnly && store.follow(viewer, host)?.accepted != true && l.viewers.remove(viewer)) {
+                liveKit?.removeParticipant("live-${l.id}", viewer)
+            }
+        }
+    }
+
+    /** Заблокировали: из эфиров друг друга — вон (и из комнат LiveKit). */
+    private fun separateInLives(a: Int, b: Int) {
+        for (l in livesById.values) {
+            if (l.host == a && l.viewers.remove(b)) liveKit?.removeParticipant("live-${l.id}", b)
+            if (l.host == b && l.viewers.remove(a)) liveKit?.removeParticipant("live-${l.id}", a)
+        }
+    }
+
+    /** Эфир идёт не дольше LIVE_MAX_MS: ведущий пропал (сел телефон) — эфир сам кончится. */
+    private fun liveRows(): List<LiveRow> {
+        val now = clock()
+        livesById.values.removeIf { now - it.started > LIVE_MAX_MS }
+        return livesById.values.toList()
+    }
+
+    /** Видит ли эфир: не заблокированы, профиль открыт или подписан; «для друзей» — только подписчикам. */
+    private fun liveVisible(me: Int, l: LiveRow): Boolean {
+        if (l.host == me) return true
+        if (!canSee(me, l.host)) return false
+        return !l.friendsOnly || store.follow(me, l.host)?.accepted == true
+    }
+
+    private fun liveJson(l: LiveRow): JSONObject = JSONObject().put("id", l.id).put("host", l.host).put("title", l.title)
+        .put("startedAt", l.started).put("viewers", l.viewers.size).put("hearts", l.hearts).put("friendsOnly", l.friendsOnly)
+        .apply { authorInfo(l.host)?.let { put("authorInfo", it) } }
+
+    private fun liveToken(l: LiveRow, me: Int): JSONObject {
+        val lk = liveKit!!
+        val room = "live-${l.id}"
+        return JSONObject().put("id", l.id).put("url", lk.url).put("room", room)
+            .put("token", lk.token(me, store.user(me)?.name.orEmpty(), room, publish = l.host == me, now = clock()))
+            .put("live", liveJson(l))
+    }
+
+    /** Кому сказать об эфире: подписчики ведущего (и зрители — о конце). */
+    private fun liveAudience(l: LiveRow): List<Int> = (store.followers(l.host) + l.viewers).distinct().filter { it != l.host && liveVisible(it, l) }
+
+    private fun lives(me: Int): Resp =
+        json(JSONObject().put("items", JSONArray(liveRows().filter { it.host != me && liveVisible(me, it) }.sortedByDescending { it.started }.map(::liveJson))))
+
+    private fun startLive(me: Int, r: Req): Resp {
+        if (liveKit == null) return noLiveKit()
+        val body = bodyJson(r) ?: return error(400, "Нужен JSON")
+        val title = body.optString("title").trim().take(80)
+        if (title.isEmpty()) return error(400, "Нужно название")
+        // Свой прежний эфир (не закончился — например, упало приложение) — закончить
+        liveRows().filter { it.host == me }.forEach { finishLive(it) }
+        val l = LiveRow(nextCallId(), me, title, body.optBoolean("friendsOnly"), clock())
+        livesById[l.id] = l
+        val o = JSONObject().put("type", "live").put("id", l.id).put("state", "started").put("live", liveJson(l))
+        for (u in liveAudience(l)) {
+            event(u, o)
+            notify(u, me, mapOf("type" to "live", "liveId" to l.id.toString(), "title" to title))
+        }
+        return json(liveToken(l, me), 201)
+    }
+
+    private fun finishLive(l: LiveRow) {
+        livesById.remove(l.id)
+        liveKit?.deleteRoom("live-${l.id}")
+        val o = JSONObject().put("type", "live").put("id", l.id).put("state", "ended")
+        for (u in liveAudience(l)) event(u, o)
+    }
+
+    private fun endLive(me: Int, id: Long?): Resp {
+        val l = id?.let(livesById::get)?.takeIf { it.host == me } ?: return error(404, "Нет такого эфира")
+        finishLive(l)
+        return empty()
+    }
+
+    /** Зрителю — о числе зрителей, сердечках и комментариях: ведущему и всем, кто смотрит. */
+    private fun liveRoom(l: LiveRow): List<Int> = (l.viewers + l.host).distinct()
+
+    private fun liveAction(me: Int, id: Long?, action: String, r: Req): Resp {
+        val l = id?.let { liveRows(); livesById[it] }?.takeIf { liveVisible(me, it) } ?: return error(404, "Эфир закончился")
+        fun counts() = JSONObject().put("type", "live").put("id", l.id).put("state", "counts").put("viewers", l.viewers.size).put("hearts", l.hearts)
+        // Сердечки и комментарии — только тем, кто в эфире, и не чаще, чем раз в minMs
+        fun tooFast(kind: String, minMs: Long): Boolean {
+            val key = "$kind:${l.id}:$me"
+            val now = clock()
+            val last = liveThrottle[key]
+            if (last != null && now - last < minMs) return true
+            liveThrottle[key] = now
+            if (liveThrottle.size > 10_000) liveThrottle.entries.removeIf { now - it.value > 60_000 }
+            return false
+        }
+        val inside = l.host == me || me in l.viewers
+        return when (action) {
+            "join" -> {
+                if (liveKit == null) return noLiveKit()
+                if (l.host != me && l.viewers.add(me)) for (u in liveRoom(l)) event(u, counts())
+                json(liveToken(l, me))
+            }
+            "leave" -> {
+                if (l.viewers.remove(me)) for (u in liveRoom(l)) event(u, counts())
+                empty()
+            }
+            "heart" -> {
+                if (!inside) return error(403, "Сначала откройте эфир")
+                if (tooFast("h", 150)) return empty()
+                l.hearts++
+                for (u in liveRoom(l)) event(u, counts())
+                empty()
+            }
+            "comments" -> {
+                if (!inside) return error(403, "Сначала откройте эфир")
+                val text = bodyJson(r)?.optString("text").orEmpty().trim().take(200)
+                if (text.isEmpty()) return error(400, "Пустой комментарий")
+                if (tooFast("c", 1000)) return json(JSONObject().put("error", "Слишком часто"), 429, mapOf("Retry-After" to "1"))
+                val u = store.user(me) ?: return error(404, "Нет")
+                val c = JSONObject().put("id", nextCallId()).put("author", me).put("name", u.name).put("hue", u.hue.toDouble()).put("text", text).put("at", clock())
+                val o = JSONObject().put("type", "live_comment").put("id", l.id).put("comment", c)
+                // Кто заблокирован (в любую сторону) — тот этого комментария не видит
+                for (to in liveRoom(l)) if (to == me || !store.blockedEither(me, to)) event(to, o)
+                json(c, 201)
+            }
+            else -> error(404, "Нет такого действия")
+        }
+    }
+
     // ── Модерация ────────────────────────────────────────────────────
 
     /**
@@ -1146,6 +1431,7 @@ class Core(
                 store.removeFollow(me, u.id)
                 store.removeFollow(u.id, me)
                 store.setCloseFriends(me, store.closeFriends(me) - u.id)
+                separateInLives(me, u.id)
             }
             "DELETE" -> store.setBlock(me, u.id, false)
             else -> return error(405, "PUT или DELETE")
@@ -1232,6 +1518,7 @@ class Core(
                 if (action == "ban") store.user(rep.author)?.let { u ->
                     store.updateUser(u.copy(banned = true))
                     store.devices(u.id).forEach { store.deleteDevice(it.id) }
+                    endEverythingOf(u.id)
                     hub.kick(u.id)
                 }
                 store.setReportStatus(id, if (action == "ban") "banned" else "removed")
@@ -1270,6 +1557,7 @@ class Core(
         }
         // Свои сообщества — с записями участников и их файлами
         store.communitiesOf(me).filter { it.owner == me }.forEach(::purgeCommunity)
+        endEverythingOf(me)
         val files = store.uploadsOf(me).map { it.id }
         store.deleteUser(me)
         // Файлы — после базы: не вышло стереть из базы — файлы целы

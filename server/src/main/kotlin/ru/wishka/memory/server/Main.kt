@@ -37,6 +37,7 @@ import java.io.File
  *  DB_USER, DB_PASSWORD
  *  ADMINS          — логины модераторов через запятую (страница /admin)
  *  FCM_CREDENTIALS — путь к ключу сервисного аккаунта Firebase (JSON); нет файла — без пушей
+ *  LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET — звонки и эфиры (LiveKit); нет — выключены
  */
 fun main() {
     val env = System.getenv()
@@ -60,7 +61,9 @@ fun main() {
     // Модераторы: логины через запятую (ADMINS=wishka) — им открыта /admin
     val admins = env["ADMINS"].orEmpty().split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
     if (admins.isNotEmpty()) println("Модерация: /admin — ${admins.joinToString()}")
-    val core = Core(store, dataDir, pusher = pusher, admins = admins)
+    val liveKit = LiveKit.fromEnv(env)
+    println(if (liveKit != null) "Звонки и эфиры: LiveKit ${liveKit.url}" else "Звонки и эфиры выключены: нет LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET (docs/LIVE.md)")
+    val core = Core(store, dataDir, pusher = pusher, admins = admins, liveKit = liveKit)
     println("Memory server: порт $port, файлы — ${dataDir.absolutePath}")
     embeddedServer(Netty, port = port, host = "0.0.0.0") { memory(core) }.start(wait = true)
 }

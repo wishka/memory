@@ -268,6 +268,10 @@ object Nudges {
             "message" -> message(actor, body.ifEmpty { t("Новое сообщение") }, data["chatId"]?.toIntOrNull() ?: 0)
             "new_follower" -> newFollower(actor)
             "comment" -> commentedOn(actor, data["postId"]?.toLongOrNull() ?: 0, body)
+            // Звонят: нажатие открывает приложение — звонок там уже на экране
+            "call" -> incomingCall(actor, data["video"] == "1")
+            "missed_call" -> missedCall(actor, data["video"] == "1", 0)
+            "live" -> liveStarted(actor, data["title"].orEmpty())
             "prism" -> prismPublished(actor, Prism(data["prismId"]?.toLongOrNull() ?: 0, actor, data["caption"].orEmpty(), "", 0, 0, 0))
             else -> if (body.isNotEmpty()) Nudge(NudgeKind.Friends, title.ifEmpty { "Memory" }, body, NudgeTarget.Post) else null
         }

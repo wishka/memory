@@ -30,6 +30,9 @@ Authorization: Bearer <access>
 | `group` | сервер | `chat`, `title`, `members`, `admins` | Сменилось название или состав группы |
 | `follow` | сервер | `user`, `state` | `request` — заявка ко мне, `follow` — на меня подписались, `accepted` — мою заявку приняли |
 | `comment` | сервер | `post`, `comment` (как в API) | Комментарий к моей записи |
+| `call` | сервер | `id`, `state`, `from`, `video`, `user` | Звонок: `ringing` — звонят мне, `accepted`, `declined`, `cancelled` (не дождались — пропущенный), `ended` |
+| `live` | сервер | `id`, `state`, `live`, `viewers`, `hearts` | Эфир: `started` (подписчикам), `ended`, `counts` (зрители и сердечки — ведущему и зрителям) |
+| `live_comment` | сервер | `id`, `comment` | Комментарий в эфире (`author`, `name`, `text`, `at`) — всем в эфире, кроме заблокированных |
 
 Пример:
 

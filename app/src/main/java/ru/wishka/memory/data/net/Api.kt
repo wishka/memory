@@ -357,6 +357,50 @@ class Api(
         return hs to stories.values.toList()
     }
 
+    // ── Звонки и эфиры (LiveKit) ─────────────────────────────────────
+
+    /** Куда подключаться: адрес LiveKit, комната и токен. */
+    data class RoomTicket(val id: Long, val url: String, val room: String, val token: String, val body: JSONObject)
+
+    private fun ticket(o: JSONObject) = RoomTicket(o.optLong("id"), o.optString("url"), o.optString("room"), o.optString("token"), o)
+
+    /** Позвонить (сервер проверит, можно ли, и позвонит собеседнику). */
+    suspend fun startCall(userId: Int, video: Boolean, key: String): RoomTicket =
+        ticket(sendJson("POST", "/v1/calls", JSONObject().put("to", userId).put("video", video), key))
+
+    suspend fun acceptCall(id: Long): RoomTicket = ticket(sendJson("POST", "/v1/calls/$id/accept", JSONObject(), null))
+
+    /** decline / end. */
+    suspend fun callAction(id: Long, action: String) {
+        sendJson("POST", "/v1/calls/$id/$action", JSONObject(), null)
+    }
+
+    /** Кто мне сейчас звонит (JSON: id, from, video, user). */
+    suspend fun ringingCalls(): List<JSONObject> {
+        val arr = getJson("/v1/calls/ringing").optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.onEach { Directory.remember(it.optJSONObject("user")) }
+    }
+
+    /** Эфир с сервера: ведущий — в справочник. */
+    fun liveOf(o: JSONObject): ru.wishka.memory.data.LiveStream {
+        Directory.remember(o.optJSONObject("authorInfo"))
+        return ru.wishka.memory.data.LiveStream(
+            o.optLong("id"), Directory.local(o.optInt("host")), o.optString("title"), o.optLong("startedAt"),
+            viewers = o.optInt("viewers"), peakViewers = o.optInt("viewers"), hearts = o.optInt("hearts"),
+            friendsOnly = o.optBoolean("friendsOnly"), seed = (o.optLong("id") % 1000).toInt(), server = true,
+        )
+    }
+
+    suspend fun lives(): List<ru.wishka.memory.data.LiveStream> {
+        val arr = getJson("/v1/lives").optJSONArray("items") ?: JSONArray()
+        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { runCatching { liveOf(it) }.getOrNull() } }
+    }
+
+    suspend fun startLive(title: String, friendsOnly: Boolean, key: String): RoomTicket =
+        ticket(sendJson("POST", "/v1/lives", JSONObject().put("title", title).put("friendsOnly", friendsOnly), key))
+
+    suspend fun joinLive(id: Long): RoomTicket = ticket(sendJson("POST", "/v1/lives/$id/join", JSONObject(), null))
+
     companion object {
         const val PAGE = 20
         const val JSON = "application/json; charset=utf-8"

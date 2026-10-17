@@ -2155,8 +2155,13 @@ class AppViewModel(
             is RtEvent.NewMessage -> event
             is RtEvent.Follow -> event.copy(userId = Directory.local(event.userId))
             is RtEvent.NewComment -> event
+            is RtEvent.Call -> event
+            is RtEvent.Live -> event
+            is RtEvent.LiveComment -> event
         }
         when (ev) {
+            is RtEvent.Call -> onCallEvent(ev)
+            is RtEvent.Live, is RtEvent.LiveComment -> onLiveEvent(ev)
             is RtEvent.NewMessage -> {
                 val m = runCatching { StateStore.Codec(s.me).messageOf(ev.message) }.getOrNull() ?: return
                 val author = m.authorId
@@ -2458,6 +2463,8 @@ class AppViewModel(
             if (runCatching { syncMyHighlights() }.isSuccess) pushHighlights()
             runCatching { syncCommunities() }
             runCatching { syncPrisms() }
+            runCatching { syncLives() }
+            runCatching { syncCalls() }
             refreshExplore()
         }
         pushToken?.let(::setPushToken)
@@ -2906,6 +2913,7 @@ class AppViewModel(
         refreshNetCounters()
         if (serverMode) {
             runCatching { syncStories() }
+            runCatching { syncLives() }
             refreshExplore()
         }
     }
@@ -3063,8 +3071,36 @@ class AppViewModel(
         Demo.person(peerId) ?: return t("Не удалось позвонить")
         Telemetry.track(if (video) AppEvent.VideoCall else AppEvent.VoiceCall)
         val call = ActiveCall(nextId++, peerId, video, outgoing = true, phase = CallPhase.Calling, startedAt = clock(), cameraOn = video)
-        callTransport.connect(call.room, "", video)
         _state.update { it.copy(call = call, openChatId = it.openChatId) }
+        // С сервером: звонок настоящий — сервер звонит собеседнику, связь — LiveKit
+        if (serverMode && isServerPerson(peerId)) {
+            callJob?.cancel()
+            // Запрос не отменяется, даже если трубку положат: сервер уже мог позвонить —
+            // тогда ему нужно сказать «отбой»
+            viewModelScope.launch {
+                val ticket = try { net.api.startCall(peerId, video, net.newKey()) } catch (e: NetError) {
+                    failCall(call.id, callError(e))
+                    return@launch
+                }
+                val cur = _state.value.call?.takeIf { it.id == call.id }
+                if (cur == null) {
+                    // Положили трубку, пока сервер отвечал
+                    serverCall(ticket.id, "end")
+                    return@launch
+                }
+                _state.update { it.copy(call = cur.copy(serverId = ticket.id)) }
+                callTransport.connect(ticket.url, ticket.room, ticket.token, video)
+                // Что успело прийти раньше ответа сервера (ответили, отклонили)
+                earlyCallEvents.remove(ticket.id)?.forEach(::onCallEvent)
+                earlyCallEvents.clear()
+                // Ответили ещё до ответа сервера — уже разговор (и отметки «alive» идут)
+                if (_state.value.call?.takeIf { it.id == call.id }?.phase != CallPhase.Calling) return@launch
+                callJob?.cancel()
+                callJob = viewModelScope.launch { ringOut(call.id) }
+            }
+            return null
+        }
+        callTransport.connect("", call.room, "", video)
         if (demoReplies) {
             callJob?.cancel()
             callJob = viewModelScope.launch {
@@ -3075,21 +3111,75 @@ class AppViewModel(
         return null
     }
 
+    /** События звонка, пришедшие раньше, чем сервер ответил звонящему номером звонка. */
+    private val earlyCallEvents = HashMap<Long, MutableList<RtEvent.Call>>()
+
+    /**
+     * Исходящий звонит: собеседник вошёл в комнату — ответил (даже если
+     * сигнал сервера потерялся); никто — через RING_MS «нет ответа».
+     */
+    private suspend fun ringOut(localId: Long) {
+        val until = clock() + Calls.RING_MS
+        while (clock() < until) {
+            delay(1000)
+            val c = _state.value.call?.takeIf { it.id == localId } ?: return
+            if (c.phase != CallPhase.Calling) return
+            if (callTransport.peerJoined) { callAnswered(); return }
+        }
+        callTimeout()
+    }
+
+    /** Разговор с сервером идёт — отмечаться (иначе сервер решит, что звонок оборвался). */
+    private fun keepCallAlive(c: ActiveCall) {
+        if (c.serverId == 0L) return
+        callJob?.cancel()
+        callJob = viewModelScope.launch {
+            while (_state.value.call?.id == c.id) {
+                runCatching { net.api.callAction(c.serverId, "alive") }
+                delay(30_000)
+            }
+        }
+    }
+
+    /** Почему не получилось позвонить — текст для экрана. */
+    private fun callError(e: NetError): String = when {
+        e.kind == NetError.Kind.Offline -> t("Нет сети — позвонить не получилось")
+        e.code == 403 -> t("Этот человек сейчас не принимает звонки от вас")
+        e.code == 409 -> t("Занято — человек уже разговаривает")
+        e.code == 503 -> t("Звонки на сервере пока не настроены")
+        else -> t("Не удалось позвонить")
+    }
+
+    /** Звонок не состоялся (сервер не дал позвонить): без записи в истории. */
+    private fun failCall(localId: Long, message: String) {
+        if (_state.value.call?.id != localId) return
+        callJob?.cancel()
+        callTransport.hangUp()
+        _state.update { it.copy(call = null, notice = message) }
+    }
+
     /** Собеседник ответил — разговор пошёл. */
     fun callAnswered() {
         val c = _state.value.call ?: return
         if (c.phase != CallPhase.Calling) return
-        _state.update { it.copy(call = c.copy(phase = CallPhase.Active, connectedAt = clock())) }
+        val active = c.copy(phase = CallPhase.Active, connectedAt = clock())
+        _state.update { it.copy(call = active) }
+        keepCallAlive(active)
     }
 
     /** Звонят мне (демо — друг; с сервером — пуш). Ничего не делает, если звонки от него запрещены. */
-    fun incomingCall(peerId: Int, video: Boolean) {
+    fun incomingCall(peerId: Int, video: Boolean, serverId: Long = 0) {
         val s = _state.value
-        if (s.call != null || !Calls.allowed(peerId, s.following, s.blocked, s.privacy.calls)) return
+        if (serverId > 0 && s.call?.serverId == serverId) return
+        if (s.call != null || !Calls.allowed(peerId, s.following, s.blocked, s.privacy.calls)) {
+            // Занят или звонки от него запрещены — сервер узнает, что не ответим
+            if (serverId > 0) runCatching { net.queueCall("POST", "/v1/calls/$serverId/decline") }.also { kickNet() }
+            return
+        }
         val person = Demo.person(peerId) ?: return
-        val call = ActiveCall(nextId++, peerId, video, outgoing = false, phase = CallPhase.Incoming, startedAt = clock(), cameraOn = video)
+        val call = ActiveCall(nextId++, peerId, video, outgoing = false, phase = CallPhase.Incoming, startedAt = clock(), cameraOn = video, serverId = serverId)
         _state.update { it.copy(call = call) }
-        if (demoReplies) {
+        if (demoReplies || serverId > 0) {
             callJob?.cancel()
             callJob = viewModelScope.launch { delay(Calls.RING_MS); callTimeout() }
         }
@@ -3102,20 +3192,45 @@ class AppViewModel(
         val c = _state.value.call ?: return
         if (c.phase != CallPhase.Incoming) return
         callJob?.cancel()
-        callTransport.connect(c.room, "", c.video)
         _state.update { it.copy(call = c.copy(phase = CallPhase.Active, connectedAt = clock())) }
+        if (c.serverId == 0L) {
+            callTransport.connect("", c.room, "", c.video)
+            return
+        }
+        // Токен комнаты — у сервера; звонок уже кончился (отменили, долго звонил) — пропущенный
+        callJob = viewModelScope.launch {
+            val ticket = try { net.api.acceptCall(c.serverId) } catch (e: NetError) {
+                if (_state.value.call?.id == c.id) {
+                    finishCall(Calls.record(c, clock()))
+                    _state.update { it.copy(notice = if (e.kind == NetError.Kind.Offline) t("Нет сети — ответить не получилось") else t("Звонок уже закончился")) }
+                }
+                return@launch
+            }
+            if (_state.value.call?.id == c.id) {
+                callTransport.connect(ticket.url, ticket.room, ticket.token, c.video)
+                keepCallAlive(c)
+            }
+        }
     }
 
     /** Отклонить входящий. */
     fun declineCall() {
         val c = _state.value.call ?: return
         if (c.phase != CallPhase.Incoming) return
+        if (c.serverId > 0) serverCall(c.serverId, "decline")
         finishCall(Calls.record(c, clock(), declined = true))
+    }
+
+    /** Сказать серверу о звонке (decline / end) — через очередь: уйдёт и после обрыва сети. */
+    private fun serverCall(id: Long, action: String) {
+        runCatching { net.queueCall("POST", "/v1/calls/$id/$action") }
+        kickNet()
     }
 
     /** Положить трубку / отменить исходящий. */
     fun endCall() {
         val c = _state.value.call ?: return
+        if (c.serverId > 0) serverCall(c.serverId, "end")
         finishCall(Calls.record(c, clock()))
     }
 
@@ -3123,6 +3238,8 @@ class AppViewModel(
     fun callTimeout() {
         val c = _state.value.call ?: return
         if (c.phase == CallPhase.Active) return
+        // Свой исходящий — сервер скажет собеседнику, что звонок пропущен
+        if (c.serverId > 0 && c.outgoing) serverCall(c.serverId, "end")
         val record = Calls.record(c, clock())
         finishCall(record)
         if (!c.outgoing) {
@@ -3154,6 +3271,50 @@ class AppViewModel(
         _state.update { s -> s.call?.let { s.copy(call = change(it)) } ?: s }
     }
 
+    /** Звонок по живому каналу: звонят мне, ответили, отклонили, положили трубку. */
+    private fun onCallEvent(ev: RtEvent.Call) {
+        Directory.remember(ev.user)
+        val from = Directory.local(ev.from)
+        val c = _state.value.call
+        // Свой исходящий ещё без номера: событие — на потом (ответ сервера в пути)
+        if (ev.state != "ringing" && c != null && c.outgoing && c.serverId == 0L) {
+            earlyCallEvents.getOrPut(ev.id) { mutableListOf() } += ev
+            return
+        }
+        when (ev.state) {
+            "ringing" -> {
+                if (from in _state.value.blocked) {
+                    serverCall(ev.id, "decline")
+                    return
+                }
+                peopleChanged()
+                incomingCall(from, ev.video, ev.id)
+            }
+            "accepted" -> if (c?.serverId == ev.id && c.outgoing && c.phase == CallPhase.Calling) callAnswered()
+            "declined" -> if (c?.serverId == ev.id) finishCall(Calls.record(c, clock(), declined = true))
+            // Не дождались — у меня пропущенный
+            "cancelled" -> if (c?.serverId == ev.id && c.phase == CallPhase.Incoming) callTimeout()
+            "ended" -> if (c?.serverId == ev.id) finishCall(Calls.record(c, clock()))
+        }
+    }
+
+    /** Кто звонит сейчас (открыли приложение по пушу о звонке) — звонок на экран. */
+    suspend fun syncCalls() {
+        if (!serverMode || !net.session.signedIn || _state.value.call != null) return
+        val ringing = net.api.ringingCalls().firstOrNull() ?: return
+        peopleChanged()
+        incomingCall(Directory.local(ringing.optInt("from")), ringing.optBoolean("video"), ringing.optLong("id"))
+    }
+
+    /** Приложение снова на экране: звонки и эфиры — сверить с сервером. */
+    fun onForeground() {
+        if (!serverMode || !demoReplies || !net.session.signedIn) return
+        viewModelScope.launch {
+            runCatching { syncCalls() }
+            runCatching { syncLives() }
+        }
+    }
+
     /** Перезвонить из истории звонков или переписки. */
     fun callBack(record: CallRecord) = startCall(record.peerId, record.video)
 
@@ -3165,6 +3326,8 @@ class AppViewModel(
 
     /** Видеосвязь эфиров: демо, пока нет сервера LiveKit. */
     var liveTransport: LiveTransport = DemoLiveTransport
+
+    private var liveStartJob: Job? = null
 
     private var liveJob: Job? = null
 
@@ -3181,9 +3344,37 @@ class AppViewModel(
         if (_state.value.myLive != null) return t("Эфир уже идёт")
         val clean = title.trim().take(Lives.MAX_TITLE)
         if (clean.isEmpty()) return t("Назовите эфир — так друзья поймут, о чём он")
-        val live = LiveStream(nextId++, _state.value.me.id, clean, clock(), friendsOnly = friendsOnly, seed = Random.nextInt(1000))
         Telemetry.track(AppEvent.LiveStarted)
-        liveTransport.publish(live.room, "")
+        // С сервером: эфир — на сервере (подписчикам — уведомление), видео — в LiveKit
+        if (serverMode) {
+            // Уже начинаем (второе нажатие) — ждём ответа первого
+            if (liveStartJob?.isActive == true) return null
+            liveStartJob = viewModelScope.launch {
+                val ticket = try { net.api.startLive(clean, friendsOnly, net.newKey()) } catch (e: NetError) {
+                    _state.update {
+                        it.copy(notice = when {
+                            e.kind == NetError.Kind.Offline -> t("Нет сети — эфир не начался")
+                            e.code == 503 -> t("Эфиры на сервере пока не настроены")
+                            else -> t("Эфир не начался — попробуйте позже")
+                        })
+                    }
+                    return@launch
+                }
+                // Пока сервер отвечал, передумали (закрыли экран начала эфира) — эфир не нужен
+                if (!_state.value.liveStarting || _state.value.myLive != null) {
+                    runCatching { net.queueCall("DELETE", "/v1/lives/${ticket.id}") }
+                    kickNet()
+                    return@launch
+                }
+                val live = runCatching { net.api.liveOf(ticket.body.getJSONObject("live")) }.getOrNull()
+                    ?.copy(hostId = _state.value.me.id) ?: return@launch
+                liveTransport.publish(ticket.url, ticket.room, ticket.token)
+                _state.update { it.copy(myLive = live, watchingLiveId = live.id, liveStarting = false, liveSummary = null) }
+            }
+            return null
+        }
+        val live = LiveStream(nextId++, _state.value.me.id, clean, clock(), friendsOnly = friendsOnly, seed = Random.nextInt(1000))
+        liveTransport.publish("", live.room, "")
         _state.update { it.copy(myLive = live, watchingLiveId = live.id, liveStarting = false, liveSummary = null) }
         ensureLiveTicker()
         return null
@@ -3193,6 +3384,10 @@ class AppViewModel(
     fun endLive() {
         val live = _state.value.myLive ?: return
         liveTransport.leave()
+        if (live.server) {
+            runCatching { net.queueCall("DELETE", "/v1/lives/${live.id}") }
+            kickNet()
+        }
         val ended = live.copy(endedAt = clock(), viewers = 0)
         _state.update { it.copy(myLive = null, watchingLiveId = null, liveSummary = ended, confirmEndLive = false) }
     }
@@ -3215,7 +3410,29 @@ class AppViewModel(
     fun watchLive(liveId: Long) {
         val live = _state.value.visibleLives.firstOrNull { it.id == liveId } ?: return
         Telemetry.track(AppEvent.LiveWatched)
-        liveTransport.join(live.room, "")
+        if (live.server) {
+            // Число зрителей пришлёт сервер; видео — когда дадут токен
+            _state.update { it.copy(watchingLiveId = liveId, activityOpen = false, searchOpen = false) }
+            viewModelScope.launch {
+                val ticket = try { net.api.joinLive(liveId) } catch (e: NetError) {
+                    if (_state.value.watchingLiveId == liveId) {
+                        _state.update { s ->
+                            s.copy(
+                                watchingLiveId = null,
+                                lives = if (e.code == 404) s.lives.filterNot { it.id == liveId } else s.lives,
+                                notice = if (e.code == 404) t("Эфир уже закончился") else t("Не удалось подключиться к эфиру"),
+                            )
+                        }
+                    }
+                    return@launch
+                }
+                if (_state.value.watchingLiveId == liveId) liveTransport.join(ticket.url, ticket.room, ticket.token)
+                // Ушли, пока подключались: сервер мог получить «ушёл» раньше «пришёл» — сказать ещё раз
+                else runCatching { net.api.send("POST", "/v1/lives/$liveId/leave", null, net.newKey()) }
+            }
+            return
+        }
+        liveTransport.join("", live.room, "")
         _state.update { s ->
             s.copy(
                 watchingLiveId = liveId, activityOpen = false, searchOpen = false,
@@ -3230,6 +3447,12 @@ class AppViewModel(
         val id = _state.value.watchingLiveId ?: return
         if (_state.value.myLive?.id == id) return
         liveTransport.leave()
+        if (_state.value.lives.any { it.id == id && it.server }) {
+            runCatching { net.queueCall("POST", "/v1/lives/$id/leave") }
+            kickNet()
+            _state.update { it.copy(watchingLiveId = null) }
+            return
+        }
         _state.update { s -> s.copy(watchingLiveId = null, lives = s.lives.map { if (it.id == id) Lives.viewers(it, -1) else it }) }
     }
 
@@ -3248,13 +3471,83 @@ class AppViewModel(
         val clean = text.trim().take(Lives.MAX_COMMENT)
         if (clean.isEmpty()) return
         val me = _state.value.me
+        // Эфир на сервере: комментарий вернётся всем (и мне) по живому каналу
+        if (isServerLive(id)) {
+            runCatching { net.queueCall("POST", "/v1/lives/$id/comments", org.json.JSONObject().put("text", clean)) }
+            kickNet()
+            return
+        }
         updateLive(id) { Lives.addComment(it, LiveComment(nextId++, me.id, me.name, clean, clock(), me.hue)) }
     }
+
+    private fun isServerLive(id: Long): Boolean =
+        _state.value.myLive?.takeIf { it.id == id }?.server == true || _state.value.lives.any { it.id == id && it.server }
 
     /** Сердечко в открытом эфире. */
     fun sendHeart() {
         val id = _state.value.watchingLiveId ?: return
         updateLive(id) { it.copy(hearts = it.hearts + 1) }
+        if (isServerLive(id)) {
+            runCatching { net.queueCall("POST", "/v1/lives/$id/heart") }
+            kickNet()
+        }
+    }
+
+    /** Эфиры с сервера: идущие у тех, кого я могу смотреть (демо-эфиры — как были). */
+    suspend fun syncLives() {
+        if (!serverMode) return
+        val list = net.api.lives().filter { it.hostId !in _state.value.blocked }
+        // Смотрю эфир, которого больше нет (конец пропустили, пока были в фоне) — отключиться
+        val w = _state.value.watchingLiveId
+        if (w != null && _state.value.myLive?.id != w && _state.value.lives.any { it.id == w && it.server } && list.none { it.id == w }) liveTransport.leave()
+        _state.update { s ->
+            val old = s.lives.associateBy { it.id }
+            s.copy(
+                lives = s.lives.filter { !it.server } + list.map { l -> old[l.id]?.let { o -> l.copy(comments = o.comments) } ?: l },
+                watchingLiveId = s.watchingLiveId?.takeIf { id -> s.myLive?.id == id || !(old[id]?.server ?: false) || list.any { it.id == id } },
+            )
+        }
+        peopleChanged()
+    }
+
+    /** Эфир по живому каналу: начался, закончился, зрители и сердечки, комментарий. */
+    private fun onLiveEvent(ev: RtEvent) {
+        when (ev) {
+            is RtEvent.Live -> when (ev.state) {
+                "started" -> {
+                    val live = ev.live?.let { runCatching { net.api.liveOf(it) }.getOrNull() } ?: return
+                    if (live.hostId in _state.value.blocked) return
+                    _state.update { s -> s.copy(lives = listOf(live) + s.lives.filterNot { it.id == live.id }) }
+                    peopleChanged()
+                    Demo.person(live.hostId)?.let { host ->
+                        record(ActivityKind.Live, host, live.id, live.title)
+                        notify(Nudges.liveStarted(host, live.title))
+                    }
+                }
+                "ended" -> {
+                    val watching = _state.value.watchingLiveId == ev.id && _state.value.myLive?.id != ev.id
+                    if (watching) liveTransport.leave()
+                    _state.update { s ->
+                        s.copy(
+                            lives = s.lives.filterNot { it.id == ev.id },
+                            watchingLiveId = if (watching) null else s.watchingLiveId,
+                            notice = if (watching) t("Эфир закончился") else s.notice,
+                        )
+                    }
+                }
+                "counts" -> updateLive(ev.id) { it.copy(viewers = ev.viewers, peakViewers = maxOf(it.peakViewers, ev.viewers), hearts = ev.hearts) }
+            }
+            is RtEvent.LiveComment -> {
+                val o = ev.comment
+                val author = Directory.local(o.optInt("author"))
+                if (author in _state.value.blocked) return
+                updateLive(ev.liveId) { l ->
+                    if (l.comments.any { it.id == o.optLong("id") }) l
+                    else Lives.addComment(l, LiveComment(o.optLong("id"), author, o.optString("name"), o.optString("text"), o.optLong("at"), o.optDouble("hue", 0.5).toFloat()))
+                }
+            }
+            else -> Unit
+        }
     }
 
     /** Друг начал эфир: в «Историях», в ленте активности и уведомлением. */
@@ -3278,7 +3571,8 @@ class AppViewModel(
         val people = Demo.people.filter { it.id !in _state.value.blocked }
         _state.update { s ->
             var mine = s.myLive
-            if (mine != null) {
+            // Эфир на сервере: зрители, сердечки и комментарии — настоящие
+            if (mine != null && !mine.server) {
                 mine = Lives.viewers(mine, random.nextInt(-1, 4))
                 mine = mine.copy(hearts = mine.hearts + random.nextInt(0, 6))
                 if (people.isNotEmpty() && random.nextInt(3) == 0) {
@@ -3288,6 +3582,7 @@ class AppViewModel(
             }
             val lives = s.lives.mapNotNull { l ->
                 if (!l.live) return@mapNotNull null
+                if (l.server) return@mapNotNull l
                 // Эфир друга идёт 3–10 минут; смотрите — не кончится, пока вы в нём
                 if (s.watchingLiveId != l.id && now - l.startedAt > 3 * 60_000 && random.nextInt(8) == 0) return@mapNotNull null
                 var x = Lives.viewers(l, random.nextInt(-2, 3)).copy(hearts = l.hearts + random.nextInt(0, 4))

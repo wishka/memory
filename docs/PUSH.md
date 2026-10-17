@@ -50,7 +50,7 @@ Memory пишет уведомления не «Вы давно не заход�
 
 | Ключ | Пример | Зачем |
 |---|---|---|
-| `type` | `friend_checkin`, `group_member`, `follow_request`, `request_accepted`, `message`, `prism` | что случилось |
+| `type` | `friend_checkin`, `group_member`, `follow_request`, `request_accepted`, `message`, `prism`, `call`, `missed_call`, `live` | что случилось |
 | `actor`, `actorId` | `Вера Лунная`, `2` | кто |
 | `activity` | `movie`, `book`, `run`… или свой `custom-…` | чек-ин |
 | `subject`, `amount` | `Дюна`, `7` | что именно и сколько |
@@ -61,6 +61,8 @@ Memory пишет уведомления не «Вы давно не заход�
 | `chatId`, `body` | `3`, `Привет!` | сообщение (пустой `body` — «Новое сообщение») |
 | `postId`, `body` | `10000001`, `Класс` | комментарий к вашей записи |
 | `prismId`, `caption` | `42`, `Огни Невы` | новый PRISM друга |
+| `callId`, `video` | `1792157…`, `1` | звонят (`call`) или не дождались (`missed_call`) |
+| `liveId`, `title` | `1792157…`, `Закат` | друг начал эфир |
 | `title`, `body` | — | запасной вариант для неизвестного `type` |
 
 Сервер сам учитывает выключатели уведомлений человека.
